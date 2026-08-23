@@ -83,9 +83,17 @@ async function migrateLegacyMacKey() {
 
 async function readRuntimeKey() {
   if (fs.existsSync(secretPath())) {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error("系统安全存储不可用，无法读取运行时密钥。");
-    const encrypted = Buffer.from(await fsp.readFile(secretPath(), "utf8"), "base64");
-    return safeStorage.decryptString(encrypted);
+    try {
+      if (!safeStorage.isEncryptionAvailable()) throw new Error("系统安全存储不可用，无法读取运行时密钥。");
+      const encrypted = Buffer.from(await fsp.readFile(secretPath(), "utf8"), "base64");
+      return safeStorage.decryptString(encrypted);
+    } catch {
+      // The app was renamed after v0.1. Fall back to the legacy Keychain item
+      // and immediately re-encrypt it using this app's safeStorage identity.
+      const migrated = await migrateLegacyMacKey();
+      if (migrated) return migrated;
+      throw new Error("无法读取已保存的运行时密钥。请在高级设置中重新保存此电脑的密钥。");
+    }
   }
   return migrateLegacyMacKey();
 }
