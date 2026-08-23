@@ -67,18 +67,23 @@ http://127.0.0.1:12001
 
 ### 2. 在控制器保存设置
 
-打开 WebGPT Bridge，在“高级设置”中填写：
+打开 WebGPT Bridge，在主界面的“连接设置”中填写工作区目录、`tunnel-client`、Tunnel ID 和运行时密钥。运行时路径、Node、配置名称和 HTTPS 代理位于运行日志下方的“可选设置”。
 
 | 字段 | 填写内容 |
 | --- | --- |
 | 工作区目录 | 允许 Agent 操作的项目根目录，或多个项目的共同父目录 |
-| Agent 运行时目录 | 默认使用随应用附带的 `agent-runtime`；仅开发或替换 Agent 时修改 |
 | tunnel-client | OpenAI `tunnel-client` 可执行文件的完整路径 |
-| Node.js（可选） | Node 可执行文件完整路径；留空时应用自动查找 Node 20+ |
 | Tunnel ID | OpenAI 平台创建的 `tunnel_...` |
+| 运行时密钥 | OpenAI Tunnel 的运行时密钥；首次填入后点击“保存设置” |
+
+“可选设置”包含：
+
+| 字段 | 填写内容 |
+| --- | --- |
+| Agent 运行时目录 | 默认使用随应用附带的 `agent-runtime`；仅开发或替换 Agent 时修改 |
+| Node.js（可选） | Node 可执行文件完整路径；留空时应用自动查找 Node 20+ |
 | 配置名称 | 保持 `webgpt-bridge` 即可 |
 | HTTPS 代理（可选） | 仅在需要代理访问 OpenAI 时填写 |
-| 运行时密钥 | OpenAI Tunnel 的运行时密钥；首次填入后点击“保存设置” |
 
 点击“启动连接”。启动成功时界面应显示“本地 Agent：运行中”和“Secure MCP Tunnel：已连接”。本机诊断地址为 `http://127.0.0.1:8787/healthz`；这些本机地址不能直接填写到 ChatGPT 网页版连接器中。
 

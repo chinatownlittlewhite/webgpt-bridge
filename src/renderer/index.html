@@ -21,6 +21,17 @@
         <div class="actions"><button id="start" class="primary">启动连接</button><button id="stop" class="secondary">停止</button><button id="openChatGPT" class="link">打开 ChatGPT ↗</button></div>
       </section>
 
+      <section class="connection-settings card">
+        <div class="section-heading"><div><h2>连接设置</h2><p>启动连接所需的本机信息</p></div><span id="keyStatus"></span></div>
+        <div class="grid required-grid">
+          <label>工作区目录<input id="workspacePath" placeholder="将被 Agent 操作的项目目录" /><button data-picker="workspacePath" class="pick">选择</button></label>
+          <label>tunnel-client<input id="tunnelClientPath" placeholder="OpenAI tunnel-client 可执行文件" /><button data-file-picker="tunnelClientPath" class="pick">选择</button></label>
+          <label>Tunnel ID<input id="tunnelId" placeholder="tunnel_…" /></label>
+          <label>运行时密钥<input id="runtimeKey" type="password" autocomplete="new-password" placeholder="留空则保留已保存密钥" /><button id="clearKey" class="inline-danger">移除</button></label>
+        </div>
+        <div class="save-row primary-save"><span>设置仅保存在这台电脑上</span><button id="save" class="secondary">保存设置</button></div>
+      </section>
+
       <section class="status-list card">
         <div><span>本地 Agent</span><strong id="serverState">未运行</strong></div>
         <div><span>Secure MCP Tunnel</span><strong id="tunnelState">未连接</strong></div>
@@ -30,19 +41,14 @@
       <details class="logs card"><summary>运行日志 <span>仅在排查问题时查看</span></summary><pre id="logOutput">尚未启动。</pre></details>
 
       <details class="advanced card">
-        <summary>可选设置 <span>首次部署或更换连接时使用</span></summary>
+        <summary>可选设置 <span>更换运行时或网络环境时使用</span></summary>
         <div class="settings-body">
           <div class="grid">
-            <label>工作区目录<input id="workspacePath" placeholder="将被 Agent 操作的项目目录" /><button data-picker="workspacePath" class="pick">选择</button></label>
             <label>Agent 运行时目录<input id="runtimePath" placeholder="默认使用随应用提供的 agent-runtime" /><button data-picker="runtimePath" class="pick">选择</button></label>
-            <label>tunnel-client<input id="tunnelClientPath" placeholder="OpenAI tunnel-client 可执行文件" /><button data-file-picker="tunnelClientPath" class="pick">选择</button></label>
             <label>Node.js（可选）<input id="nodePath" placeholder="留空则自动查找 Node.js 20+" /></label>
-            <label>Tunnel ID<input id="tunnelId" placeholder="tunnel_…" /></label>
             <label>配置名称<input id="profile" placeholder="webgpt-bridge" /></label>
             <label>HTTPS 代理（可选）<input id="httpsProxy" placeholder="http://127.0.0.1:7890" /></label>
-            <label>运行时密钥<input id="runtimeKey" type="password" autocomplete="new-password" placeholder="留空则保留已保存密钥" /><button id="clearKey" class="inline-danger">移除</button></label>
           </div>
-          <div class="save-row"><span id="keyStatus"></span><button id="save" class="secondary">保存设置</button></div>
         </div>
       </details>
 
