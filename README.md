@@ -6,7 +6,7 @@
 
 ## 快速部署
 
-1. 安装本项目的发行包，并安装 Node.js 20+。
+1. 安装本项目的发行包，并安装 Node.js 20+（支持通过官方安装器或 NVM 安装）。
 2. 准备 Agent 运行时：在其目录运行 `npm install` 和 `npm run build`，确认生成 `dist/server.js`。
 3. 打开 WebGPT Bridge，在“高级设置”中选择工作区、Agent 运行时目录和 OpenAI `tunnel-client`，填入本机的 Tunnel ID 与运行时密钥。
 4. 点击“启动连接”，然后回到 ChatGPT 网页版使用连接器。关闭窗口不会中断连接。
