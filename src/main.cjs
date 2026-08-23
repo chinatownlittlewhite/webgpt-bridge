@@ -115,6 +115,19 @@ function commandExists(candidate) {
   return !result.error;
 }
 
+function nvmNodeCandidates() {
+  const versions = path.join(os.homedir(), ".nvm", "versions", "node");
+  try {
+    return fs.readdirSync(versions, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(versions, entry.name, "bin", process.platform === "win32" ? "node.exe" : "node"))
+      .sort()
+      .reverse();
+  } catch {
+    return [];
+  }
+}
+
 function preferredNode(settings) {
   const candidates = [
     settings.nodePath,
@@ -122,6 +135,7 @@ function preferredNode(settings) {
     process.platform === "darwin" ? "/opt/homebrew/bin/node" : "",
     process.platform === "darwin" ? "/usr/local/bin/node" : "",
     process.platform === "win32" ? path.join(process.env.ProgramFiles || "C:\\Program Files", "nodejs", "node.exe") : "",
+    ...nvmNodeCandidates(),
     "node",
   ];
   return candidates.find(commandExists) || "";
@@ -343,7 +357,7 @@ app.whenReady().then(() => {
   ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
   createTray();
   createWindow();
-  app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  app.on("activate", showWindow);
 });
 
 app.on("before-quit", () => { isQuitting = true; void stopAll(); });
