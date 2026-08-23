@@ -6,3 +6,4 @@ build/*
 *.log
 *.key
 .env
+AGENT_TEST_FAILURES_ZH.md
