@@ -34,10 +34,13 @@ WebGPT Bridge 桌面控制器
 
 在 [Releases](https://github.com/chinatownlittlewhite/webgpt-bridge/releases) 下载对应系统的最新发行包。当前发布包未签名或公证，请只从本仓库 Releases 下载，并在下载页核对 SHA-256。
 
+当前 `v0.3.1` 提供 macOS Apple Silicon 与 Windows x64 安装包。macOS Intel 和通用包需要在相应目标平台构建、验证后才会发布，请不要下载旧版安装包替代新版。
+
 | 平台 | 推荐下载 |
 | --- | --- |
-| macOS（Apple Silicon 与 Intel） | `WebGPT.Bridge-<version>-universal.dmg` |
-| Windows 10 / 11 x64 | `WebGPT.Bridge.Setup.<version>.exe` |
+| macOS Apple Silicon | `WebGPT.Bridge-0.3.1-arm64.dmg`，也可下载 ZIP |
+| macOS Intel | 当前未提供 v0.3.1 安装包 |
+| Windows 10 / 11 x64 | `WebGPT.Bridge.Setup.0.3.1.exe`，也可下载 ZIP |
 
 ### macOS
 
@@ -47,7 +50,7 @@ WebGPT Bridge 桌面控制器
 
 ### Windows
 
-1. 运行 `WebGPT.Bridge.Setup.<version>.exe`。
+1. 运行 `WebGPT.Bridge.Setup.0.3.1.exe`。
 2. 按安装向导完成安装，可自行选择安装位置。
 3. 若 SmartScreen 显示提示，先确认发布来源和 SHA-256；确认无误后选择“仍要运行”。
 
@@ -120,6 +123,8 @@ npm run dist:win   # Windows：NSIS 与 ZIP
 ```
 
 产物写入 `release/`。macOS 可在 Mac 上构建；Windows 包建议在 Windows 上构建，以便 `node-pty` 等原生可选依赖适配目标平台。
+
+Windows 端如需启用 Agent 的 AppContainer 原生沙箱，进入 `agent-runtime/` 后执行 `npm run build:native`，并在 Windows 真机完成 `npm run acceptance`。当前 Release 已打包 Windows x64 控制器及 MCP 运行时；该原生沙箱助手必须在 Windows 上单独构建和验收。
 
 ## 故障排除
 
