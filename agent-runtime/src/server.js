@@ -1,3 +1,4 @@
+
 import crypto from "node:crypto";
 import http from "node:http";
 import path from "node:path";
@@ -238,6 +239,14 @@ function writeJson(res, status, payload) {
   res.end(text);
 }
 
+function writeEmpty(res, status) {
+  res.writeHead(status, {
+    "content-length": "0",
+    "cache-control": "no-store",
+  });
+  res.end();
+}
+
 function toolAnnotations(name) {
   const readOnly = new Set(["process_poll", "process_list", "read_file", "list_dir", "search_text", "search_files", "goal_status", "get_capabilities"]);
   const destructive = new Set(["delete_file", "move_file", "process_kill"]);
@@ -470,6 +479,13 @@ export async function startProductionServer(options = {}) {
         toolCount: runtime.tools.length,
         sandbox: runtime.normalSandbox.summary,
       });
+      return;
+    }
+    // This server has no OAuth authorization server. RFC 9728 discovery must
+    // therefore return an empty 404 instead of a JSON error object that an
+    // eager client could mistake for malformed OAuth metadata.
+    if (requestPath === "/.well-known/oauth-protected-resource" || requestPath === "/.well-known/oauth-protected-resource/mcp" || requestPath === "/.well-known/oauth-authorization-server") {
+      writeEmpty(res, 404);
       return;
     }
     if (requestPath !== "/mcp") {
