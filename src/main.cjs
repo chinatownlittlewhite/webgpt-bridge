@@ -7,7 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 // Keep v0.1 settings and encrypted runtime keys when the product name changes
-// from Local Agent Host to Local Relay.
+// from Local Agent Host to WebGPT Bridge.
 app.setPath("userData", path.join(app.getPath("appData"), "local-agent-host"));
 
 const MCP_HOST = "127.0.0.1";
@@ -37,7 +37,7 @@ function defaultSettings() {
     tunnelClientPath: "",
     nodePath: "",
     tunnelId: "",
-    profile: "local-agent-host",
+    profile: "webgpt-bridge",
     httpsProxy: "",
   };
 }
