@@ -1,0 +1,8 @@
+node_modules/
+release/
+build/*
+!build/icon.svg
+.DS_Store
+*.log
+*.key
+.env
