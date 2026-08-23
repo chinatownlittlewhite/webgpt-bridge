@@ -1,5 +1,10 @@
 node_modules/
 release/
+agent-runtime/node_modules/
+agent-runtime/dist/
+agent-runtime/.webgpt-bridge/
+agent-runtime/.local-project-coding/
+agent-runtime/.DS_Store
 build/*
 !build/icon.svg
 .DS_Store

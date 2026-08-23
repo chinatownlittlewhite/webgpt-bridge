@@ -27,12 +27,14 @@
         <div><span>控制器</span><strong id="nextStep">点击“启动连接”</strong></div>
       </section>
 
+      <details class="logs card"><summary>运行日志 <span>仅在排查问题时查看</span></summary><pre id="logOutput">尚未启动。</pre></details>
+
       <details class="advanced card">
-        <summary>高级设置 <span>仅在首次部署或更换 Agent 时需要</span></summary>
+        <summary>可选设置 <span>首次部署或更换连接时使用</span></summary>
         <div class="settings-body">
           <div class="grid">
             <label>工作区目录<input id="workspacePath" placeholder="将被 Agent 操作的项目目录" /><button data-picker="workspacePath" class="pick">选择</button></label>
-            <label>Agent 运行时目录<input id="runtimePath" placeholder="包含 dist/server.js 的项目" /><button data-picker="runtimePath" class="pick">选择</button></label>
+            <label>Agent 运行时目录<input id="runtimePath" placeholder="默认使用随应用提供的 agent-runtime" /><button data-picker="runtimePath" class="pick">选择</button></label>
             <label>tunnel-client<input id="tunnelClientPath" placeholder="OpenAI tunnel-client 可执行文件" /><button data-file-picker="tunnelClientPath" class="pick">选择</button></label>
             <label>Node.js（可选）<input id="nodePath" placeholder="留空则自动查找 Node.js 20+" /></label>
             <label>Tunnel ID<input id="tunnelId" placeholder="tunnel_…" /></label>
@@ -44,7 +46,6 @@
         </div>
       </details>
 
-      <details class="logs card"><summary>运行日志 <span>仅在排查问题时查看</span></summary><pre id="logOutput">尚未启动。</pre></details>
       <p id="message" role="status"></p>
     </main>
     <script src="./renderer.js"></script>

@@ -1,6 +1,6 @@
 {
   "name": "webgpt-bridge",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "A private desktop bridge from WebGPT to local MCP agents.",
   "private": false,
   "main": "src/main.cjs",
@@ -8,9 +8,10 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist:mac": "electron-builder --mac dmg zip --universal",
-    "dist:win": "electron-builder --win nsis zip --x64",
+    "prepare:agent": "npm --prefix agent-runtime ci && npm --prefix agent-runtime run build",
+    "pack": "npm run prepare:agent && electron-builder --dir",
+    "dist:mac": "npm run prepare:agent && electron-builder --mac dmg zip --universal",
+    "dist:win": "npm run prepare:agent && electron-builder --win nsis zip --x64",
     "dist:all": "npm run dist:mac && npm run dist:win"
   },
   "devDependencies": {
@@ -21,6 +22,9 @@
     "appId": "com.localagenthost.desktop",
     "productName": "WebGPT Bridge",
     "asar": true,
+    "asarUnpack": [
+      "agent-runtime/**/*"
+    ],
     "npmRebuild": false,
     "directories": {
       "buildResources": "build",
@@ -28,6 +32,7 @@
     },
     "files": [
       "src/**/*",
+      "agent-runtime/**/*",
       "package.json",
       "README.md"
     ],

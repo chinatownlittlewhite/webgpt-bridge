@@ -30,10 +30,16 @@ function secretPath() {
   return path.join(app.getPath("userData"), "runtime-key.bin");
 }
 
+function bundledRuntimePath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "app.asar.unpacked", "agent-runtime")
+    : path.join(__dirname, "..", "agent-runtime");
+}
+
 function defaultSettings() {
   return {
     workspacePath: "",
-    runtimePath: "",
+    runtimePath: bundledRuntimePath(),
     tunnelClientPath: "",
     nodePath: "",
     tunnelId: "",
@@ -45,14 +51,15 @@ function defaultSettings() {
 async function loadSettings() {
   try {
     const parsed = JSON.parse(await fsp.readFile(configPath(), "utf8"));
-    return { ...defaultSettings(), ...parsed, hasRuntimeKey: fs.existsSync(secretPath()) };
+    const settings = { ...defaultSettings(), ...parsed };
+    return { ...settings, runtimePath: settings.runtimePath || bundledRuntimePath(), hasRuntimeKey: fs.existsSync(secretPath()) };
   } catch {
     return { ...defaultSettings(), hasRuntimeKey: fs.existsSync(secretPath()) };
   }
 }
 
 async function writeSettings(input) {
-  const settings = { ...defaultSettings(), ...input };
+  const settings = { ...defaultSettings(), ...input, runtimePath: input.runtimePath || bundledRuntimePath() };
   delete settings.runtimeKey;
   delete settings.hasRuntimeKey;
   await fsp.mkdir(app.getPath("userData"), { recursive: true });
