@@ -1,0 +1,56 @@
+{
+  "name": "webgpt-bridge",
+  "version": "0.2.0",
+  "description": "A private desktop bridge from WebGPT to local MCP agents.",
+  "private": false,
+  "main": "src/main.cjs",
+  "author": "WebGPT Bridge",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist:mac": "electron-builder --mac dmg zip --universal",
+    "dist:win": "electron-builder --win nsis zip --x64",
+    "dist:all": "npm run dist:mac && npm run dist:win"
+  },
+  "devDependencies": {
+    "electron": "^40.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.localagenthost.desktop",
+    "productName": "WebGPT Bridge",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "README.md"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
