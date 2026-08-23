@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebGPT Bridge</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="mark" aria-hidden="true"><i></i></div>
+        <div><h1>WebGPT Bridge</h1><p>本地 Agent 控制器</p></div>
+        <div id="connection" class="connection offline"><span></span><b>未连接</b></div>
+      </header>
+
+      <section class="controller card">
+        <p class="eyebrow">PRIVATE MCP CONTROLLER</p>
+        <h2>让 ChatGPT 使用<br />你的本地 Agent。</h2>
+        <p class="muted">启动后，关闭这个窗口也不会断开连接。你可以随时从菜单栏图标重新打开控制器。</p>
+        <div class="actions"><button id="start" class="primary">启动连接</button><button id="stop" class="secondary">停止</button><button id="openChatGPT" class="link">打开 ChatGPT ↗</button></div>
+      </section>
+
+      <section class="status-list card">
+        <div><span>本地 Agent</span><strong id="serverState">未运行</strong></div>
+        <div><span>Secure MCP Tunnel</span><strong id="tunnelState">未连接</strong></div>
+        <div><span>控制器</span><strong id="nextStep">点击“启动连接”</strong></div>
+      </section>
+
+      <details class="advanced card">
+        <summary>高级设置 <span>仅在首次部署或更换 Agent 时需要</span></summary>
+        <div class="settings-body">
+          <div class="grid">
+            <label>工作区目录<input id="workspacePath" placeholder="将被 Agent 操作的项目目录" /><button data-picker="workspacePath" class="pick">选择</button></label>
+            <label>Agent 运行时目录<input id="runtimePath" placeholder="包含 dist/server.js 的项目" /><button data-picker="runtimePath" class="pick">选择</button></label>
+            <label>tunnel-client<input id="tunnelClientPath" placeholder="OpenAI tunnel-client 可执行文件" /><button data-file-picker="tunnelClientPath" class="pick">选择</button></label>
+            <label>Node.js（可选）<input id="nodePath" placeholder="留空则自动查找 Node.js 20+" /></label>
+            <label>Tunnel ID<input id="tunnelId" placeholder="tunnel_…" /></label>
+            <label>配置名称<input id="profile" placeholder="local-agent-host" /></label>
+            <label>HTTPS 代理（可选）<input id="httpsProxy" placeholder="http://127.0.0.1:7890" /></label>
+            <label>运行时密钥<input id="runtimeKey" type="password" autocomplete="new-password" placeholder="留空则保留已保存密钥" /><button id="clearKey" class="inline-danger">移除</button></label>
+          </div>
+          <div class="save-row"><span id="keyStatus"></span><button id="save" class="secondary">保存设置</button></div>
+        </div>
+      </details>
+
+      <details class="logs card"><summary>运行日志 <span>仅在排查问题时查看</span></summary><pre id="logOutput">尚未启动。</pre></details>
+      <p id="message" role="status"></p>
+    </main>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
