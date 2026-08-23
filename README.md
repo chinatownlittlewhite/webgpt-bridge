@@ -58,7 +58,7 @@ WebGPT Bridge 桌面控制器
 
 ### 1. 准备 OpenAI Tunnel
 
-在 OpenAI 平台创建或确认 Tunnel，并获取 Tunnel ID、运行时密钥及对应系统的 `tunnel-client` 可执行文件。
+前往 [OpenAI Platform Tunnels](https://platform.openai.com/settings/organization/security/tunnels) 创建或确认 Tunnel，并获取 Tunnel ID、运行时密钥及对应系统的 `tunnel-client` 可执行文件。
 
 如果网络需要本机 HTTPS 代理，可在控制器“HTTPS 代理”中填写代理地址，例如：
 
