@@ -1,3 +1,4 @@
+
 # WebGPT Bridge
 
 WebGPT Bridge 是一个 macOS / Windows 桌面控制器。它启动仓库内置的 MCP Agent，并通过 OpenAI Secure MCP Tunnel 让 ChatGPT 网页版调用本机工作区。
@@ -34,13 +35,13 @@ WebGPT Bridge 桌面控制器
 
 在 [Releases](https://github.com/chinatownlittlewhite/webgpt-bridge/releases) 下载对应系统的最新发行包。当前发布包未签名或公证，请只从本仓库 Releases 下载，并在下载页核对 SHA-256。
 
-当前 `v0.3.1` 提供 macOS Apple Silicon 与 Windows x64 安装包。macOS Intel 和通用包需要在相应目标平台构建、验证后才会发布，请不要下载旧版安装包替代新版。
+当前 `v0.3.2` 提供 macOS Apple Silicon 与 Windows x64 安装包。macOS Intel 和通用包需要在相应目标平台构建、验证后才会发布，请不要下载旧版安装包替代新版。
 
 | 平台 | 推荐下载 |
 | --- | --- |
-| macOS Apple Silicon | `WebGPT.Bridge-0.3.1-arm64.dmg`，也可下载 ZIP |
-| macOS Intel | 当前未提供 v0.3.1 安装包 |
-| Windows 10 / 11 x64 | `WebGPT.Bridge.Setup.0.3.1.exe`，也可下载 ZIP |
+| macOS Apple Silicon | `WebGPT Bridge-0.3.2-arm64.dmg`，也可下载 ZIP |
+| macOS Intel | 当前未提供 v0.3.2 安装包 |
+| Windows 10 / 11 x64 | `WebGPT Bridge Setup 0.3.2.exe`，也可下载 ZIP |
 
 ### macOS
 
@@ -50,7 +51,7 @@ WebGPT Bridge 桌面控制器
 
 ### Windows
 
-1. 运行 `WebGPT.Bridge.Setup.0.3.1.exe`。
+1. 运行 `WebGPT Bridge Setup 0.3.2.exe`。
 2. 按安装向导完成安装，可自行选择安装位置。
 3. 若 SmartScreen 显示提示，先确认发布来源和 SHA-256；确认无误后选择“仍要运行”。
 
@@ -58,7 +59,25 @@ WebGPT Bridge 桌面控制器
 
 ### 1. 准备 OpenAI Tunnel
 
-前往 [OpenAI Platform Tunnels](https://platform.openai.com/settings/organization/security/tunnels) 创建或确认 Tunnel，并获取 Tunnel ID、运行时密钥及对应系统的 `tunnel-client` 可执行文件。
+以下配置需要在每一台要运行本地 Agent 的电脑上分别完成。不要让两台电脑共用同一个 Tunnel ID 或运行时密钥，否则 ChatGPT 的请求可能被转发到错误主机。
+
+1. 打开 [OpenAI Platform Tunnels](https://platform.openai.com/settings/organization/tunnels)，点击 **Create tunnel**。
+2. 为 Tunnel 填写能识别设备的名称，例如 Mac mini 使用 `macmini`，Windows 台式机使用 `desktop`；说明可写 `Private local MCP server`。
+3. 选择拥有该配置的 Platform Organization，并关联实际使用 ChatGPT 的 workspace。
+4. 创建后记录 `tunnel_...` 格式的 Tunnel ID。它需要填入控制器，但不应提交到仓库或公开文档。
+
+接着创建仅供该设备运行 `tunnel-client` 使用的密钥：
+
+1. 打开 [OpenAI Platform API keys](https://platform.openai.com/settings/organization/api-keys)，点击 **Create new secret key**。
+2. 选择与设备对应的项目，例如 `macmini` 或 `desktop`。
+3. 选择 **Restricted**，只勾选 **Tunnels: Read** 和 **Tunnels: Use**。不要为 Tunnel 运行时密钥授予模型、文件或其他 API 权限。
+4. 使用明确的名称，例如 `webgpt-bridge-macmini-tunnel` 或 `webgpt-bridge-desktop-tunnel`，创建后立刻保存一次性显示的密钥。
+
+运行时密钥是凭据：不要发送到聊天、邮件、截图、Issue、README 或 Git；不要把它同步给另一台电脑。各设备应创建独立密钥，并只在对应设备的 WebGPT Bridge 中保存。
+
+从 Tunnel 设置页的 **Download tunnel-client** 下载官方最新客户端。Windows 10/11 的普通 Intel/AMD 电脑选择 **Windows x64 / x86_64 / AMD64** 版本；仅 Windows on ARM 设备选择 **Windows ARM64**。将 Windows 文件保存为 `tunnel-client.exe`，再在控制器中选择它。
+
+`tunnel-client` 只需要从本机出站访问 `api.openai.com:443`，不需要对公网或局域网开放入站端口。
 
 如果网络需要本机 HTTPS 代理，可在控制器“HTTPS 代理”中填写代理地址，例如：
 
@@ -90,9 +109,20 @@ http://127.0.0.1:12001
 
 点击“启动连接”。启动成功时界面应显示“本地 Agent：运行中”和“Secure MCP Tunnel：已连接”。本机诊断地址为 `http://127.0.0.1:8787/healthz`；这些本机地址不能直接填写到 ChatGPT 网页版连接器中。
 
-### 3. 在 ChatGPT 网页版启用连接器
+### 3. 在 ChatGPT 网页版创建插件
 
-保持控制器运行，并在 ChatGPT 网页版打开 Apps / Connectors，创建或打开对应的 Secure MCP Tunnel 连接器，扫描工具并保存。创建、验证或扫描时，`tunnel-client run` 必须持续运行。Agent 更新了工具 Schema 后，请在 ChatGPT 设置中重新扫描或刷新工具。
+保持控制器运行。在 ChatGPT 网页版中，菜单名称会随账户界面更新显示为 **插件**、**Apps** 或 **Connectors**；当前个人开发者模式入口可从 [ChatGPT 插件](https://chatgpt.com/plugins) 打开。
+
+1. 在 ChatGPT **设置 -> 安全与登录**启用开发人员模式。
+2. 打开“插件”，点击 **创建应用**。
+3. 名称填写当前设备名称，例如 Mac mini 填 `macmini`，Windows 台式机填 `desktop`。
+4. 连接方式选择 **Tunnel / 隧道**，选择同名 Tunnel；也可粘贴该设备的 `tunnel_...` ID。
+5. 身份验证选择 **无**。Tunnel 运行时密钥已经在本地 `tunnel-client` 中完成传输层认证，不应填入 ChatGPT 插件表单。
+6. 创建应用并点击 **连接**，待工具扫描完成后保存。
+
+每台设备建立一个独立插件：`macmini` 插件只连接 `macmini` Tunnel，`desktop` 插件只连接 `desktop` Tunnel。不要把已有插件改指向另一台设备，也不要同时在两台电脑运行同一个 Tunnel。
+
+创建、验证或扫描工具时，控制器中的 `tunnel-client run` 必须持续运行。Agent 更新工具 Schema 后，请在 ChatGPT 插件设置中重新扫描或刷新工具。
 
 ## 使用方式
 
