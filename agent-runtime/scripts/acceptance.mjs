@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -252,6 +253,17 @@ try {
   const healthJson = await health.json();
   assert.equal(healthJson.version, VERSION);
   assert.equal(healthJson.toolCount, EXPECTED_TOOLS.length);
+
+  stage("OAuth discovery is absent when no OAuth server is configured");
+  for (const route of [
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-authorization-server",
+  ]) {
+    const response = await fetch(`http://127.0.0.1:${server.port}${route}`);
+    assert.equal(response.status, 404, `${route} must not advertise incomplete OAuth metadata`);
+    assert.equal(await response.text(), "", `${route} must not return a JSON error as metadata`);
+  }
 
   stage("Goal session persistence across server restart");
   const started = await clientBundle.client.callTool({
