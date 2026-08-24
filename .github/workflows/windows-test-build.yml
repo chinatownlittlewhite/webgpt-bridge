@@ -1,0 +1,68 @@
+name: Windows test build
+
+on:
+  push:
+    branches:
+      - ci/windows-test-20260824-2301
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Expand and apply Windows fixes
+        shell: bash
+        run: |
+          base64 -d .ci/apply-windows-fixes.sh.gz.b64 | gzip -d > .ci/apply-windows-fixes.sh
+          chmod +x .ci/apply-windows-fixes.sh
+          bash .ci/apply-windows-fixes.sh
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Install agent dependencies
+        run: npm --prefix agent-runtime ci
+
+      - name: Full agent tests
+        run: npm --prefix agent-runtime test
+
+      - name: Agent lint
+        run: npm --prefix agent-runtime run lint
+
+      - name: Public MCP contract
+        run: npm --prefix agent-runtime run contract
+
+      - name: Build agent JavaScript
+        run: npm --prefix agent-runtime run build
+
+      - name: Build Windows native sandbox helper
+        run: npm --prefix agent-runtime run build:native
+
+      - name: Real Windows agent acceptance
+        run: npm --prefix agent-runtime run acceptance
+
+      - name: Build Windows x64 desktop package
+        run: npm run dist:win
+
+      - name: Upload Windows test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: webgpt-bridge-windows-test-x64
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
