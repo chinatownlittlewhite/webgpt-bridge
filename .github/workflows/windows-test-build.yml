@@ -31,7 +31,10 @@ jobs:
       - name: Expand and apply Windows fixes
         shell: bash
         run: |
+          cat .ci/payload.part00 .ci/payload.part01 .ci/payload.part02 .ci/payload.part03 .ci/payload.part04 .ci/payload.part05 > .ci/apply-windows-fixes.sh.gz.b64
+          test "$(wc -c < .ci/apply-windows-fixes.sh.gz.b64)" -eq 25200
           base64 -d .ci/apply-windows-fixes.sh.gz.b64 | gzip -d > .ci/apply-windows-fixes.sh
+          bash -n .ci/apply-windows-fixes.sh
           chmod +x .ci/apply-windows-fixes.sh
           bash .ci/apply-windows-fixes.sh
 
