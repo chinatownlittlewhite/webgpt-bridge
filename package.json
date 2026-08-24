@@ -14,8 +14,8 @@
     "prepare:agent": "npm --prefix agent-runtime ci && npm --prefix agent-runtime run build && npm --prefix agent-runtime run build:native",
     "verify:desktop": "node scripts/verify-desktop.cjs",
     "pack": "npm run build:icon && npm run prepare:tunnel-client:mac && npm run prepare:agent && electron-builder --dir",
-    "dist:mac": "npm run build:icon && npm run prepare:tunnel-client:mac && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --mac dmg zip --arm64",
-    "dist:win": "npm run prepare:tunnel-client:win && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --win nsis zip --x64",
+    "dist:mac": "npm run build:icon && npm run prepare:tunnel-client:mac && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --mac dmg zip --arm64 --publish never",
+    "dist:win": "npm run prepare:tunnel-client:win && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --win nsis zip --x64 --publish never",
     "dist:all": "npm run dist:mac && npm run dist:win"
   },
   "devDependencies": {
