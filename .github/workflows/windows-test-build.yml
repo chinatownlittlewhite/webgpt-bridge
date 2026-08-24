@@ -39,6 +39,7 @@ jobs:
           chmod +x .ci/apply-windows-fixes.sh
           bash .ci/apply-windows-fixes.sh
           python .ci/normalize-cross-platform-sandbox-tests.py
+          python .ci/fix-sandbox-verify-windows-env.py
 
       - name: Install desktop dependencies
         run: npm ci
