@@ -54,6 +54,7 @@ test("platform dist scripts enforce desktop tests and native Agent acceptance be
   for (const name of ["dist:mac", "dist:win"]) {
     assert.match(packageJson.scripts[name], /npm run verify:desktop/);
     assert.match(packageJson.scripts[name], /npm --prefix agent-runtime run acceptance/);
+    assert.match(packageJson.scripts[name], /electron-builder .*--publish never/);
   }
 });
 
