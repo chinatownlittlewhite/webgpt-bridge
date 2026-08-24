@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - ci/windows-test-20260824-2301
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
