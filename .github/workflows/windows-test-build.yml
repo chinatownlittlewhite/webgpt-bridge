@@ -35,6 +35,7 @@ jobs:
           test "$(wc -c < .ci/apply-windows-fixes.sh.gz.b64)" -eq 25200
           base64 -d .ci/apply-windows-fixes.sh.gz.b64 | gzip -d > .ci/apply-windows-fixes.sh
           bash -n .ci/apply-windows-fixes.sh
+          sed -i 's#git apply --whitespace=nowarn #python .ci/apply-loose-patch.py #' .ci/apply-windows-fixes.sh
           chmod +x .ci/apply-windows-fixes.sh
           bash .ci/apply-windows-fixes.sh
 
