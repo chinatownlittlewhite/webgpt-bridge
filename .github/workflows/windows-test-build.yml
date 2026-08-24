@@ -61,6 +61,12 @@ jobs:
       - name: Build Windows native sandbox helper
         run: npm --prefix agent-runtime run build:native
 
+      - name: Diagnose native sandbox verification
+        working-directory: agent-runtime
+        shell: pwsh
+        run: |
+          node --input-type=module -e 'import { prepareNativeSandbox } from "./dist/native-sandbox.js"; const r = await prepareNativeSandbox({ workspace: process.cwd(), platform: "win32", verify: true }); console.log("NATIVE_SANDBOX_DIAGNOSTIC=" + JSON.stringify({ discovery: { available: r.discovery?.available, reason: r.discovery?.reason }, verification: r.verification, summary: r.summary }, null, 2));'
+
       - name: Real Windows agent acceptance
         run: npm --prefix agent-runtime run acceptance
 
