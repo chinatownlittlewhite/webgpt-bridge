@@ -1,4 +1,3 @@
-
 import crypto from "node:crypto";
 import http from "node:http";
 import path from "node:path";
@@ -6,10 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   McpServer,
   createMcpHandler,
-  createRequestStateCodec,
   fromJsonSchema,
-  inputRequired,
-  inputResponse,
 } from "@modelcontextprotocol/server";
 import {
   hostHeaderValidation,
@@ -23,12 +19,12 @@ import { goalModeHostInstructions } from "./host-instructions.js";
 import { prepareNativeSandbox } from "./native-sandbox.js";
 import { createProcessManager } from "./process-manager.js";
 import { loadProjectContext } from "./project-context.js";
+import { createHostApprovalClient } from "./local-broker-client.js";
 import { createCoreTools } from "./tool.js";
 import { resolveWorkspace } from "./workspace.js";
 
 const VERSION = "0.9.0";
 const DEFAULT_PORT = 8787;
-const APPROVAL_INPUT_KEY = "approval";
 
 function envBool(value, fallback = false) {
   if (value === undefined) return fallback;
@@ -51,33 +47,6 @@ function isLoopbackHost(host) {
   return host === "127.0.0.1" || host === "::1" || host === "localhost";
 }
 
-function stateKeyFromEnvironment() {
-  const configured = process.env.LPC_REQUEST_STATE_KEY;
-  if (configured) return crypto.createHash("sha256").update(configured, "utf8").digest();
-  return crypto.randomBytes(32);
-}
-
-function stable(value) {
-  if (Array.isArray(value)) return value.map(stable);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, stable(entry)]));
-  }
-  return value;
-}
-
-function toolInputHash(toolName, input) {
-  return crypto.createHash("sha256").update(JSON.stringify({ toolName, input: stable(input) })).digest("hex");
-}
-
-function approvalFromResult(result) {
-  if (!result || typeof result !== "object") return null;
-  if (result.status === "approval_required" && result.approvalRequest?.id) return result.approvalRequest;
-  if (result.status === "blocked_approval") {
-    if (result.actionResult?.approvalRequest?.id) return result.actionResult.approvalRequest;
-    if (result.verification?.result?.approvalRequest?.id) return result.verification.result.approvalRequest;
-  }
-  return null;
-}
 
 function boundedAgentText(text, maxBytes = 48_000) {
   const value = String(text ?? "");
@@ -258,14 +227,12 @@ function toolAnnotations(name) {
   };
 }
 
-function buildMcpServer({ tools, stateCodec, auditLogger, instructions }) {
+function buildMcpServer({ tools, auditLogger, instructions, hostApproval }) {
   const server = new McpServer(
     { name: "webgpt-bridge", version: VERSION },
     {
       capabilities: { tools: {} },
       instructions,
-      requestState: { verify: stateCodec.verify },
-      inputRequired: { maxRounds: 8, roundTimeoutMs: 10 * 60_000 },
     },
   );
 
@@ -277,64 +244,16 @@ function buildMcpServer({ tools, stateCodec, auditLogger, instructions }) {
         inputSchema: fromJsonSchema(tool.inputSchema),
         annotations: toolAnnotations(tool.name),
       },
-      async (args, ctx) => {
-        const inputHash = toolInputHash(tool.name, args);
-        const state = ctx.mcpReq.requestState();
-        const response = inputResponse(ctx.mcpReq.inputResponses, APPROVAL_INPUT_KEY);
-        const stateMatches =
-          state &&
-          typeof state === "object" &&
-          state.step === "approval" &&
-          state.toolName === tool.name &&
-          state.inputHash === inputHash &&
-          typeof state.approvalId === "string";
-
-        let trustedContext = {};
-        if (stateMatches && response.kind === "elicit") {
-          if (response.action !== "accept" || response.content?.confirm !== true) {
-            trustedContext = { requestApproval: () => false };
-          } else {
-            trustedContext = {
-              requestApproval: (request) => request?.id === state.approvalId,
-            };
-          }
+      async (args) => {
+        try {
+          const trustedContext = typeof hostApproval === "function" ? { requestApproval: hostApproval } : {};
+          const result = await tool.invoke(args, trustedContext);
+          return callToolResult(tool.name, result);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          auditLogger.record({ type: "mcp_tool_error", tool: tool.name, error: message });
+          return callToolResult(tool.name, { status: "tool_error", error: message });
         }
-
-        const result = await tool.invoke(args, trustedContext);
-        const approval = approvalFromResult(result);
-        if (!approval) return callToolResult(tool.name, result);
-
-        if (stateMatches && state.approvalId !== approval.id) {
-          auditLogger.record({
-            type: "mcp_approval_state_mismatch",
-            tool: tool.name,
-            expectedApprovalId: state.approvalId,
-            actualApprovalId: approval.id,
-          });
-        }
-
-        auditLogger.record({ type: "mcp_approval_prompt", tool: tool.name, approvalId: approval.id });
-        return inputRequired({
-          inputRequests: {
-            [APPROVAL_INPUT_KEY]: inputRequired.elicit({
-              message: safeApprovalSummary(tool.name, approval),
-              requestedSchema: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  confirm: { type: "boolean", title: "Approve this exact action" },
-                },
-                required: ["confirm"],
-              },
-            }),
-          },
-          requestState: await stateCodec.mint({
-            step: "approval",
-            toolName: tool.name,
-            inputHash,
-            approvalId: approval.id,
-          }),
-        });
       },
     );
   }
@@ -345,6 +264,7 @@ export async function createProductionRuntime({
   workspace = process.env.LPC_WORKSPACE ?? process.cwd(),
   verifySandbox = envBool(process.env.LPC_VERIFY_SANDBOX, true),
   enableNetworkTools = envBool(process.env.LPC_ENABLE_NETWORK_TOOLS, false),
+  localBrokerSocket = process.env.LPC_LOCAL_BROKER_SOCKET ?? "",
   windowsHelperPath = process.env.LPC_WINDOWS_SANDBOX_HELPER,
 } = {}) {
   const root = resolveWorkspace(workspace);
@@ -387,6 +307,7 @@ export async function createProductionRuntime({
     workspace: root,
     sandboxAdapter: normalSandbox.adapter,
     networkSandboxAdapter,
+    localBrokerSocket,
     processManager,
     platform: process.platform,
     auditLogger,
@@ -396,9 +317,9 @@ export async function createProductionRuntime({
     maxProcesses: 32,
   });
 
-  const stateCodec = createRequestStateCodec({ key: stateKeyFromEnvironment(), ttlSeconds: 10 * 60 });
+  const hostApproval = localBrokerSocket ? createHostApprovalClient({ socketPath: localBrokerSocket }) : undefined;
   const mcpHandler = createMcpHandler(
-    () => buildMcpServer({ tools, stateCodec, auditLogger, instructions: serverInstructions }),
+    () => buildMcpServer({ tools, auditLogger, instructions: serverInstructions, hostApproval }),
     { legacy: "stateless" },
   );
 
@@ -505,10 +426,6 @@ export async function startProductionServer(options = {}) {
   const displayPort = typeof address === "object" && address ? address.port : port;
   console.error(`[webgpt-bridge] v${VERSION} listening on http://${displayHost}:${displayPort}/mcp`);
   console.error(`[webgpt-bridge] platform=${process.platform} sandbox=${runtime.normalSandbox.summary.name} autoRunSafe=${runtime.normalSandbox.summary.autoRunSafe}`);
-  if (!process.env.LPC_REQUEST_STATE_KEY) {
-    console.error("[webgpt-bridge] LPC_REQUEST_STATE_KEY is not set; approval requestState signatures reset on server restart.");
-  }
-
   const close = async () => {
     await runtime.processManager.close();
     await runtime.mcpHandler.close();

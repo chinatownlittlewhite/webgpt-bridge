@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   createBubblewrapAdapter,
   createMacOSSandboxExecAdapter,
@@ -85,6 +88,9 @@ test("macOS Seatbelt adapter generates deny-default profile and dynamic grants",
   assert.equal(wrapped[1], "-p");
   assert.match(wrapped[2], /\(deny default\)/);
   assert.match(wrapped[2], /\(deny network\*\)/);
+  assert.match(wrapped[2], /\(allow network-inbound \(local tcp "localhost:\*"\)\)/);
+  assert.match(wrapped[2], /\(allow network-outbound \(remote tcp "localhost:\*"\)\)/);
+  assert.match(wrapped[2], /\(literal "\/"\)/, "Node needs read access to the filesystem root metadata during startup");
   assert.match(wrapped[2], /\/tmp\/project/);
   assert.match(wrapped[2], /\/tmp\/trusted-runtime/);
   assert.match(wrapped[2], /\/tmp\/git-meta/);
@@ -99,6 +105,26 @@ test("legacy macOS constructor remains fingerprinted and unverified by default",
   const networked = createMacOSSandboxExecAdapter({ allowNetwork: true });
   assert.notEqual(networked.verificationId, adapter.verificationId);
   assert.equal(adapter.autoRunSafe, false);
+});
+
+test("macOS verified Seatbelt permits localhost while blocking external network", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("native Seatbelt verification runs on macOS");
+    return;
+  }
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "webgpt-seatbelt-"));
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  const report = await verifySandboxAdapter({
+    adapter: createMacOSSeatbeltAdapter(),
+    workspace,
+  });
+
+  if (report.probe?.stderr?.includes("sandbox_apply: Operation not permitted")) {
+    t.skip("a process already inside Seatbelt cannot apply a nested Seatbelt profile");
+    return;
+  }
+  assert.equal(report.passed, true, JSON.stringify(report));
+  assert.equal(report.checks.networkPolicySatisfied, true);
 });
 
 test("Windows AppContainer adapter passes only trusted helper arguments and parent pid", () => {

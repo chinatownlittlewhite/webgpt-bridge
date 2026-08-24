@@ -1,5 +1,12 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1024" height="1024" rx="226" fill="#171717"/>
-  <path d="M512 196C337 196 196 337 196 512s141 316 316 316c116 0 218-62 273-155H604c-30 28-70 45-114 45-92 0-166-74-166-166s74-166 166-166c44 0 84 17 114 45h181C730 258 628 196 512 196Z" fill="#F7F7F8"/>
-  <circle cx="512" cy="552" r="84" fill="#10A37F"/>
+  <defs>
+    <linearGradient id="bg" x1="180" y1="96" x2="850" y2="920" gradientUnits="userSpaceOnUse"><stop stop-color="#26312E"/><stop offset="1" stop-color="#0D1211"/></linearGradient>
+    <linearGradient id="accent" x1="322" y1="384" x2="712" y2="650" gradientUnits="userSpaceOnUse"><stop stop-color="#CFF9E9"/><stop offset="1" stop-color="#56D6AE"/></linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <path d="M282 596c0-88 71-159 159-159h64" fill="none" stroke="#F3F7F5" stroke-width="92" stroke-linecap="round"/>
+  <path d="M742 428c0 88-71 159-159 159h-64" fill="none" stroke="url(#accent)" stroke-width="92" stroke-linecap="round"/>
+  <circle id="bridge-node-left" cx="282" cy="596" r="62" fill="#F3F7F5"/>
+  <circle id="bridge-node-right" cx="742" cy="428" r="62" fill="#56D6AE"/>
+  <circle cx="512" cy="512" r="38" fill="#0F1715" stroke="#DDF8EE" stroke-width="18"/>
 </svg>

@@ -7,7 +7,7 @@ import { resolvePlatformArgv } from "./platform.js";
 import { classifyCommand } from "./policy.js";
 import { killProcessTree, wrapWithParentGuard } from "./process-tree.js";
 import { normalizeSandboxAdapter, sandboxSummary, wrapWithSandbox } from "./sandbox.js";
-import { createWorkspaceTemp, INTERNAL_STATE_DIR, resolveWorkspaceCwd } from "./workspace.js";
+import { createWorkspaceTemp, INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -34,15 +34,27 @@ export function validateCommandEnvironment(additions = {}) {
   return validated;
 }
 
-function ensureDir(directory) {
-  fs.mkdirSync(directory, { recursive: true });
+function ensurePlainDirectory(directory) {
+  const parent = path.dirname(directory);
+  if (parent !== directory) ensurePlainDirectory(parent);
+  try {
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`trusted host-private directory must not be a symbolic link: ${directory}`);
+    }
+    return directory;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  fs.mkdirSync(directory);
   return directory;
 }
 
 function trustedWindowsEnvironment(root, temp) {
-  const profile = ensureDir(path.join(root, INTERNAL_STATE_DIR, "windows-profile"));
-  const appData = ensureDir(path.join(profile, "AppData", "Roaming"));
-  const localAppData = ensureDir(path.join(profile, "AppData", "Local"));
+  const profile = ensurePlainDirectory(path.join(root, INTERNAL_STATE_DIR, "windows-profile"));
+  const appDataRoot = ensurePlainDirectory(path.join(profile, "AppData"));
+  const appData = ensurePlainDirectory(path.join(appDataRoot, "Roaming"));
+  const localAppData = ensurePlainDirectory(path.join(appDataRoot, "Local"));
   return {
     SystemRoot: process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows",
     WINDIR: process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",
@@ -158,7 +170,7 @@ export function createCommandRunner({
     }
 
     const validatedEnv = validateCommandEnvironment(env);
-    const { root, cwd: resolvedCwd } = resolveWorkspaceCwd(workspace, cwd);
+    const { root, cwd: resolvedCwd } = resolveModelWorkspaceCwd(workspace, cwd, { platform });
     const normalizedCwd = relativeCwd(root, resolvedCwd);
     const trustedExtraReadPaths = normalizeSandboxAccessPaths(sandboxExtraReadPaths, "sandboxExtraReadPaths");
     const trustedExtraWritePaths = normalizeSandboxAccessPaths(sandboxExtraWritePaths, "sandboxExtraWritePaths");

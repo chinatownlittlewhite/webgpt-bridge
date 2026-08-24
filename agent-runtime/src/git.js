@@ -91,6 +91,8 @@ export function buildGitArgv(input) {
       }
       return ["git", "commit", "-m", input.message];
     }
+    case "push":
+      return ["git", "push", "origin", "HEAD"];
     case "restore": {
       const paths = normalizePaths(input.paths);
       if (paths.length === 0) throw new TypeError("git restore requires at least one path");

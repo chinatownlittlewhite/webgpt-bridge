@@ -10,6 +10,17 @@ export { discoverManagedWorktreeGitAccess } from "./git-metadata.js";
 export { buildGitArgv, createGitRunner } from "./git.js";
 export { buildGitHubArgv, createGitHubRunner } from "./github.js";
 export { createGoalController, goalControllerDefaults } from "./goal-controller.js";
+export {
+  createLocalBrokerClient,
+  createHostApprovalClient,
+  createLocalBrokerTools,
+  localConfirmBatchInputSchema,
+  localListInputSchema,
+  localReadInputSchema,
+  localRequestSensitiveAccessInputSchema,
+  localRunCommandInputSchema,
+  localStageChangesInputSchema,
+} from "./local-broker-client.js";
 export { createGoalRunner, goalModeDefaults } from "./goal-mode.js";
 export { scopeGoalToolInput, validateGoalCwd } from "./goal-scope.js";
 export { createGoalSessionManager, goalSessionDefaults } from "./goal-session.js";
@@ -109,6 +120,8 @@ export {
 } from "./tool.js";
 export {
   createWorkspaceTemp,
+  resolveModelWorkspaceCwd,
+  resolveModelWorkspacePath,
   resolveWorkspace,
   resolveWorkspaceCwd,
   resolveWorkspacePath,

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { searchFiles } from "./search-files.js";
-import { INTERNAL_STATE_DIR, LEGACY_INTERNAL_STATE_DIR, resolveWorkspacePath } from "./workspace.js";
+import { INTERNAL_STATE_DIR, LEGACY_INTERNAL_STATE_DIR, resolveModelWorkspacePath } from "./workspace.js";
 
 const DEFAULT_MAX_READ_LINES = 400;
 const DEFAULT_MAX_READ_BYTES = 64_000;
@@ -61,7 +61,7 @@ export function readWorkspaceFile({
   positiveInteger(maxLines, "maxLines", 1, 5_000);
   positiveInteger(maxBytes, "maxBytes", 1_024, 1_000_000);
 
-  const resolved = resolveWorkspacePath(workspace, requestedPath);
+  const resolved = resolveModelWorkspacePath(workspace, requestedPath);
   const stat = fs.statSync(resolved.path);
   if (!stat.isFile()) throw new Error(`${requestedPath}: not a file`);
 
@@ -229,7 +229,7 @@ export function listWorkspaceDirectory({
 } = {}) {
   positiveInteger(maxDepth, "maxDepth", 1, 12);
   positiveInteger(maxEntries, "maxEntries", 1, 5_000);
-  const resolved = resolveWorkspacePath(workspace, requestedPath);
+  const resolved = resolveModelWorkspacePath(workspace, requestedPath);
   if (!fs.statSync(resolved.path).isDirectory()) throw new Error(`${requestedPath}: not a directory`);
 
   const entries = [];
@@ -302,7 +302,7 @@ export function searchWorkspaceText({
   positiveInteger(maxFiles, "maxFiles", 1, 20_000);
   positiveInteger(maxPreviewBytes, "maxPreviewBytes", 128, 32_000);
 
-  const rootResolved = resolveWorkspacePath(workspace, requestedPath);
+  const rootResolved = resolveModelWorkspacePath(workspace, requestedPath);
   if (!fs.statSync(rootResolved.path).isDirectory()) throw new Error(`${requestedPath}: not a directory`);
   const relativeCwd = workspacePath(rootResolved.root, rootResolved.path);
   const files = searchFiles({
@@ -325,7 +325,7 @@ export function searchWorkspaceText({
       truncated = true;
       break;
     }
-    const resolved = resolveWorkspacePath(workspace, file);
+    const resolved = resolveModelWorkspacePath(workspace, file);
     const stat = fs.statSync(resolved.path);
     if (stat.size > DEFAULT_MAX_SEARCH_FILE_BYTES) {
       skippedLarge += 1;

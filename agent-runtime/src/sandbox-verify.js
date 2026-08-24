@@ -23,16 +23,23 @@ function runProbe({ adapter, workspace, outsidePath, port, timeoutMs }) {
 import fs from "node:fs";
 import net from "node:net";
 const [insidePath, outsidePath, portText] = process.argv.slice(1);
-const result = { insideWrite: false, outsideReadBlocked: false, outsideWriteBlocked: false, networkBlocked: false };
+const result = { insideWrite: false, outsideReadBlocked: false, outsideWriteBlocked: false, loopbackAllowed: false, externalNetworkBlocked: false };
 try { fs.writeFileSync(insidePath, "inside", "utf8"); result.insideWrite = true; } catch {}
 try { fs.readFileSync(outsidePath, "utf8"); } catch { result.outsideReadBlocked = true; }
 try { fs.writeFileSync(outsidePath, "modified", "utf8"); } catch { result.outsideWriteBlocked = true; }
 await new Promise((resolve) => {
   const socket = net.createConnection({ host: "127.0.0.1", port: Number(portText) });
-  const finish = (blocked) => { result.networkBlocked = blocked; socket.destroy(); resolve(); };
+  const finish = (allowed) => { result.loopbackAllowed = allowed; socket.destroy(); resolve(); };
+  socket.once("connect", () => finish(true));
+  socket.once("error", () => finish(false));
+  setTimeout(() => finish(false), 750).unref();
+});
+await new Promise((resolve) => {
+  const socket = net.createConnection({ host: "203.0.113.1", port: 443 });
+  const finish = (blocked) => { result.externalNetworkBlocked = blocked; socket.destroy(); resolve(); };
   socket.once("connect", () => finish(false));
-  socket.once("error", () => finish(true));
-  setTimeout(() => finish(true), 750).unref();
+  socket.once("error", (error) => finish(error?.code === "EPERM" || error?.code === "EACCES"));
+  setTimeout(() => finish(false), 750).unref();
 });
 process.stdout.write(JSON.stringify(result));
 `;
@@ -148,12 +155,14 @@ export async function verifySandboxAdapter({
       };
     }
 
-    const observedNetworkBlocked = probe.result.networkBlocked === true && !loopbackConnected;
+    const observedNetworkBlocked = probe.result.externalNetworkBlocked === true;
     const checks = {
       insideWrite: probe.result.insideWrite === true,
       outsideReadBlocked: probe.result.outsideReadBlocked === true,
       outsideWriteBlocked: probe.result.outsideWriteBlocked === true,
-      networkPolicySatisfied: requireNetworkBlocked ? observedNetworkBlocked : true,
+      networkPolicySatisfied: requireNetworkBlocked
+        ? probe.result.loopbackAllowed === true && loopbackConnected && observedNetworkBlocked
+        : true,
     };
     const passed = Object.values(checks).every(Boolean);
     return {

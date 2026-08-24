@@ -4,10 +4,11 @@ import {
   deleteWorkspaceFile,
   moveWorkspaceFile,
 } from "./filesystem.js";
-import { createGitRunner } from "./git.js";
-import { createGitHubRunner } from "./github.js";
+import { buildGitArgv, createGitRunner } from "./git.js";
+import { buildGitHubArgv, createGitHubRunner } from "./github.js";
 import { createGoalController } from "./goal-controller.js";
 import { createFileGoalSessionStore } from "./goal-store.js";
+import { createLocalBrokerClient, createLocalBrokerTools } from "./local-broker-client.js";
 import {
   listWorkspaceDirectory,
   readWorkspaceFile,
@@ -19,7 +20,7 @@ import { createProjectTaskRunner } from "./project-task.js";
 import { createCommandRunner } from "./runner.js";
 import { sandboxSummary } from "./sandbox.js";
 import { searchFiles } from "./search-files.js";
-import { INTERNAL_STATE_DIR } from "./workspace.js";
+import { INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
 function audit(logger, event) {
   try { logger?.record?.(event); } catch {}
@@ -188,6 +189,7 @@ export const gitInputSchema = Object.freeze({
         "worktree_remove",
         "add",
         "commit",
+        "push",
         "restore",
       ],
     },
@@ -388,12 +390,30 @@ export function createRunProjectTaskTool({ workspace, defaultTimeoutMs = 120_000
   };
 }
 
-export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAdapter, platform = process.platform, auditLogger } = {}) {
+export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger } = {}) {
   return {
     name: "git",
-    description: "Run a structured Git operation, including isolated worktree management. Mutations remain approval- and sandbox-controlled.",
+    description: "Run a structured Git operation, including isolated worktree management. The fixed origin/HEAD push action runs through the desktop App's native confirmation broker.",
     inputSchema: gitInputSchema,
     async invoke(input, trustedContext = {}) {
+      if (input.action === "push" && typeof localBrokerSocket === "string" && localBrokerSocket) {
+        const cwd = resolveModelWorkspaceCwd(workspace, input.cwd ?? ".", { platform }).cwd;
+        const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000 })
+          .request("local_run_command", { argv: buildGitArgv(input), cwd });
+        return {
+          status: "completed",
+          exitCode: result?.code ?? -1,
+          signal: result?.signal ?? null,
+          stdout: result?.stdout ?? "",
+          stderr: result?.stderr ?? "",
+          stdoutTruncated: result?.truncated === true,
+          stderrTruncated: false,
+          cwd: input.cwd ?? ".",
+          platform,
+          resolvedArgv: buildGitArgv(input),
+          policy: { decision: "approval_required", rule: "app-owned-git-push-broker" },
+        };
+      }
       const run = createGitRunner({ workspace, timeoutMs: defaultTimeoutMs, sandboxAdapter, platform, auditLogger });
       return await run(input, trustedContext);
     },
@@ -406,19 +426,43 @@ export function createDependencySyncTool({ workspace, networkSandboxAdapter, san
     description: "Synchronize project dependencies using a structured package-manager command. Network access uses the dedicated network sandbox and always remains approval-controlled.",
     inputSchema: dependencySyncInputSchema,
     async invoke(input, trustedContext = {}) {
-      const run = createDependencySyncRunner({ workspace, sandboxAdapter: networkSandboxAdapter ?? sandboxAdapter, platform, auditLogger });
+      if (!networkSandboxAdapter) {
+        return { status: "network_unavailable", error: "dedicated network sandbox is unavailable" };
+      }
+      const run = createDependencySyncRunner({ workspace, sandboxAdapter: networkSandboxAdapter, platform, auditLogger });
       return await run(input, trustedContext);
     },
   };
 }
 
-export function createGitHubTool({ workspace, networkSandboxAdapter, sandboxAdapter, platform = process.platform, auditLogger } = {}) {
+export function createGitHubTool({ workspace, networkSandboxAdapter, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger } = {}) {
   return {
     name: "github",
-    description: "Run a bounded GitHub CLI action for PRs, CI, or issues. Uses the dedicated network sandbox and requires command approval.",
+    description: "Run a bounded GitHub CLI action for PRs, CI, or issues. When connected to the desktop App, authenticated actions run through its confirmed local broker so tokens remain in the OS keychain.",
     inputSchema: githubInputSchema,
     async invoke(input, trustedContext = {}) {
-      const run = createGitHubRunner({ workspace, sandboxAdapter: networkSandboxAdapter ?? sandboxAdapter, platform, auditLogger });
+      if (typeof localBrokerSocket === "string" && localBrokerSocket) {
+        const cwd = resolveModelWorkspaceCwd(workspace, input.cwd ?? ".", { platform }).cwd;
+        const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000 })
+          .request("local_run_command", { argv: buildGitHubArgv(input), cwd });
+        return {
+          status: "completed",
+          exitCode: result?.code ?? -1,
+          signal: result?.signal ?? null,
+          stdout: result?.stdout ?? "",
+          stderr: result?.stderr ?? "",
+          stdoutTruncated: result?.truncated === true,
+          stderrTruncated: false,
+          cwd: input.cwd ?? ".",
+          platform,
+          resolvedArgv: buildGitHubArgv(input),
+          policy: { decision: "approval_required", rule: "app-owned-github-broker" },
+        };
+      }
+      if (!networkSandboxAdapter) {
+        return { status: "network_unavailable", error: "dedicated network sandbox is unavailable" };
+      }
+      const run = createGitHubRunner({ workspace, sandboxAdapter: networkSandboxAdapter, platform, auditLogger });
       return await run(input, trustedContext);
     },
   };
@@ -571,6 +615,9 @@ const V09_TOOLS = Object.freeze([
   "apply_patch", "delete_file", "move_file",
   "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "get_capabilities",
 ]);
+const LOCAL_BROKER_TOOL_NAMES = Object.freeze([
+  "local_list", "local_read", "local_request_sensitive_access", "local_stage_changes", "local_confirm_batch", "local_run_command",
+]);
 
 export function createCapabilitiesTool({
   sandboxAdapter,
@@ -578,6 +625,7 @@ export function createCapabilitiesTool({
   workspace,
   goalSessionStore,
   goalPersistSessions = false,
+  localBrokerSocket,
   platform = process.platform,
   auditLogger,
 } = {}) {
@@ -592,7 +640,7 @@ export function createCapabilitiesTool({
         version: "0.9.0",
         releaseStage: "final-acceptance-candidate",
         platform: normalizedPlatform(platform),
-        tools: [...V09_TOOLS],
+        tools: [...V09_TOOLS, ...(typeof localBrokerSocket === "string" && localBrokerSocket ? LOCAL_BROKER_TOOL_NAMES : [])],
         sandbox,
         networkSandbox: networkSandbox
           ? { ...networkSandbox, usableForStructuredNetworkTools: networkSandbox.autoRunSafe === true }
@@ -672,6 +720,7 @@ export function createCoreTools(options = {}) {
     createApplyPatchTool(options),
     createDeleteFileTool(options),
     createMoveFileTool(options),
+    ...createLocalBrokerTools({ socketPath: options.localBrokerSocket }),
   ];
   const goalSessionStore = options.goalSessionStore ?? (
     options.goalPersistSessions === true
@@ -696,6 +745,6 @@ export function createCoreTools(options = {}) {
     createGoalFinishTool(goalController),
     createGoalStatusTool(goalController),
     createGoalCancelTool(goalController),
-    createCapabilitiesTool({ ...options, goalSessionStore }),
+    createCapabilitiesTool({ ...options, goalSessionStore, localBrokerSocket: options.localBrokerSocket }),
   ];
 }

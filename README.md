@@ -1,4 +1,3 @@
-
 # WebGPT Bridge
 
 WebGPT Bridge 是一个 macOS / Windows 桌面控制器。它启动仓库内置的 MCP Agent，并通过 OpenAI Secure MCP Tunnel 让 ChatGPT 网页版调用本机工作区。
@@ -23,25 +22,27 @@ WebGPT Bridge 桌面控制器
 
 从 v0.3.0 起，本仓库和发行安装包都包含安全优先的 MCP Agent 源码及构建后的运行时。普通使用者不需要再单独下载、构建或选择 Agent 项目目录。
 
+从 v0.3.3 起，正式安装包还会内置对应操作系统/架构的 OpenAI `tunnel-client v0.0.11` 与其配套 `cloudflared`。构建时从 OpenAI 官方 Release 下载固定资产并核对仓库中固定的 SHA-256 后才会进入安装包；上游 `LICENSE` 与来源信息也随包保留。OpenAI `tunnel-client` 项目采用 Apache-2.0 许可证。
+
 仍需自行准备：
 
-1. 对应平台的 OpenAI `tunnel-client` 可执行文件。
-2. OpenAI 平台中已创建的 Tunnel ID 与对应运行时密钥。
-3. 一个范围尽可能小的本地工作区目录。
+1. OpenAI 平台中已创建的 Tunnel ID 与对应运行时密钥。
+2. 一个范围尽可能小的本地工作区目录。
 
-`tunnel-client`、Tunnel ID、运行时密钥和工作区文件均不包含在仓库或安装包中，也不得提交到 Git。
+Tunnel ID、运行时密钥和工作区文件不会包含在仓库或安装包中，也不得提交到 Git。
 
 ## 安装应用
 
 在 [Releases](https://github.com/chinatownlittlewhite/webgpt-bridge/releases) 下载对应系统的最新发行包。当前发布包未签名或公证，请只从本仓库 Releases 下载，并在下载页核对 SHA-256。
 
-当前 `v0.3.2` 提供 macOS Apple Silicon 与 Windows x64 安装包。macOS Intel 和通用包需要在相应目标平台构建、验证后才会发布，请不要下载旧版安装包替代新版。
+当前 `v0.3.3` 提供 macOS Apple Silicon 与 Windows x64 安装包。两个平台都在对应 GitHub Actions 原生 runner 上完成 Agent acceptance 后才会发布；Linux 和 macOS Intel 暂不提供本版本安装包。
 
 | 平台 | 推荐下载 |
 | --- | --- |
-| macOS Apple Silicon | `WebGPT Bridge-0.3.2-arm64.dmg`，也可下载 ZIP |
-| macOS Intel | 当前未提供 v0.3.2 安装包 |
-| Windows 10 / 11 x64 | `WebGPT Bridge Setup 0.3.2.exe`，也可下载 ZIP |
+| macOS Apple Silicon | `WebGPT Bridge-0.3.3-mac-arm64.dmg`，也可下载 ZIP |
+| Windows 10 / 11 x64 | `WebGPT Bridge-0.3.3-win-x64.exe`，也可下载 ZIP |
+
+每个 Release 同时包含 GitHub 自动生成的源码 ZIP / TAR.GZ 与 `SHA256SUMS.txt`。
 
 ### macOS
 
@@ -51,7 +52,7 @@ WebGPT Bridge 桌面控制器
 
 ### Windows
 
-1. 运行 `WebGPT Bridge Setup 0.3.2.exe`。
+1. 运行 `WebGPT Bridge-0.3.3-win-x64.exe`。
 2. 按安装向导完成安装，可自行选择安装位置。
 3. 若 SmartScreen 显示提示，先确认发布来源和 SHA-256；确认无误后选择“仍要运行”。
 
@@ -75,7 +76,7 @@ WebGPT Bridge 桌面控制器
 
 运行时密钥是凭据：不要发送到聊天、邮件、截图、Issue、README 或 Git；不要把它同步给另一台电脑。各设备应创建独立密钥，并只在对应设备的 WebGPT Bridge 中保存。
 
-从 Tunnel 设置页的 **Download tunnel-client** 下载官方最新客户端。Windows 10/11 的普通 Intel/AMD 电脑选择 **Windows x64 / x86_64 / AMD64** 版本；仅 Windows on ARM 设备选择 **Windows ARM64**。将 Windows 文件保存为 `tunnel-client.exe`，再在控制器中选择它。
+正式安装包已经包含与平台匹配的 OpenAI `tunnel-client v0.0.11`，普通用户无需再从 Tunnel 设置页单独下载或选择可执行文件。只有在开发、测试或临时替换版本时，才需要在“权限与高级设置”中填写“自定义 tunnel-client（可选）”。留空时应用始终优先使用安装包内置版本。
 
 `tunnel-client` 只需要从本机出站访问 `api.openai.com:443`，不需要对公网或局域网开放入站端口。
 
@@ -89,12 +90,11 @@ http://127.0.0.1:7890
 
 ### 2. 在控制器保存设置
 
-打开 WebGPT Bridge，在主界面的“连接设置”中填写工作区目录、`tunnel-client`、Tunnel ID 和运行时密钥。运行时路径、Node、配置名称和 HTTPS 代理位于运行日志下方的“可选设置”。
+打开 WebGPT Bridge，在主界面的“连接设置”中填写工作区目录、Tunnel ID 和运行时密钥。内置 `tunnel-client` 无需配置；运行时路径、Node、自定义 tunnel-client、配置名称和 HTTPS 代理位于“权限与高级设置”。
 
 | 字段 | 填写内容 |
 | --- | --- |
 | 工作区目录 | 允许 Agent 操作的项目根目录，或多个项目的共同父目录 |
-| tunnel-client | OpenAI `tunnel-client` 可执行文件的完整路径 |
 | Tunnel ID | OpenAI 平台创建的 `tunnel_...` |
 | 运行时密钥 | OpenAI Tunnel 的运行时密钥；首次填入后点击“保存设置” |
 
@@ -103,9 +103,26 @@ http://127.0.0.1:7890
 | 字段 | 填写内容 |
 | --- | --- |
 | Agent 运行时目录 | 默认使用随应用附带的 `agent-runtime`；仅开发或替换 Agent 时修改 |
+| 自定义 tunnel-client（可选） | 留空使用安装包内置 v0.0.11；仅开发、测试或临时替换版本时选择其他可执行文件 |
 | Node.js（可选） | Node 可执行文件完整路径；留空时应用自动查找 Node 20+ |
 | 配置名称 | 保持 `webgpt-bridge` 即可 |
 | HTTPS 代理（可选） | 仅在需要代理访问 OpenAI 时填写 |
+
+### 可选：启用受控本机开发代理
+
+默认的项目 Agent 仍只操作“工作区目录”。如果你希望 ChatGPT 在网页端协助浏览其他本机开发文件、准备跨项目的改动或运行受控开发命令，可在“可选设置”中的“本机操作授权”选择模式，然后重启连接使工具列表刷新：
+
+| 模式 | 行为 |
+| --- | --- |
+| 谨慎 | 读取、搜索和检查自动；写入与变更操作保持较严格确认。 |
+| 工作区自动（推荐） | 已验证沙箱内的普通编辑、test/lint/build、Node/Python 项目命令和本地 Git 变更尽量自动执行；高风险操作仍确认。 |
+| 高自治 | 在工作区自动基础上进一步减少工作区内删除、移动、覆盖等确认，但不会放开敏感路径、提权、shell/SSH 或任意网络外发。 |
+
+在“工作区自动”和“高自治”模式中，可对部分可记忆权限勾选“本次连接记住此类权限”；停止连接、重启应用或切换权限模式后自动清空。敏感路径、任意网络外发、远端 Git 写入、sandbox 权限扩张、shell/SSH 和提权操作不会通过会话记忆静默绕过。每个文件批次最多 20 项，并在实际写入前重新核对 SHA-256；任一文件发生变化，整个批次不会执行。
+
+本机代理默认排除 SSH 密钥、钥匙串/凭据、浏览器资料、云凭据目录、`.env` 与包管理器认证文件、WebGPT Bridge 自身密钥存储及系统目录。敏感位置只能发起一次性读取/列目录请求，并需要你在原生确认窗中批准；无法被永久加入白名单。终端只接受参数数组，不接受 shell 文本、`sudo`、提权程序或可执行文件路径。
+
+这项功能不要求也不会主动请求 macOS 的“完全磁盘访问权限”。macOS 和 Windows 仍会按各自的隐私与 ACL 规则限制文件访问；应用无法绕过这些系统保护。
 
 点击“启动连接”。启动成功时界面应显示“本地 Agent：运行中”和“Secure MCP Tunnel：已连接”。本机诊断地址为 `http://127.0.0.1:8787/healthz`；这些本机地址不能直接填写到 ChatGPT 网页版连接器中。
 
@@ -137,24 +154,24 @@ http://127.0.0.1:7890
 git clone https://github.com/chinatownlittlewhite/webgpt-bridge.git
 cd webgpt-bridge
 npm ci
+npm run prepare:tunnel-client:mac   # macOS Apple Silicon
+# Windows x64 改用：npm run prepare:tunnel-client:win
 npm run prepare:agent
 npm start
 ```
 
-`npm run prepare:agent` 会在 `agent-runtime/` 安装锁定依赖并生成 `dist/server.js`。仅在修改或替换 Agent 时才需要运行它；发行版用户不需要执行此步骤。
+`prepare:tunnel-client:*` 会从 OpenAI 官方 `v0.0.11` Release 下载对应平台归档，按 `scripts/tunnel-client-release.json` 中固定的 SHA-256 校验后解压到被 Git 忽略的 `build/tunnel-client/`。`npm run prepare:agent` 会在 `agent-runtime/` 安装锁定依赖并生成 `dist/server.js`。这些步骤仅供源码开发/构建使用；发行版用户不需要执行。
 
 内置 Agent 的工具、审批策略、沙箱、测试和验收说明以 [`agent-runtime/README.md`](agent-runtime/README.md) 为准。该目录是普通源码子目录，不是 Git submodule。
 
 构建发布包：
 
 ```bash
-npm run dist:mac   # macOS：DMG 与 ZIP
-npm run dist:win   # Windows：NSIS 与 ZIP
+npm run dist:mac   # macOS Apple Silicon：DMG 与 ZIP
+npm run dist:win   # Windows x64：NSIS 与 ZIP
 ```
 
-产物写入 `release/`。macOS 可在 Mac 上构建；Windows 包建议在 Windows 上构建，以便 `node-pty` 等原生可选依赖适配目标平台。
-
-Windows 端如需启用 Agent 的 AppContainer 原生沙箱，进入 `agent-runtime/` 后执行 `npm run build:native`，并在 Windows 真机完成 `npm run acceptance`。当前 Release 已打包 Windows x64 控制器及 MCP 运行时；该原生沙箱助手必须在 Windows 上单独构建和验收。
+产物写入 `release/`。正式 tag 发布由 `.github/workflows/build-desktop.yml` 在 macOS arm64 与 Windows x64 原生 runner 上分别下载并校验对应的 OpenAI `tunnel-client v0.0.11`、执行桌面测试、Agent native acceptance 和打包，再汇总到同一个 GitHub Release。`npm run prepare:agent` 会在 Windows 自动构建 AppContainer native helper，在其他系统上安全跳过该步骤。
 
 ## 故障排除
 
@@ -192,6 +209,8 @@ npm run build
 ## 安全边界
 
 - 选择最小必要的工作区范围，不要选择整个磁盘或用户主目录。
+- 即使启用受控本机开发代理，Agent 进程本身也不会获得整机文件系统、密钥或 shell 权限；只有桌面应用主进程通过本机 IPC 处理允许的结构化请求。
+- 本机代理对非敏感路径采用“读取允许、写入可控、破坏性操作逐次确认”的策略；敏感路径和系统路径默认拒绝。
 - 本地 Agent 固定监听 `127.0.0.1:8787`，不会直接暴露局域网端口。
 - ChatGPT 网页版经受控 Tunnel 连接本机，而非直接访问 localhost。
 - 实际文件权限、命令审批与沙箱强度由 `agent-runtime/` 实现；部署前应审查该目录的策略说明。

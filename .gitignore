@@ -1,5 +1,9 @@
 node_modules/
 release/
+release-patched/
+.npm/
+.webgpt-bridge/
+Library/
 agent-runtime/node_modules/
 agent-runtime/dist/
 agent-runtime/.webgpt-bridge/

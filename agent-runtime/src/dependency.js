@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createCommandRunner } from "./runner.js";
-import { resolveWorkspaceCwd } from "./workspace.js";
+import { resolveModelWorkspaceCwd } from "./workspace.js";
 
 export function discoverDependencySync({ workspace, cwd = ".", allowScripts = false } = {}) {
-  const { cwd: root } = resolveWorkspaceCwd(workspace, cwd);
+  const { cwd: root } = resolveModelWorkspaceCwd(workspace, cwd);
 
   if (fs.existsSync(path.join(root, "package.json"))) {
     if (fs.existsSync(path.join(root, "pnpm-lock.yaml"))) {

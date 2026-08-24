@@ -69,6 +69,32 @@ function existingFile(candidates) {
   return null;
 }
 
+function existingExecutableFile(candidates) {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return path.resolve(candidate);
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return null;
+}
+
+function macosDeveloperGit(executable, env) {
+  if (executable !== "/usr/bin/git") return executable;
+  const developerDir = typeof env.DEVELOPER_DIR === "string" && path.isAbsolute(env.DEVELOPER_DIR)
+    ? env.DEVELOPER_DIR
+    : null;
+  return existingExecutableFile([
+    developerDir ? path.join(developerDir, "usr", "bin", "git") : null,
+    "/Library/Developer/CommandLineTools/usr/bin/git",
+    "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
+  ]) ?? executable;
+}
+
 function windowsNpmCli(command, { env = process.env } = {}) {
   const cliName = command === "npx" ? "npx-cli.js" : "npm-cli.js";
   const envCli = typeof env.npm_execpath === "string" && path.win32.basename(env.npm_execpath).toLowerCase() === cliName
@@ -128,6 +154,17 @@ function trustedRuntimeReadPaths(resolvedArgv, platform) {
     try {
       const stat = fs.statSync(value);
       roots.push(stat.isDirectory() ? value : impl.dirname(value));
+      const resolvedTarget = fs.realpathSync(value);
+      const segments = resolvedTarget.split(impl.sep);
+      const nodeModulesIndex = segments.lastIndexOf("node_modules");
+      if (nodeModulesIndex >= 0 && typeof segments[nodeModulesIndex + 1] === "string") {
+        const packageEnd = segments[nodeModulesIndex + 1].startsWith("@")
+          ? nodeModulesIndex + 3
+          : nodeModulesIndex + 2;
+        if (segments.length >= packageEnd) {
+          roots.push(segments.slice(0, packageEnd).join(impl.sep));
+        }
+      }
     } catch {
       // Only runtime paths that actually exist are trusted.
     }
@@ -159,11 +196,14 @@ export function resolvePlatformArgv(argv, {
 
   if (platform !== "win32") {
     const executable = findExecutableInPath(argv[0], { env, platform });
+    const resolvedExecutable = platform === "darwin" && logicalCommand === "git" && executable
+      ? macosDeveloperGit(executable, env)
+      : executable;
     return resolution({
       platform,
       logicalCommand,
-      argv: executable ? [executable, ...argv.slice(1)] : [...argv],
-      resolved: executable !== null,
+      argv: resolvedExecutable ? [resolvedExecutable, ...argv.slice(1)] : [...argv],
+      resolved: resolvedExecutable !== null,
       usedTrustedShim: false,
     });
   }

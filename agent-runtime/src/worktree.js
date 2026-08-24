@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createCommandRunner } from "./runner.js";
-import { INTERNAL_STATE_DIR, resolveWorkspace, resolveWorkspaceCwd, resolveWorkspacePath } from "./workspace.js";
+import {
+  INTERNAL_STATE_DIR,
+  resolveModelWorkspaceCwd,
+  resolveWorkspace,
+  resolveWorkspacePath,
+} from "./workspace.js";
 
 function safeName(value, label) {
   if (typeof value !== "string" || !/^[A-Za-z0-9._-]{1,80}$/.test(value)) {
@@ -33,7 +38,7 @@ export function createManagedWorktreeRunner({ workspace, sandboxAdapter, platfor
   }
 
   return async function manageWorktree(input = {}, trustedContext = {}) {
-    const { cwd: repoRoot } = resolveWorkspaceCwd(root, input.cwd ?? ".");
+    const { cwd: repoRoot } = resolveModelWorkspaceCwd(root, input.cwd ?? ".", { platform });
     const repoRelative = path.relative(root, repoRoot) || ".";
 
     if (input.action === "list") {

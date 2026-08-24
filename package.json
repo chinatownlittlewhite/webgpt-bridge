@@ -1,7 +1,6 @@
-
 {
   "name": "webgpt-bridge",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "A private desktop bridge from WebGPT to local MCP agents.",
   "private": false,
   "main": "src/main.cjs",
@@ -9,10 +8,14 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "prepare:agent": "npm --prefix agent-runtime ci && npm --prefix agent-runtime run build",
-    "pack": "npm run prepare:agent && electron-builder --dir",
-    "dist:mac": "npm run prepare:agent && electron-builder --mac dmg zip --universal",
-    "dist:win": "npm run prepare:agent && electron-builder --win nsis zip --x64",
+    "build:icon": "node scripts/build-icon.cjs",
+    "prepare:tunnel-client:mac": "node scripts/prepare-tunnel-client.cjs darwin-arm64",
+    "prepare:tunnel-client:win": "node scripts/prepare-tunnel-client.cjs windows-amd64",
+    "prepare:agent": "npm --prefix agent-runtime ci && npm --prefix agent-runtime run build && npm --prefix agent-runtime run build:native",
+    "verify:desktop": "node scripts/verify-desktop.cjs",
+    "pack": "npm run build:icon && npm run prepare:tunnel-client:mac && npm run prepare:agent && electron-builder --dir",
+    "dist:mac": "npm run build:icon && npm run prepare:tunnel-client:mac && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --mac dmg zip --arm64",
+    "dist:win": "npm run prepare:tunnel-client:win && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --win nsis zip --x64",
     "dist:all": "npm run dist:mac && npm run dist:win"
   },
   "devDependencies": {
@@ -22,6 +25,7 @@
   "build": {
     "appId": "com.localagenthost.desktop",
     "productName": "WebGPT Bridge",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
       "agent-runtime/**/*"
@@ -34,10 +38,19 @@
     "files": [
       "src/**/*",
       "agent-runtime/**/*",
+      "!agent-runtime/.webgpt-bridge{,/**}",
+      "!agent-runtime/.npm{,/**}",
       "package.json",
       "README.md"
     ],
+    "extraResources": [
+      {
+        "from": "build/tunnel-client",
+        "to": "tunnel-client"
+      }
+    ],
     "mac": {
+      "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
       "target": [
         "dmg",

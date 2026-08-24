@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import {
   normalizedPlatform,
@@ -14,6 +15,40 @@ test("current-platform node command resolves through trusted PATH without a shel
   assert.equal(result.logicalCommand, "node");
   assert.ok(Array.isArray(result.trustedReadPaths));
   assert.ok(result.trustedReadPaths.length >= 1);
+});
+
+test("Unix npm resolution trusts its real package root without trusting the Node prefix", (t) => {
+  if (process.platform === "win32") {
+    t.skip("Unix npm symlink resolution is covered by Unix native acceptance");
+    return;
+  }
+  const result = resolvePlatformArgv(["npm", "--version"]);
+  const resolvedCli = fs.realpathSync(result.argv[0]);
+  const packageRoot = path.dirname(path.dirname(resolvedCli));
+
+  assert.equal(result.resolved, true);
+  assert.equal(result.logicalCommand, "npm");
+  assert.ok(result.trustedReadPaths.includes(packageRoot));
+  assert.equal(result.trustedReadPaths.includes(path.dirname(path.dirname(packageRoot))), false);
+});
+
+test("macOS Apple Git bypasses the /usr/bin xcrun shim when Command Line Tools Git exists", (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("macOS developer-tool resolution is validated on macOS");
+    return;
+  }
+  const developerGit = "/Library/Developer/CommandLineTools/usr/bin/git";
+  if (!fs.existsSync(developerGit)) {
+    t.skip("standalone Command Line Tools Git is not installed on this host");
+    return;
+  }
+  const result = resolvePlatformArgv(["git", "--version"], {
+    platform: "darwin",
+    env: { ...process.env, PATH: "/usr/bin:/bin" },
+  });
+  assert.equal(result.resolved, true);
+  assert.equal(result.argv[0], developerGit);
+  assert.ok(result.trustedReadPaths.includes(path.dirname(developerGit)));
 });
 
 test("model command names cannot select executable paths", () => {

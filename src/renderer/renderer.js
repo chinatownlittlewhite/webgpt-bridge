@@ -1,5 +1,5 @@
 const api = window.localAgentHost;
-const ids = ["workspacePath", "runtimePath", "tunnelClientPath", "nodePath", "tunnelId", "profile", "httpsProxy", "runtimeKey"];
+const ids = ["workspacePath", "runtimePath", "tunnelClientPath", "nodePath", "tunnelId", "profile", "httpsProxy", "approvalMode", "runtimeKey"];
 const byId = (id) => document.getElementById(id);
 
 function message(text, error = false) {

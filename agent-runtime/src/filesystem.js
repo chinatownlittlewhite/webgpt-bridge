@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { createWorkspaceTemp, resolveWorkspace, resolveWorkspacePath } from "./workspace.js";
+import { createWorkspaceTemp, resolveModelWorkspacePath, resolveWorkspace } from "./workspace.js";
 
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 
@@ -26,7 +26,7 @@ function decodeUtf8(raw, requestedPath) {
 }
 
 function readUtf8File(workspace, requestedPath) {
-  const resolved = resolveWorkspacePath(workspace, requestedPath);
+  const resolved = resolveModelWorkspacePath(workspace, requestedPath);
   const stat = fs.statSync(resolved.path);
   if (!stat.isFile()) throw new Error(`${requestedPath} is not a file`);
   const raw = fs.readFileSync(resolved.path);
@@ -161,7 +161,7 @@ export function applyStructuredPatch({ workspace, changes } = {}) {
 
     if (change.type === "add") {
       if (typeof change.content !== "string") throw new TypeError(`${change.path}: add requires content`);
-      const resolved = resolveWorkspacePath(workspace, change.path, { allowMissing: true });
+      const resolved = resolveModelWorkspacePath(workspace, change.path, { allowMissing: true });
       if (fs.existsSync(resolved.path)) throw new Error(`${change.path}: file already exists`);
       const nextRaw = Buffer.from(change.content, "utf8");
       return { ...change, target: resolved.path, nextRaw, nextSha256: sha256(nextRaw), mode: 0o644 };
@@ -292,7 +292,7 @@ export function deleteWorkspaceFile({ workspace, path: requestedPath, expectedSh
 export function moveWorkspaceFile({ workspace, from, to, expectedSha256 } = {}) {
   const current = readUtf8File(workspace, from);
   if (current.sha256 !== expectedSha256) throw new Error(`${from}: SHA-256 precondition failed`);
-  const destination = resolveWorkspacePath(workspace, to, { allowMissing: true });
+  const destination = resolveModelWorkspacePath(workspace, to, { allowMissing: true });
   if (fs.existsSync(destination.path)) throw new Error(`${to}: destination already exists`);
   fs.mkdirSync(path.dirname(destination.path), { recursive: true });
 

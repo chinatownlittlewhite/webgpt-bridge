@@ -1,24 +1,24 @@
 import path from "node:path";
-import { resolveWorkspaceCwd, resolveWorkspacePath } from "./workspace.js";
+import { resolveModelWorkspaceCwd, resolveModelWorkspacePath } from "./workspace.js";
 
 function workspaceRelative(root, absolutePath) {
   return path.relative(root, absolutePath) || ".";
 }
 
 function resolveGoalRoot(workspace, goalCwd) {
-  const { root, cwd } = resolveWorkspaceCwd(workspace, goalCwd);
+  const { root, cwd } = resolveModelWorkspaceCwd(workspace, goalCwd);
   return { workspaceRoot: root, goalRoot: cwd };
 }
 
 function scopeCwd(workspace, goalCwd, requestedCwd = ".") {
   const { workspaceRoot, goalRoot } = resolveGoalRoot(workspace, goalCwd);
-  const { cwd } = resolveWorkspaceCwd(goalRoot, requestedCwd);
+  const { cwd } = resolveModelWorkspaceCwd(goalRoot, requestedCwd);
   return workspaceRelative(workspaceRoot, cwd);
 }
 
 function scopeFile(workspace, goalCwd, requestedPath, { allowMissing = false } = {}) {
   const { workspaceRoot, goalRoot } = resolveGoalRoot(workspace, goalCwd);
-  const resolved = resolveWorkspacePath(goalRoot, requestedPath, { allowMissing });
+  const resolved = resolveModelWorkspacePath(goalRoot, requestedPath, { allowMissing });
   return workspaceRelative(workspaceRoot, resolved.path);
 }
 

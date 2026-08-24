@@ -12,7 +12,7 @@ import {
   validateCommandEnvironment,
 } from "./runner.js";
 import { normalizeSandboxAdapter, sandboxSummary, wrapWithSandbox } from "./sandbox.js";
-import { resolveWorkspaceCwd } from "./workspace.js";
+import { resolveModelWorkspaceCwd } from "./workspace.js";
 
 function audit(logger, event) {
   try { logger?.record?.(event); } catch {}
@@ -86,7 +86,7 @@ export function createProcessManager({
     if (policy.decision === "deny") return { status: "denied", policy, sandbox: sandboxInfo };
 
     const validatedEnv = validateCommandEnvironment(env);
-    const { root, cwd: resolvedCwd } = resolveWorkspaceCwd(workspace, cwd);
+    const { root, cwd: resolvedCwd } = resolveModelWorkspaceCwd(workspace, cwd, { platform });
     const normalizedCwd = relativeCwd(root, resolvedCwd);
     const childEnv = buildCommandEnvironment(resolvedCwd, validatedEnv, platform);
     let platformCommand;

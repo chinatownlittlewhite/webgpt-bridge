@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createCommandRunner } from "./runner.js";
-import { resolveWorkspaceCwd } from "./workspace.js";
+import { resolveModelWorkspaceCwd } from "./workspace.js";
 
 const TASKS = new Set(["test", "lint", "build", "typecheck", "check"]);
 
 export function discoverProjectTask({ workspace, cwd = ".", task } = {}) {
   if (!TASKS.has(task)) throw new Error(`unsupported project task: ${task}`);
-  const { cwd: projectRoot } = resolveWorkspaceCwd(workspace, cwd);
+  const { cwd: projectRoot } = resolveModelWorkspaceCwd(workspace, cwd);
 
   const packageJsonPath = path.join(projectRoot, "package.json");
   if (fs.existsSync(packageJsonPath)) {

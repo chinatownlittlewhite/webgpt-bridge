@@ -94,10 +94,13 @@ export function createMacOSSandboxExecAdapter({
         "(allow mach-lookup)",
         "(allow ipc-posix-shm)",
         "(allow file-read-metadata)",
+        '(allow file-read* (literal "/"))',
         subpathRule("file-read*", [...systemReadRoots, workspaceRoot, ...normalizedExtraReadPaths, ...dynamicReadPaths, ...dynamicWritePaths]),
         subpathRule("file-write*", [workspaceRoot, tempRoot, ...dynamicWritePaths]),
         '(allow file-read* (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
         '(allow file-write* (literal "/dev/null"))',
+        '(allow network-inbound (local tcp "localhost:*"))',
+        '(allow network-outbound (remote tcp "localhost:*"))',
         allowNetwork ? "(allow network*)" : "(deny network*)",
       ]
         .filter(Boolean)

@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -117,9 +116,7 @@ async function verifyNativeDeveloperWorkflow(runtime) {
   const killed = await runtime.processManager.kill({ processId: started.processId, force: true });
   assert.equal(killed.status, "kill_requested", "managed process tree must accept native termination");
 
-  const repoParent = path.join(root, ".webgpt-bridge", "acceptance-repos");
-  fs.mkdirSync(repoParent, { recursive: true });
-  const repo = fs.mkdtempSync(path.join(repoParent, "repo-"));
+  const repo = fs.mkdtempSync(path.join(root, "acceptance-repo-"));
   let worktreePath = null;
   try {
     runHost(["git", "init"], { cwd: repo });
@@ -193,6 +190,11 @@ const { startProductionServer } = await import("../dist/server.js");
 let server = null;
 let clientBundle = null;
 let sessionId = null;
+const acceptanceInstructions = path.join(root, "AGENTS.md");
+const createdAcceptanceInstructions = !fs.existsSync(acceptanceInstructions);
+if (createdAcceptanceInstructions) {
+  fs.writeFileSync(acceptanceInstructions, "# Acceptance fixture\n\nThis file verifies project instruction discovery.\n", "utf8");
+}
 try {
   stage("start built MCP server and negotiate 2026-07-28");
   server = await startProductionServer({
@@ -332,6 +334,7 @@ try {
   if (sessionId) {
     fs.rmSync(path.join(root, ".webgpt-bridge", "goals", `${sessionId}.json`), { force: true });
   }
+  if (createdAcceptanceInstructions) fs.rmSync(acceptanceInstructions, { force: true });
 }
 
 console.log(JSON.stringify({

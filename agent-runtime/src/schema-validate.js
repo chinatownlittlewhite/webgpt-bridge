@@ -80,6 +80,11 @@ export function validateJsonSchema(value, schema, path = "$") {
     if (schema.items) {
       value.forEach((entry, index) => validateJsonSchema(entry, schema.items, `${path}[${index}]`));
     }
+    if (Array.isArray(schema.prefixItems)) {
+      schema.prefixItems.forEach((entry, index) => {
+        if (index < value.length) validateJsonSchema(value[index], entry, `${path}[${index}]`);
+      });
+    }
   }
 
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {

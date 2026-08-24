@@ -3,8 +3,18 @@ const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const http = require("node:http");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const { normalizeSettings, validateDevelopmentRuntime } = require("./host-config.cjs");
+const { approvalPrompt } = require("./approval-prompt.cjs");
+const { createApprovalSession } = require("./approval-session.cjs");
+const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
+const { createLocalFileBroker } = require("./local-file-broker.cjs");
+const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
+const { buildTrustedCommandPath } = require("./host-path.cjs");
+const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
 
 // Keep v0.1 settings and encrypted runtime keys when the product name changes
 // from Local Agent Host to WebGPT Bridge.
@@ -19,6 +29,12 @@ let windowRef;
 let trayRef;
 let serverProcess;
 let tunnelProcess;
+let localBrokerServer;
+let localBrokerSocket = "";
+let localFileBroker;
+let localTerminalBroker;
+let localApprovalMode = "development";
+const approvalSession = createApprovalSession();
 let logLines = [];
 let isQuitting = false;
 
@@ -36,22 +52,32 @@ function bundledRuntimePath() {
     : path.join(__dirname, "..", "agent-runtime");
 }
 
+function defaultBundledTunnelClientPath() {
+  return bundledTunnelClientPath({
+    resourcesPath: app.isPackaged ? process.resourcesPath : path.join(__dirname, "..", "build"),
+    platform: process.platform,
+  });
+}
+
 function defaultSettings() {
   return {
     workspacePath: "",
     runtimePath: bundledRuntimePath(),
+    agentMode: "bundled",
+    developmentPath: "",
     tunnelClientPath: "",
     nodePath: "",
     tunnelId: "",
     profile: "webgpt-bridge",
     httpsProxy: "",
+    approvalMode: "development",
   };
 }
 
 async function loadSettings() {
   try {
     const parsed = JSON.parse(await fsp.readFile(configPath(), "utf8"));
-    const settings = { ...defaultSettings(), ...parsed };
+    const settings = normalizeSettings(parsed, defaultSettings());
     return { ...settings, runtimePath: settings.runtimePath || bundledRuntimePath(), hasRuntimeKey: fs.existsSync(secretPath()) };
   } catch {
     return { ...defaultSettings(), hasRuntimeKey: fs.existsSync(secretPath()) };
@@ -59,7 +85,7 @@ async function loadSettings() {
 }
 
 async function writeSettings(input) {
-  const settings = { ...defaultSettings(), ...input, runtimePath: input.runtimePath || bundledRuntimePath() };
+  const settings = { ...normalizeSettings(input, defaultSettings()), runtimePath: input.runtimePath || bundledRuntimePath() };
   delete settings.runtimeKey;
   delete settings.hasRuntimeKey;
   await fsp.mkdir(app.getPath("userData"), { recursive: true });
@@ -163,19 +189,25 @@ function assertDirectory(value, label) {
 }
 
 function validateSettings(settings) {
-  assertDirectory(settings.workspacePath, "工作区");
-  assertDirectory(settings.runtimePath, "Agent 运行时目录");
-  if (!fs.existsSync(path.join(settings.runtimePath, "dist", "server.js"))) {
+  const runtime = validateDevelopmentRuntime(settings);
+  assertDirectory(runtime.workspacePath, "工作区");
+  assertDirectory(runtime.runtimePath, "Agent 运行时目录");
+  if (!fs.existsSync(path.join(runtime.runtimePath, "dist", "server.js"))) {
     throw new Error("Agent 运行时目录中未找到 dist/server.js；请先在该项目运行 npm install 和 npm run build。");
   }
-  if (!settings.tunnelClientPath || !fs.statSync(settings.tunnelClientPath, { throwIfNoEntry: false })?.isFile()) {
-    throw new Error("请选择 OpenAI tunnel-client 可执行文件。");
+  const tunnelClient = resolveTunnelClientPath({
+    customPath: settings.tunnelClientPath,
+    bundledPath: defaultBundledTunnelClientPath(),
+    isFile: (value) => fs.statSync(value, { throwIfNoEntry: false })?.isFile() === true,
+  });
+  if (!tunnelClient) {
+    throw new Error("未找到应用内置的 OpenAI tunnel-client。请重新安装应用，或在高级设置中选择自定义 tunnel-client。");
   }
   if (!settings.tunnelId.startsWith("tunnel_")) throw new Error("Tunnel ID 应以 tunnel_ 开头。");
   if (!PROFILE_PATTERN.test(settings.profile)) throw new Error("配置名称只能包含字母、数字、点、下划线和连字符。");
   const node = preferredNode(settings);
   if (!node) throw new Error("未找到 Node.js。请安装 Node.js 20+，或在设置中选择 node 可执行文件。");
-  return node;
+  return { node, runtime, tunnelClient };
 }
 
 function spawnLogged(command, args, options, label) {
@@ -223,16 +255,155 @@ function getStatus() {
   return {
     server: processIsLive(serverProcess),
     tunnel: processIsLive(tunnelProcess),
+    localBroker: Boolean(localBrokerServer),
     healthUrl: `http://${MCP_HOST}:${MCP_PORT}/healthz`,
     tunnelAdminUrl: "http://127.0.0.1:8080/ui",
   };
 }
 
+function dialogOwner() {
+  return windowRef && !windowRef.isDestroyed() ? windowRef : undefined;
+}
+
+
+async function confirmHostCommandApproval(params) {
+  const request = params?.request;
+  if (!request || typeof request !== "object" || !Array.isArray(request.argv) || request.argv.length === 0 || request.argv.some((value) => typeof value !== "string" || !value || value.includes("\0"))) {
+    throw new Error("Agent 审批请求格式无效。");
+  }
+  if (typeof request.cwd !== "string" || !request.cwd) throw new Error("Agent 审批请求缺少工作目录。");
+  const authorization = classifyHostCommandApproval(request, localApprovalMode);
+  if (authorization.decision === "deny") {
+    appendLog("local-broker", `Agent 命令审批：已拒绝（${authorization.reason}）`);
+    return { approved: false };
+  }
+  if (authorization.decision === "allow") {
+    appendLog("local-broker", `Agent 命令审批：自动批准（${authorization.reason}）`);
+    return { approved: true };
+  }
+  const approved = await confirmLocalOperation({
+    kind: "terminal-command",
+    argv: request.argv,
+    cwd: request.cwd,
+    policy: { ...request.policy, reason: authorization.reason || request.policy?.reason },
+  });
+  appendLog("local-broker", `Agent 命令审批：${approved ? "已批准" : "已取消"}`);
+  return { approved };
+}
+
+async function confirmLocalOperation(request) {
+  const prompt = approvalPrompt(request, localApprovalMode);
+  if (approvalSession.isRemembered(prompt)) {
+    appendLog("local-broker", `已按本次连接记忆自动批准：${prompt.message}`);
+    return true;
+  }
+  const options = {
+    type: "warning",
+    buttons: ["取消", "允许"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: "WebGPT Bridge · 权限请求",
+    message: prompt.message,
+    detail: prompt.detail,
+    ...(prompt.rememberKey ? { checkboxLabel: "本次连接记住此类权限", checkboxChecked: false } : {}),
+  };
+  const owner = dialogOwner();
+  const response = owner ? await dialog.showMessageBox(owner, options) : await dialog.showMessageBox(options);
+  const approved = response.response === 1;
+  approvalSession.record(prompt, { approved, remember: response.checkboxChecked === true });
+  return approved;
+}
+
+function localBrokerSocketPath() {
+  if (process.platform === "win32") return `\\\\.\\pipe\\webgpt-bridge-${process.pid}`;
+  return path.join(app.getPath("temp"), `webgpt-bridge-${process.pid}.sock`);
+}
+
+async function stopLocalBroker() {
+  approvalSession.clear();
+  const server = localBrokerServer;
+  const socketPath = localBrokerSocket;
+  localBrokerServer = undefined;
+  localBrokerSocket = "";
+  localFileBroker = undefined;
+  localTerminalBroker = undefined;
+  if (server) await new Promise((resolve) => server.close(() => resolve()));
+  if (socketPath && process.platform !== "win32") await fsp.rm(socketPath, { force: true }).catch(() => {});
+}
+
+function localBrokerDispatch(method, params) {
+  const handlers = {
+    local_list: () => localFileBroker.list(params),
+    local_read: () => localFileBroker.read(params),
+    local_request_sensitive_access: () => localFileBroker.requestSensitiveAccess(params),
+    local_stage_changes: () => localFileBroker.stage(params),
+    local_confirm_batch: () => localFileBroker.confirmBatch(params),
+    local_run_command: () => localTerminalBroker.run(params),
+    host_approve_command: () => confirmHostCommandApproval(params),
+  };
+  if (!Object.hasOwn(handlers, method)) throw new Error("未知的本机代理方法。");
+  return handlers[method]();
+}
+
+function attachLocalBrokerConnection(socket) {
+  let buffered = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk) => {
+    buffered += chunk;
+    if (buffered.length > 1024 * 1024) return socket.destroy();
+    const lines = buffered.split("\n");
+    buffered = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      void (async () => {
+        let message;
+        try {
+          message = JSON.parse(line);
+          if (!message || typeof message !== "object" || typeof message.method !== "string" || !message.params || typeof message.params !== "object") throw new Error("本机代理请求格式无效。");
+          const result = await localBrokerDispatch(message.method, message.params);
+          socket.write(`${JSON.stringify({ id: message.id, ok: true, result })}\n`);
+        } catch (error) {
+          socket.write(`${JSON.stringify({ id: message?.id, ok: false, error: error.message || "本机代理请求失败。" })}\n`);
+        }
+      })();
+    }
+  });
+}
+
+async function startLocalBroker(settings, runtime) {
+  await stopLocalBroker();
+  localApprovalMode = normalizeApprovalMode(settings.approvalMode);
+  const policyOptions = { appDataRoots: [app.getPath("userData")] };
+  const pathPolicy = (target, options) => classifyLocalPath(target, { ...policyOptions, ...options });
+  const actionPolicy = (action) => classifyLocalAction({ ...action, approvalMode: settings.approvalMode });
+  const policyModule = await import(pathToFileURL(path.join(runtime.runtimePath, "dist", "policy.js")).href);
+  localFileBroker = createLocalFileBroker({ workspaceRoot: settings.workspacePath, policy: pathPolicy, actionPolicy, confirm: confirmLocalOperation, audit: (entry) => appendLog("local-broker", `${entry.action}：${entry.result}`) });
+  localTerminalBroker = createLocalTerminalBroker({ approvalMode: settings.approvalMode, classifyCommand: policyModule.classifyCommand, confirm: confirmLocalOperation, pathPolicy });
+  localBrokerSocket = localBrokerSocketPath();
+  if (process.platform !== "win32") await fsp.rm(localBrokerSocket, { force: true }).catch(() => {});
+  localBrokerServer = net.createServer(attachLocalBrokerConnection);
+  await new Promise((resolve, reject) => {
+    localBrokerServer.once("error", reject);
+    localBrokerServer.listen(localBrokerSocket, () => {
+      localBrokerServer.off("error", reject);
+      resolve();
+    });
+  });
+  if (process.platform !== "win32") await fsp.chmod(localBrokerSocket, 0o600);
+  appendLog("local-broker", "已启动受控本机文件与终端代理。");
+}
+
 function trayIcon() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><path fill="#000" d="M9 1.25a7.75 7.75 0 1 0 0 15.5A7.75 7.75 0 0 0 9 1.25Zm0 2a5.75 5.75 0 1 1 0 11.5A5.75 5.75 0 0 1 9 3.25Zm0 2.2a3.55 3.55 0 1 0 0 7.1 3.55 3.55 0 0 0 0-7.1Z"/></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><g fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"><path d="M2.5 11a3.5 3.5 0 0 1 3.5-3.5h3"/><path d="M15.5 7a3.5 3.5 0 0 1-3.5 3.5H9"/></g><circle cx="2.5" cy="11" r="1.5" fill="#000"/><circle cx="15.5" cy="7" r="1.5" fill="#000"/></svg>`;
   const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
   if (process.platform === "darwin") image.setTemplateImage(true);
   return image;
+}
+
+function dockIcon() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><linearGradient id="b" x1="180" y1="96" x2="850" y2="920"><stop stop-color="#26312e"/><stop offset="1" stop-color="#0d1211"/></linearGradient><linearGradient id="a" x1="322" y1="384" x2="712" y2="650"><stop stop-color="#cff9e9"/><stop offset="1" stop-color="#56d6ae"/></linearGradient></defs><rect width="1024" height="1024" rx="226" fill="url(#b)"/><path d="M282 596c0-88 71-159 159-159h64" fill="none" stroke="#f3f7f5" stroke-width="92" stroke-linecap="round"/><path d="M742 428c0 88-71 159-159 159h-64" fill="none" stroke="url(#a)" stroke-width="92" stroke-linecap="round"/><circle cx="282" cy="596" r="62" fill="#f3f7f5"/><circle cx="742" cy="428" r="62" fill="#56d6ae"/></svg>`;
+  return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
 }
 
 function showWindow() {
@@ -283,6 +454,7 @@ async function stopChild(child, name) {
 async function stopAll() {
   await stopChild(tunnelProcess, "隧道客户端");
   await stopChild(serverProcess, "Agent 服务");
+  await stopLocalBroker();
   tunnelProcess = undefined;
   serverProcess = undefined;
   emit("status", getStatus());
@@ -291,22 +463,28 @@ async function stopAll() {
 async function startAll() {
   if (processIsLive(tunnelProcess)) return getStatus();
   const settings = await loadSettings();
-  const node = validateSettings(settings);
+  const { node, runtime, tunnelClient } = validateSettings(settings);
   const runtimeKey = await readRuntimeKey();
   if (!runtimeKey) throw new Error("请先保存此电脑专用的 OpenAI Tunnel 运行时密钥。");
   await stopAll();
   logLines = [];
   emit("logs", logLines);
+  await startLocalBroker(settings, runtime);
 
   const baseEnv = {
     ...process.env,
-    LPC_WORKSPACE: settings.workspacePath,
+    PATH: buildTrustedCommandPath({
+      nodePath: node,
+      additionalPaths: [path.join(app.getPath("userData"), "tools", "bin")],
+    }),
+    LPC_WORKSPACE: runtime.workspacePath,
     LPC_HOST: MCP_HOST,
     LPC_PORT: String(MCP_PORT),
     LPC_VERIFY_SANDBOX: "true",
-    LPC_ENABLE_NETWORK_TOOLS: "false",
+    LPC_ENABLE_NETWORK_TOOLS: "true",
+    LPC_LOCAL_BROKER_SOCKET: localBrokerSocket,
   };
-  serverProcess = spawnLogged(node, [path.join(settings.runtimePath, "dist", "server.js")], { env: baseEnv, cwd: settings.runtimePath }, "agent");
+  serverProcess = spawnLogged(node, [path.join(runtime.runtimePath, "dist", "server.js")], { env: baseEnv, cwd: runtime.runtimePath }, "agent");
   await waitForHealth();
 
   const tunnelEnv = {
@@ -315,25 +493,26 @@ async function startAll() {
     ...(settings.httpsProxy ? { HTTPS_PROXY: settings.httpsProxy, HTTP_PROXY: settings.httpsProxy } : {}),
   };
   const init = spawnLogged(
-    settings.tunnelClientPath,
+    tunnelClient,
     ["init", "--force", "--profile", settings.profile, "--tunnel-id", settings.tunnelId, "--mcp-server-url", `http://${MCP_HOST}:${MCP_PORT}/mcp`],
     { env: tunnelEnv },
     "tunnel-init",
   );
   await onceExit(init);
-  tunnelProcess = spawnLogged(settings.tunnelClientPath, ["run", "--profile", settings.profile], { env: tunnelEnv }, "tunnel");
+  tunnelProcess = spawnLogged(tunnelClient, ["run", "--profile", settings.profile], { env: tunnelEnv }, "tunnel");
   emit("status", getStatus());
   return getStatus();
 }
 
 function createWindow() {
   windowRef = new BrowserWindow({
-    width: 680,
-    height: 584,
-    minWidth: 520,
-    minHeight: 510,
-    backgroundColor: "#f7f7f8",
+    width: 720,
+    height: 660,
+    minWidth: 560,
+    minHeight: 540,
+    backgroundColor: "#edf1ef",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   windowRef.webContents.setWindowOpenHandler(({ url }) => {
@@ -351,6 +530,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === "darwin" && app.dock) app.dock.setIcon(dockIcon());
   // The host has no browser-facing permissions. Tunnel traffic is handled by
   // the separate client process, not by renderer pages.
   const { session } = require("electron");

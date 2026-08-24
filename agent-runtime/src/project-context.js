@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { INTERNAL_STATE_DIR, LEGACY_INTERNAL_STATE_DIR, resolveWorkspaceCwd } from "./workspace.js";
+import { INTERNAL_STATE_DIR, LEGACY_INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
 const INSTRUCTION_NAMES = new Set(["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
 const DEFAULT_MAX_FILES = 8;
@@ -35,7 +35,7 @@ export function loadProjectContext({
   maxScanEntries = DEFAULT_MAX_SCAN_ENTRIES,
   maxDepth = DEFAULT_MAX_DEPTH,
 } = {}) {
-  const { root, cwd: projectRoot } = resolveWorkspaceCwd(workspace, cwd);
+  const { root, cwd: projectRoot } = resolveModelWorkspaceCwd(workspace, cwd);
   const files = [];
   const seen = new Set();
   let totalBytes = 0;

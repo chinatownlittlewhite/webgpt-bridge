@@ -8,24 +8,29 @@
   </head>
   <body>
     <main>
-      <header>
-        <div class="mark" aria-hidden="true"><i></i></div>
-        <div><h1>WebGPT Bridge</h1><p>本地 Agent 控制器</p></div>
+      <header class="app-header">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 36 36"><path d="M7 22a7 7 0 0 1 7-7h4"/><path class="accent" d="M29 14a7 7 0 0 1-7 7h-4"/><circle cx="7" cy="22" r="2.5"/><circle class="accent-fill" cx="29" cy="14" r="2.5"/></svg>
+          </div>
+          <div class="brand-copy"><h1>WebGPT Bridge</h1><p>Private local agent</p></div>
+        </div>
         <div id="connection" class="connection offline"><span></span><b>未连接</b></div>
       </header>
 
-      <section class="controller card">
-        <p class="eyebrow">PRIVATE MCP CONTROLLER</p>
-        <h2>让 ChatGPT 使用<br />你的本地 Agent。</h2>
-        <p class="muted">启动后，关闭这个窗口也不会断开连接。你可以随时从菜单栏图标重新打开控制器。</p>
-        <div class="actions"><button id="start" class="primary">启动连接</button><button id="stop" class="secondary">停止</button><button id="openChatGPT" class="link">打开 ChatGPT ↗</button></div>
+      <section class="controller card hero-card">
+        <div class="hero-copy">
+          <p class="eyebrow">LOCAL AGENT BRIDGE</p>
+          <h2>把本地开发能力，<br />安全交给 ChatGPT。</h2>
+          <p class="muted">命令、文件和网络操作都经过本机沙箱与权限策略。连接后即使关闭窗口，Bridge 也会继续在菜单栏运行。</p>
+        </div>
+        <div class="actions"><button id="start" class="primary">启动连接</button><button id="stop" class="secondary">停止</button><button id="openChatGPT" class="ghost">打开 ChatGPT ↗</button></div>
       </section>
 
       <section class="connection-settings card">
         <div class="section-heading"><div><h2>连接设置</h2><p>启动连接所需的本机信息</p></div><span id="keyStatus"></span></div>
         <div class="grid required-grid">
           <label>工作区目录<input id="workspacePath" placeholder="将被 Agent 操作的项目目录" /><button data-picker="workspacePath" class="pick">选择</button></label>
-          <label>tunnel-client<input id="tunnelClientPath" placeholder="OpenAI tunnel-client 可执行文件" /><button data-file-picker="tunnelClientPath" class="pick">选择</button></label>
           <label>Tunnel ID<input id="tunnelId" placeholder="tunnel_…" /></label>
           <label>运行时密钥<input id="runtimeKey" type="password" autocomplete="new-password" placeholder="留空则保留已保存密钥" /><button id="clearKey" class="inline-danger">移除</button></label>
         </div>
@@ -38,19 +43,24 @@
         <div><span>控制器</span><strong id="nextStep">点击“启动连接”</strong></div>
       </section>
 
-      <details class="logs card"><summary>运行日志 <span>仅在排查问题时查看</span></summary><pre id="logOutput">尚未启动。</pre></details>
-
       <details class="advanced card">
-        <summary>可选设置 <span>更换运行时或网络环境时使用</span></summary>
+        <summary>权限与高级设置 <span>推荐保持默认</span></summary>
         <div class="settings-body">
-          <div class="grid">
-            <label>Agent 运行时目录<input id="runtimePath" placeholder="默认使用随应用提供的 agent-runtime" /><button data-picker="runtimePath" class="pick">选择</button></label>
+          <div class="permission-block">
+            <label class="field full">权限模式<select id="approvalMode"><option value="cautious">谨慎</option><option value="development">工作区自动（推荐）</option><option value="auto">高自治</option></select></label>
+            <p class="setting-note">工作区自动会直接执行受验证沙箱约束的常规开发操作，并可在本次连接内记住你批准的同类权限。敏感路径、任意网络外发、权限扩张、shell、SSH 与提权始终单独保护。</p>
+          </div>
+          <div class="grid advanced-grid">
+            <label>Agent 运行时目录<input id="runtimePath" placeholder="默认使用应用内置运行时" /><button data-picker="runtimePath" class="pick">选择</button></label>
+            <label>自定义 tunnel-client（可选）<input id="tunnelClientPath" placeholder="留空使用内置 v0.0.11" /><button data-file-picker="tunnelClientPath" class="pick">选择</button></label>
             <label>Node.js（可选）<input id="nodePath" placeholder="留空则自动查找 Node.js 20+" /></label>
             <label>配置名称<input id="profile" placeholder="webgpt-bridge" /></label>
             <label>HTTPS 代理（可选）<input id="httpsProxy" placeholder="http://127.0.0.1:7890" /></label>
           </div>
         </div>
       </details>
+
+      <details class="logs card"><summary>运行日志 <span>仅用于排查问题</span></summary><pre id="logOutput">尚未启动。</pre></details>
 
       <p id="message" role="status"></p>
     </main>

@@ -46,7 +46,11 @@ async function waitForOutput(manager, processId, expected, trustedContext) {
   return false;
 }
 
-test("managed process output is bounded and Goal ownership hides sibling processes", async () => {
+test("managed process output is bounded and Goal ownership hides sibling processes", async (t) => {
+  if (process.platform === "darwin" && process.env.HOME === process.cwd()) {
+    t.skip("nested Seatbelt commands cannot signal child process groups");
+    return;
+  }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-process-manager-"));
   const manager = createProcessManager({ workspace: root, sandboxAdapter: verifiedSandbox, maxProcesses: 4 });
   const owner = { goalSessionId: "goal-a", requestApproval: () => true };

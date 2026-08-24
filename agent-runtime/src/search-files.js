@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { INTERNAL_STATE_DIR, LEGACY_INTERNAL_STATE_DIR, resolveWorkspaceCwd } from "./workspace.js";
+import { INTERNAL_STATE_DIR, LEGACY_INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
 const DEFAULT_IGNORED_DIRS = new Set([
   ".git",
@@ -61,7 +61,7 @@ export function searchFiles({
     throw new RangeError("limit must be between 1 and 5000");
   }
 
-  const { root, cwd: start } = resolveWorkspaceCwd(workspace, cwd);
+  const { root, cwd: start } = resolveModelWorkspaceCwd(workspace, cwd);
   const matcher = globToRegExp(glob.replaceAll("\\", "/"));
   const matches = [];
   let truncated = false;
