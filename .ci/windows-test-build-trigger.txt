@@ -1,0 +1,3 @@
+Windows test build trigger: 2026-08-24T23:08:00+08:00
+Base: f94727a7e501d38d5d4e4aa084756881422ee21a
+Purpose: temporary Windows x64 acceptance/package build only; not a release.
