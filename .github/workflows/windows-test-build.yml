@@ -38,6 +38,7 @@ jobs:
           sed -i 's#git apply --whitespace=nowarn #python .ci/apply-loose-patch.py #' .ci/apply-windows-fixes.sh
           chmod +x .ci/apply-windows-fixes.sh
           bash .ci/apply-windows-fixes.sh
+          python .ci/normalize-cross-platform-sandbox-tests.py
 
       - name: Install desktop dependencies
         run: npm ci
