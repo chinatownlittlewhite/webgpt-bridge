@@ -15,7 +15,7 @@
     "acceptance": "node scripts/acceptance.mjs",
     "acceptance:quick": "node scripts/acceptance.mjs --skip-native",
     "test": "node --preserve-symlinks --preserve-symlinks-main scripts/run-tests.mjs",
-    "lint": "node scripts/lint.mjs",
+    "lint": "node --preserve-symlinks --preserve-symlinks-main scripts/lint.mjs",
     "build": "node scripts/build.mjs",
     "build:native": "node scripts/build-native.mjs"
   },
