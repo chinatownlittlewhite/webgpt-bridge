@@ -46,3 +46,19 @@ The macOS build is required to be Universal at every executable layer used by th
 After packaging, CI requires `codesign --verify --deep --strict` for the app, strict signature verification for both embedded native binaries, the expected Developer ID authority, a valid stapled notarization ticket on the `.app`, and a successful Gatekeeper `spctl --assess`. The release must also contain exactly one Universal DMG and ZIP. The DMG container is not separately forced through signing/stapling: the notarized and stapled application bundle inside it is the Gatekeeper trust boundary, and forcing DMG signing can interfere with Electron Builder's normal notarization/update artifact lifecycle.
 
 Do not use `xattr -cr` or quarantine removal as a release acceptance strategy. A formal release must pass signing, notarization, stapling, and Gatekeeper checks without weakening the user's normal macOS security path.
+
+## Packaged updater E2E and publication checklist
+
+Every formal platform job builds two additional signed test-only packages, `90.0.0` and `90.0.1`, whose updater feed is fixed at build time to `http://127.0.0.1:18181/`. Production artifacts continue to use the fixed GitHub provider and explicitly exclude `src/update-e2e-control.cjs`; there is no production environment variable, renderer IPC, or settings field that can override the update feed.
+
+The loopback E2E server serves only top-level files from the generated `90.0.1` artifact directory, rejects nested/traversal paths, and supports HTTP byte ranges. The old packaged app must discover `90.0.1`, download it through the same updater service used by the UI, install and relaunch, and the relaunched app must report `{ version: "90.0.1", phase: "updated" }` through the test-only sentinel. Windows then rechecks host-prep readiness and the fixed SYSTEM task; macOS rechecks the updated app signature/staple and Universal main executable.
+
+Before creating a tag:
+
+1. Set the root `package.json` version to the intended stable version.
+2. Create a tag **exactly** equal to `v${package.version}`. The release workflow rejects any mismatch.
+3. Confirm protected Environments `desktop-release-windows` and `desktop-release-macos` contain the required variables/secrets described above.
+4. Do not publish or reuse an already-public Release for that tag. The workflow creates/reuses only an unpublished Draft.
+5. Both signed platform jobs, packaged updater E2E gates, `latest.yml` / `latest-mac.yml` SHA-512 validation, and user-facing SHA-256 generation must succeed before the Draft can become stable.
+
+If any platform or validation step fails, leave the Release as Draft and fix the code/workflow. Once a version has been publicly released, do not replace its bytes in place; publish a higher patch version instead.

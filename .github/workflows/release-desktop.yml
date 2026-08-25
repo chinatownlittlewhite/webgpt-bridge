@@ -181,6 +181,80 @@ jobs:
             if ($sig.SignerCertificate.Subject -ne $env:WEBGPT_WINDOWS_PUBLISHER) { throw "publisher mismatch: $file ($($sig.SignerCertificate.Subject))" }
             if (-not $sig.TimeStamperCertificate) { throw "timestamp missing: $file" }
           }
+      - name: Gate signed Windows packaged updater E2E
+        shell: pwsh
+        run: |
+          $feed = "http://127.0.0.1:18181/"
+          $sentinel = Join-Path $env:RUNNER_TEMP "webgpt-update-e2e.json"
+          $ready = Join-Path $env:RUNNER_TEMP "webgpt-update-e2e.ready.json"
+          $oldConfig = Join-Path $env:RUNNER_TEMP "e2e-old.cjs"
+          $newConfig = Join-Path $env:RUNNER_TEMP "e2e-new.cjs"
+          Remove-Item -LiteralPath $sentinel,$ready -Force -ErrorAction SilentlyContinue
+
+          node scripts/update-e2e-feed.cjs --url $feed --version 90.0.0 --expected-version 90.0.1 --sentinel $sentinel --out $oldConfig
+          if ($LASTEXITCODE -ne 0) { throw "failed to generate old Windows updater E2E config" }
+          node scripts/update-e2e-feed.cjs --url $feed --version 90.0.1 --expected-version 90.0.1 --sentinel $sentinel --out $newConfig
+          if ($LASTEXITCODE -ne 0) { throw "failed to generate new Windows updater E2E config" }
+
+          & ".\node_modules\.bin\electron-builder.cmd" --config $oldConfig --win nsis --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw "old signed Windows updater E2E build failed" }
+          & ".\node_modules\.bin\electron-builder.cmd" --config $newConfig --win nsis --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw "new signed Windows updater E2E build failed" }
+
+          $oldDir = [IO.Path]::ChangeExtension($oldConfig, $null)
+          $newDir = [IO.Path]::ChangeExtension($newConfig, $null)
+          $oldInstaller = Get-ChildItem -Path $oldDir -Filter "WebGPT Bridge-90.0.0-win-x64.exe" -File | Select-Object -First 1
+          $newInstaller = Get-ChildItem -Path $newDir -Filter "WebGPT Bridge-90.0.1-win-x64.exe" -File | Select-Object -First 1
+          if (-not $oldInstaller -or -not $newInstaller) { throw "signed Windows updater E2E installer missing" }
+          foreach ($file in @($oldInstaller.FullName, $newInstaller.FullName)) {
+            $sig = Get-AuthenticodeSignature -FilePath $file
+            if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -ne $env:WEBGPT_WINDOWS_PUBLISHER -or -not $sig.TimeStamperCertificate) {
+              throw "Windows updater E2E installer signature gate failed: $file"
+            }
+          }
+
+          $serverOut = Join-Path $env:RUNNER_TEMP "webgpt-update-e2e-server.stdout.log"
+          $serverErr = Join-Path $env:RUNNER_TEMP "webgpt-update-e2e-server.stderr.log"
+          $server = Start-Process -FilePath (Get-Command node).Source `
+            -ArgumentList @("scripts/update-e2e-assert.cjs", "--root", $newDir, "--port", "18181", "--sentinel", $sentinel, "--expected-version", "90.0.1", "--timeout-ms", "240000", "--ready", $ready) `
+            -WorkingDirectory $env:GITHUB_WORKSPACE `
+            -RedirectStandardOutput $serverOut `
+            -RedirectStandardError $serverErr `
+            -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(20)
+            while (-not (Test-Path $ready)) {
+              if ($server.HasExited) { throw "Windows updater E2E server exited before becoming ready" }
+              if ((Get-Date) -gt $deadline) { throw "Windows updater E2E server did not become ready" }
+              Start-Sleep -Milliseconds 200
+            }
+
+            $install = Start-Process -FilePath $oldInstaller.FullName -ArgumentList @("/S") -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "old Windows updater E2E install failed with exit $($install.ExitCode)" }
+            $installedExe = Join-Path $env:ProgramFiles "WebGPT Bridge\WebGPT Bridge.exe"
+            if (-not (Test-Path $installedExe)) { throw "installed old Windows updater E2E app missing" }
+            Start-Process -FilePath $installedExe | Out-Null
+
+            $server.WaitForExit()
+            if (Test-Path $serverOut) { Get-Content $serverOut | Write-Host }
+            if (Test-Path $serverErr) { Get-Content $serverErr | Write-Host }
+            if ($server.ExitCode -ne 0) { throw "Windows packaged updater E2E failed with exit $($server.ExitCode)" }
+
+            $result = Get-Content -LiteralPath $sentinel -Raw | ConvertFrom-Json
+            if ($result.version -ne "90.0.1" -or $result.phase -ne "updated") { throw "Windows updater E2E sentinel mismatch" }
+            $installedPrep = Join-Path $env:ProgramFiles "WebGPT Bridge\resources\app.asar.unpacked\agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe"
+            $readyJson = & $installedPrep --check --json
+            if ($LASTEXITCODE -ne 0 -or ($readyJson | ConvertFrom-Json).status -ne "ready") { throw "Windows host preparation not ready after updater E2E: $readyJson" }
+            $task = Get-ScheduledTask -TaskName "WebGPT Bridge Host Preparation" -ErrorAction Stop
+            if ($task.Principal.UserId -notin @("SYSTEM", "NT AUTHORITY\SYSTEM", "S-1-5-18") -or $task.Principal.RunLevel.ToString() -ne "Highest") { throw "Windows updater E2E task principal changed" }
+            $actions = @($task.Actions)
+            if ($actions.Count -ne 1 -or ($actions[0].Arguments ?? "").Trim() -ne "--apply") { throw "Windows updater E2E task action changed" }
+            $taskExe = [IO.Path]::GetFullPath($actions[0].Execute.Trim('"'))
+            if (-not [string]::Equals($taskExe, [IO.Path]::GetFullPath($installedPrep), [StringComparison]::OrdinalIgnoreCase)) { throw "Windows updater E2E task executable changed" }
+          }
+          finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-release-windows
@@ -297,6 +371,82 @@ jobs:
             echo "formal macOS release must contain exactly one Universal DMG and ZIP" >&2
             exit 1
           fi
+      - name: Gate signed macOS packaged updater E2E
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          FEED="http://127.0.0.1:18181/"
+          SENTINEL="$RUNNER_TEMP/webgpt-update-e2e.json"
+          READY="$RUNNER_TEMP/webgpt-update-e2e.ready.json"
+          OLD_CONFIG="$RUNNER_TEMP/e2e-old.cjs"
+          NEW_CONFIG="$RUNNER_TEMP/e2e-new.cjs"
+          rm -f -- "$SENTINEL" "$READY"
+
+          node scripts/update-e2e-feed.cjs --url "$FEED" --version 90.0.0 --expected-version 90.0.1 --sentinel "$SENTINEL" --out "$OLD_CONFIG"
+          node scripts/update-e2e-feed.cjs --url "$FEED" --version 90.0.1 --expected-version 90.0.1 --sentinel "$SENTINEL" --out "$NEW_CONFIG"
+          ./node_modules/.bin/electron-builder --config "$OLD_CONFIG" --mac zip --universal --publish never
+          ./node_modules/.bin/electron-builder --config "$NEW_CONFIG" --mac zip --universal --publish never
+
+          OLD_DIR="${OLD_CONFIG%.cjs}"
+          NEW_DIR="${NEW_CONFIG%.cjs}"
+          OLD_APP_COUNT="$(find "$OLD_DIR" -type d -name 'WebGPT Bridge.app' -print | wc -l | tr -d '[:space:]')"
+          NEW_APP_COUNT="$(find "$NEW_DIR" -type d -name 'WebGPT Bridge.app' -print | wc -l | tr -d '[:space:]')"
+          if [ "$OLD_APP_COUNT" != "1" ] || [ "$NEW_APP_COUNT" != "1" ]; then
+            echo "macOS updater E2E apps must resolve exactly once" >&2
+            exit 1
+          fi
+          OLD_APP="$(find "$OLD_DIR" -type d -name 'WebGPT Bridge.app' -print -quit)"
+          NEW_APP="$(find "$NEW_DIR" -type d -name 'WebGPT Bridge.app' -print -quit)"
+          codesign --verify --deep --strict --verbose=2 "$OLD_APP"
+          codesign --verify --deep --strict --verbose=2 "$NEW_APP"
+          xcrun stapler validate "$OLD_APP"
+          xcrun stapler validate "$NEW_APP"
+
+          SERVER_OUT="$RUNNER_TEMP/webgpt-update-e2e-server.stdout.log"
+          SERVER_ERR="$RUNNER_TEMP/webgpt-update-e2e-server.stderr.log"
+          node scripts/update-e2e-assert.cjs --root "$NEW_DIR" --port 18181 --sentinel "$SENTINEL" --expected-version 90.0.1 --timeout-ms 240000 --ready "$READY" >"$SERVER_OUT" 2>"$SERVER_ERR" &
+          SERVER_PID=$!
+          cleanup_e2e() {
+            if kill -0 "$SERVER_PID" 2>/dev/null; then kill "$SERVER_PID" 2>/dev/null || true; fi
+          }
+          trap cleanup_e2e EXIT
+          for _ in $(seq 1 100); do
+            [ -f "$READY" ] && break
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              cat "$SERVER_OUT" || true
+              cat "$SERVER_ERR" >&2 || true
+              exit 1
+            fi
+            sleep 0.2
+          done
+          [ -f "$READY" ] || { echo "macOS updater E2E server did not become ready" >&2; exit 1; }
+
+          TEST_ROOT="$RUNNER_TEMP/webgpt-update-e2e-app"
+          TEST_APP="$TEST_ROOT/WebGPT Bridge.app"
+          rm -rf -- "$TEST_ROOT"
+          mkdir -p "$TEST_ROOT"
+          /usr/bin/ditto "$OLD_APP" "$TEST_APP"
+          open -n -W "$TEST_APP" >/dev/null 2>&1 &
+          OPEN_PID=$!
+
+          set +e
+          wait "$SERVER_PID"
+          SERVER_STATUS=$?
+          set -e
+          cat "$SERVER_OUT" || true
+          cat "$SERVER_ERR" >&2 || true
+          if [ "$SERVER_STATUS" -ne 0 ]; then exit "$SERVER_STATUS"; fi
+          wait "$OPEN_PID" || true
+          trap - EXIT
+
+          node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(value.version!=="90.0.1"||value.phase!=="updated") process.exit(1)' "$SENTINEL"
+          codesign --verify --deep --strict --verbose=2 "$TEST_APP"
+          xcrun stapler validate "$TEST_APP"
+          /usr/bin/lipo -archs "$TEST_APP/Contents/MacOS/WebGPT Bridge" | grep -qw arm64
+          /usr/bin/lipo -archs "$TEST_APP/Contents/MacOS/WebGPT Bridge" | grep -qw x86_64
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-release-macos
@@ -332,9 +482,17 @@ jobs:
       - run: node scripts/validate-release-assets.cjs --version "${GITHUB_REF_NAME#v}" --windows release-win --mac release-mac
       - run: node scripts/write-release-checksums.cjs release-win release-mac --out SHA256SUMS
       - name: Upload exact validated assets to draft
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" release-win/* release-mac/* SHA256SUMS
+        run: |
+          set -euo pipefail
+          mapfile -d '' ASSETS < <(find release-win release-mac -maxdepth 1 -type f -print0)
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "no validated release assets found" >&2
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${ASSETS[@]}" SHA256SUMS
       - name: Publish stable release atomically after all gates
         env:
           GH_TOKEN: ${{ github.token }}

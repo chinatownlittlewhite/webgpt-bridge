@@ -18,6 +18,7 @@ const { buildTrustedCommandPath } = require("./host-path.cjs");
 const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
 const { createUpdateService } = require("./update-service.cjs");
 const { autoUpdater } = require("electron-updater");
+const packageMetadata = require("../package.json");
 
 // Keep v0.1 settings and encrypted runtime keys when the product name changes
 // from Local Agent Host to WebGPT Bridge.
@@ -631,7 +632,15 @@ app.whenReady().then(() => {
   ipcMain.handle("update:install", () => updateService.installUpdateAndRestart());
   createTray();
   createWindow();
-  updateService.start();
+  if (packageMetadata.WEBGPT_UPDATE_E2E_BUILD === true) {
+    const { runUpdateE2EControl } = require("./update-e2e-control.cjs");
+    void runUpdateE2EControl({ packageMeta: packageMetadata, updateService, app }).catch((error) => {
+      appendLog("update-e2e", error?.stack || error?.message || String(error));
+      setTimeout(() => app.exit(1), 250);
+    });
+  } else {
+    updateService.start();
+  }
   app.on("activate", showWindow);
 });
 
