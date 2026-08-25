@@ -14,22 +14,26 @@ test("npm test delegates through the sandbox-aware test entrypoint", () => {
     "node --preserve-symlinks --preserve-symlinks-main scripts/run-tests.mjs",
   );
   assert.equal(fs.existsSync(path.join(root, "scripts", "run-tests.mjs")), true);
+  assert.equal(
+    packageJson.scripts.lint,
+    "node --preserve-symlinks --preserve-symlinks-main scripts/lint.mjs",
+  );
 });
 
 test("nested Windows detection is bound to the trusted workspace-local profile", () => {
   assert.equal(isNestedWindowsAppContainer({
     platform: "win32",
-    localAppData: "C:\\project\\.webgpt-bridge\\windows-profile\\AppData\\Local",
+    userProfile: "C:\\project\\.webgpt-bridge\\windows-profile",
     cwd: "C:\\project",
   }), true);
   assert.equal(isNestedWindowsAppContainer({
     platform: "win32",
-    localAppData: "C:\\Users\\runner\\AppData\\Local",
+    userProfile: "C:\\Users\\runner",
     cwd: "C:\\project",
   }), false);
   assert.equal(isNestedWindowsAppContainer({
     platform: "darwin",
-    localAppData: "/project/.webgpt-bridge/windows-profile/AppData/Local",
+    userProfile: "/project/.webgpt-bridge/windows-profile",
     cwd: "/project",
   }), false);
 });
