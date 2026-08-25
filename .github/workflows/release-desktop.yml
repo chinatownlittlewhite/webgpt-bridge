@@ -126,11 +126,17 @@ jobs:
           $securePassword = ConvertTo-SecureString $passwordPlain -AsPlainText -Force
           New-LocalUser -Name $username -Password $securePassword -AccountNeverExpires -PasswordNeverExpires | Out-Null
           $qualified = "$env:COMPUTERNAME\$username"
+          $acceptanceTemp = Join-Path $env:GITHUB_WORKSPACE ".ci-windows-standard-user-temp"
+          $previousTemp = $env:TEMP
+          $previousTmp = $env:TMP
           try {
             $adminMembers = Get-LocalGroupMember -Group "Administrators"
             if ($adminMembers.Name -contains $qualified) { throw "acceptance user unexpectedly belongs to Administrators" }
             & "$env:SystemRoot\System32\icacls.exe" $env:GITHUB_WORKSPACE /grant "${qualified}:(OI)(CI)M" /Q | Out-Host
             if ($LASTEXITCODE -ne 0) { throw "failed to grant the standard user workspace access" }
+            New-Item -ItemType Directory -Path $acceptanceTemp -Force | Out-Null
+            $env:TEMP = $acceptanceTemp
+            $env:TMP = $acceptanceTemp
             $npm = (Get-Command npm.cmd).Source
             $stdout = Join-Path $env:RUNNER_TEMP "webgpt-release-standard-user.stdout.log"
             $stderr = Join-Path $env:RUNNER_TEMP "webgpt-release-standard-user.stderr.log"
@@ -148,6 +154,9 @@ jobs:
             if ($process.ExitCode -ne 0) { throw "standard-user Windows acceptance failed with exit $($process.ExitCode)" }
           }
           finally {
+            $env:TEMP = $previousTemp
+            $env:TMP = $previousTmp
+            Remove-Item -LiteralPath $acceptanceTemp -Recurse -Force -ErrorAction SilentlyContinue
             Remove-LocalUser -Name $username -ErrorAction SilentlyContinue
           }
       - run: npm run dist:win
@@ -377,7 +386,6 @@ jobs:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
         run: |
-          set -euo pipefail
           FEED="http://127.0.0.1:18181/"
           SENTINEL="$RUNNER_TEMP/webgpt-update-e2e.json"
           READY="$RUNNER_TEMP/webgpt-update-e2e.ready.json"
