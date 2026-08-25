@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   normalizedPlatform,
@@ -67,6 +68,32 @@ test("platform normalization and security notes freeze shellless Windows strateg
   assert.equal(platformSecurityNotes.trustedRuntimeReadPathsAreHostDerived, true);
 });
 
+test("Windows Node CLI shim preserves lexical module paths without host-root ACL traversal", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-win-node-cli-"));
+  try {
+    const nodePath = path.join(fixture, "node.exe");
+    const cli = path.join(fixture, "npm-cli.js");
+    fs.writeFileSync(nodePath, "fixture", "utf8");
+    fs.writeFileSync(cli, "fixture", "utf8");
+    const result = resolvePlatformArgv(["npm", "--version"], {
+      platform: "win32",
+      env: { PATH: "", PATHEXT: ".EXE;.CMD", npm_execpath: cli },
+      nodePath,
+    });
+    assert.deepEqual(result.argv, [
+      path.resolve(nodePath),
+      "--preserve-symlinks",
+      "--preserve-symlinks-main",
+      path.resolve(cli),
+      "--version",
+    ]);
+    assert.ok(result.trustedReadPaths.includes(path.win32.resolve(path.dirname(cli))));
+    assert.equal(result.trustedReadPaths.includes(path.win32.resolve(path.dirname(fixture))), false);
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test("Windows acceptance resolves npm through a trusted non-shell runtime shim", (t) => {
   if (process.platform !== "win32") {
     t.skip("real Windows PATH resolution is validated on Windows final acceptance");
@@ -76,6 +103,8 @@ test("Windows acceptance resolves npm through a trusted non-shell runtime shim",
   assert.equal(result.resolved, true);
   assert.equal(result.usedTrustedShim, true);
   assert.match(path.win32.basename(result.argv[0]), /^node(?:\.exe)?$/i);
-  assert.match(path.win32.basename(result.argv[1]), /^npm-cli\.js$/i);
+  assert.equal(result.argv[1], "--preserve-symlinks");
+  assert.equal(result.argv[2], "--preserve-symlinks-main");
+  assert.match(path.win32.basename(result.argv[3]), /^npm-cli\.js$/i);
   assert.ok(result.trustedReadPaths.length >= 1);
 });

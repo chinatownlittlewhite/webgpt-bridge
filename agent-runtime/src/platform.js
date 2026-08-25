@@ -146,10 +146,10 @@ function resolveWindowsPython(argv, env) {
   return null;
 }
 
-function trustedRuntimeReadPaths(resolvedArgv, platform) {
+function trustedRuntimeReadPaths(runtimeValues, platform) {
   const impl = platformPath(platform);
   const roots = [];
-  for (const value of resolvedArgv.slice(0, 3)) {
+  for (const value of runtimeValues) {
     if (typeof value !== "string" || !impl.isAbsolute(value)) continue;
     try {
       const stat = fs.statSync(value);
@@ -172,16 +172,17 @@ function trustedRuntimeReadPaths(resolvedArgv, platform) {
   return [...new Set(roots.map((entry) => impl.resolve(entry)))];
 }
 
-function resolution({ platform, logicalCommand, argv, resolved, usedTrustedShim }) {
+function resolution({ platform, logicalCommand, argv, resolved, usedTrustedShim, trustedRuntimeValues = null }) {
   const platformName = normalizedPlatform(platform);
   const resolvedArgv = [...argv];
+  const runtimeValues = trustedRuntimeValues ?? (resolvedArgv.length > 0 ? [resolvedArgv[0]] : []);
   return Object.freeze({
     platform: platformName,
     logicalCommand,
     argv: Object.freeze(resolvedArgv),
     resolved,
     usedTrustedShim,
-    trustedReadPaths: Object.freeze(resolved ? trustedRuntimeReadPaths(resolvedArgv, platform) : []),
+    trustedReadPaths: Object.freeze(resolved ? trustedRuntimeReadPaths(runtimeValues, platform) : []),
   });
 }
 
@@ -211,12 +212,14 @@ export function resolvePlatformArgv(argv, {
   if (["npm", "npx"].includes(logicalCommand)) {
     const cli = windowsNpmCli(logicalCommand, { env });
     if (!cli) throw new Error(`could not resolve trusted ${logicalCommand} CLI without using a command shell`);
+    const node = path.resolve(nodePath);
     return resolution({
       platform,
       logicalCommand,
-      argv: [path.resolve(nodePath), cli, ...argv.slice(1)],
+      argv: [node, "--preserve-symlinks", "--preserve-symlinks-main", cli, ...argv.slice(1)],
       resolved: true,
       usedTrustedShim: true,
+      trustedRuntimeValues: [node, cli],
     });
   }
 
@@ -226,9 +229,12 @@ export function resolvePlatformArgv(argv, {
     return resolution({
       platform,
       logicalCommand,
-      argv: manager.cli ? [manager.executable, manager.cli, ...argv.slice(1)] : [manager.executable, ...argv.slice(1)],
+      argv: manager.cli
+        ? [manager.executable, "--preserve-symlinks", "--preserve-symlinks-main", manager.cli, ...argv.slice(1)]
+        : [manager.executable, ...argv.slice(1)],
       resolved: true,
       usedTrustedShim: manager.cli !== null,
+      trustedRuntimeValues: manager.cli ? [manager.executable, manager.cli] : [manager.executable],
     });
   }
 

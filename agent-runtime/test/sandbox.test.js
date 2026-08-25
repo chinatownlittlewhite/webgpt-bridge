@@ -234,22 +234,18 @@ test("Windows AppContainer child inherits the helper cwd instead of restating a 
   assert.match(source, /null,\s*ref startup,/s);
 });
 
-test("Windows helper grants runtime ACLs through Win32 APIs without spawning icacls", () => {
+test("Windows helper grants only explicit runtime ACLs and never rewrites host ancestors", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
-  assert.match(source, /GrantTraversalAcl\(Path\.GetDirectoryName\(executable\)!, appContainerSid\)/);
-  assert.match(source, /GrantTraversalAcl\(resolved, appContainerSid\)/);
   assert.match(source, /Native\.GetNamedSecurityInfoW/);
   assert.match(source, /Native\.SetEntriesInAclW/);
   assert.match(source, /Native\.SetNamedSecurityInfoW/);
   assert.match(source, /if \(profile\.Created\)\s*\{[\s\S]*?GrantAcl\(workspace, appContainerSid, modify: true\);[\s\S]*?\}/);
+  assert.match(source, /GrantAcl\(executable, appContainerSid, modify: false\)/);
+  assert.match(source, /GrantAcl\(resolved, appContainerSid, modify: false\)/);
+  assert.doesNotMatch(source, /GrantTraversalAcl/);
   assert.doesNotMatch(source, /icacls\.exe/);
   assert.doesNotMatch(source, /Process\.Start\(psi\)/);
-  const traversalStart = source.indexOf("private static void GrantTraversalAcl");
-  const traversalEnd = source.indexOf("private static int LaunchInAppContainer", traversalStart);
-  const traversalBody = source.slice(traversalStart, traversalEnd);
-  assert.match(traversalBody, /inherit: false/);
-  assert.doesNotMatch(traversalBody, /recursive: true/);
 });
 
 test("native sandbox verification uses a small workspace-local probe directory", () => {
@@ -260,13 +256,13 @@ test("native sandbox verification uses a small workspace-local probe directory",
   assert.match(source, /fs\.rmSync\(probeWorkspace, \{ recursive: true, force: true \}\);/);
 });
 
-test("Windows native sandbox verification enables bounded helper stage diagnostics", () => {
+test("Windows native verifier leaves temporary stage diagnostics out of the release path", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const verifier = fs.readFileSync(path.join(here, "..", "src", "sandbox-verify.js"), "utf8");
   const helper = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
-  assert.match(verifier, /LPC_SANDBOX_DIAGNOSTICS: "1"/);
-  assert.match(helper, /LPC_SANDBOX_DIAGNOSTICS/);
-  assert.match(helper, /sandbox-stage:/);
+  assert.doesNotMatch(verifier, /LPC_SANDBOX_DIAGNOSTICS/);
+  assert.doesNotMatch(helper, /LPC_SANDBOX_DIAGNOSTICS/);
+  assert.doesNotMatch(helper, /sandbox-stage:/);
 });
 
 test("Windows AppContainer adapter passes only trusted helper arguments and parent pid", () => {
