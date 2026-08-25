@@ -105,7 +105,7 @@ async function verifyNativeDeveloperWorkflow(runtime) {
   for (const argv of [["node", "--version"], ["npm", "--version"], ["git", "--version"]]) {
     const result = await run({ argv, cwd: ".", requestApproval: () => true });
     assert.equal(result.status, "completed", `${argv[0]} must execute in the verified native sandbox: ${result.error ?? result.stderr ?? ""}`);
-    assert.equal(result.exitCode, 0, `${argv[0]} native sandbox smoke must exit 0`);
+    assert.equal(result.exitCode, 0, `${argv[0]} native sandbox smoke must exit 0: ${JSON.stringify({ status: result.status, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, resolvedArgv: result.resolvedArgv ?? null })}`);
   }
 
   const started = await runtime.processManager.start(
