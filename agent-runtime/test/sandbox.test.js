@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createBubblewrapAdapter,
   createMacOSSandboxExecAdapter,
@@ -169,6 +170,13 @@ test("native sandbox verification requirements preserve stricter Windows no-netw
     requireNetworkBlocked: false,
     requireLoopback: false,
   });
+});
+
+test("Windows native helper preserves Win32 error codes in diagnostics", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
+  assert.match(source, /Win32Exception win32/);
+  assert.match(source, /NativeErrorCode/);
 });
 
 test("Windows AppContainer adapter passes only trusted helper arguments and parent pid", () => {

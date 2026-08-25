@@ -85,9 +85,14 @@ internal static class Program
                 Native.FreeSid(appContainerSid);
             }
         }
+        catch (Win32Exception win32)
+        {
+            Console.Error.WriteLine($"lpc-windows-sandbox: win32={win32.NativeErrorCode} (0x{win32.NativeErrorCode:X8}) {win32.Message}");
+            return 125;
+        }
         catch (Exception error)
         {
-            Console.Error.WriteLine($"lpc-windows-sandbox: {error.Message}");
+            Console.Error.WriteLine($"lpc-windows-sandbox: {error.GetType().Name}: {error.Message}");
             return 125;
         }
     }
