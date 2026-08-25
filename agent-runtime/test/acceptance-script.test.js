@@ -30,3 +30,11 @@ test("Windows acceptance mirrors the desktop Git broker architecture", () => {
   assert.match(source, /process\.platform === "win32" \? \[\["node", "--version"\], \["npm", "--version"\]\]/);
   assert.match(source, /await git\.invoke\(\{ action: "status", cwd: path\.relative\(root, repo\) \}\)/);
 });
+
+test("Goal finish acceptance gives bounded long-running verification enough client budget", () => {
+  const goalFinish = source.indexOf('name: "goal_finish"');
+  assert.ok(goalFinish >= 0);
+  const callTail = source.slice(goalFinish, goalFinish + 1_500);
+  assert.match(callTail, /timeout: 5 \* 60_000/);
+  assert.match(callTail, /maxTotalTimeout: 5 \* 60_000/);
+});

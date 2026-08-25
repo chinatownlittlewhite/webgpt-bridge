@@ -401,19 +401,22 @@ try {
     await clientBundle.client.callTool({ name: "goal_cancel", arguments: { sessionId } });
   } else {
     stage("Goal finish real verification gate");
-    const finished = await clientBundle.client.callTool({
-      name: "goal_finish",
-      arguments: {
-        sessionId,
-        summary: "The final acceptance Goal session survived restart and project checks completed.",
-        evidence: ["MCP server restarted and goal_status restored the same session id"],
-        criteriaEvidence: [{
-          criterion: "The persisted Goal session is restored after MCP server restart",
-          satisfied: true,
-          evidence: "goal_status returned active for the same sessionId after a full server restart",
-        }],
+    const finished = await clientBundle.client.callTool(
+      {
+        name: "goal_finish",
+        arguments: {
+          sessionId,
+          summary: "The final acceptance Goal session survived restart and project checks completed.",
+          evidence: ["MCP server restarted and goal_status restored the same session id"],
+          criteriaEvidence: [{
+            criterion: "The persisted Goal session is restored after MCP server restart",
+            satisfied: true,
+            evidence: "goal_status returned active for the same sessionId after a full server restart",
+          }],
+        },
       },
-    });
+      { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000 },
+    );
     assert.equal(finished.structuredContent.status, "completed");
     assert.equal(finished.structuredContent.verified, true);
   }
