@@ -100,7 +100,7 @@ async function verifyNativeDeveloperWorkflow(runtime) {
     sandboxAdapter: runtime.normalSandbox.adapter,
     platform: process.platform,
     auditLogger: runtime.auditLogger,
-    timeoutMs: 30_000,
+    timeoutMs: process.platform === "win32" ? 120_000 : 30_000,
   });
   for (const argv of [["node", "--version"], ["npm", "--version"], ["git", "--version"]]) {
     const result = await run({ argv, cwd: ".", requestApproval: () => true });

@@ -17,3 +17,7 @@ test("acceptance reports native sandbox verification details on failure", () => 
   assert.match(source, /native sandbox probe must pass:/);
   assert.match(source, /JSON\.stringify\(server\.runtime\.normalSandbox\.verification\)/);
 });
+
+test("Windows native developer smoke uses the production command timeout budget", () => {
+  assert.match(source, /timeoutMs: process\.platform === "win32" \? 120_000 : 30_000/);
+});

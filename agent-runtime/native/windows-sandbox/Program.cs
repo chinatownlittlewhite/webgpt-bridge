@@ -65,7 +65,10 @@ internal static class Program
             var appContainerSid = profile.Sid;
             try
             {
-                GrantAcl(workspace, appContainerSid, modify: true);
+                if (profile.Created)
+                {
+                    GrantAcl(workspace, appContainerSid, modify: true);
+                }
                 GrantTraversalAcl(Path.GetDirectoryName(executable)!, appContainerSid);
                 GrantAcl(executable, appContainerSid, modify: false);
                 foreach (var readPath in options.ReadPaths)

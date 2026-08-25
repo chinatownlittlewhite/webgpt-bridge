@@ -242,6 +242,7 @@ test("Windows helper grants runtime ACLs through Win32 APIs without spawning ica
   assert.match(source, /Native\.GetNamedSecurityInfoW/);
   assert.match(source, /Native\.SetEntriesInAclW/);
   assert.match(source, /Native\.SetNamedSecurityInfoW/);
+  assert.match(source, /if \(profile\.Created\)\s*\{\s*GrantAcl\(workspace, appContainerSid, modify: true\);\s*\}/s);
   assert.doesNotMatch(source, /icacls\.exe/);
   assert.doesNotMatch(source, /Process\.Start\(psi\)/);
   const traversalStart = source.indexOf("private static void GrantTraversalAcl");
@@ -249,6 +250,14 @@ test("Windows helper grants runtime ACLs through Win32 APIs without spawning ica
   const traversalBody = source.slice(traversalStart, traversalEnd);
   assert.match(traversalBody, /inherit: false/);
   assert.doesNotMatch(traversalBody, /recursive: true/);
+});
+
+test("native sandbox verification uses a small workspace-local probe directory", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "src", "sandbox-verify.js"), "utf8");
+  assert.match(source, /const probeWorkspace = fs\.mkdtempSync\(path\.join\(createWorkspaceTemp\(root\), "sandbox-probe-"\)\);/);
+  assert.match(source, /workspace: probeWorkspace/);
+  assert.match(source, /fs\.rmSync\(probeWorkspace, \{ recursive: true, force: true \}\);/);
 });
 
 test("Windows AppContainer adapter passes only trusted helper arguments and parent pid", () => {

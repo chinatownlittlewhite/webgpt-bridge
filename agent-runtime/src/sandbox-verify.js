@@ -184,6 +184,7 @@ export async function verifySandboxAdapter({
   }
 
   const root = resolveWorkspace(workspace);
+  const probeWorkspace = fs.mkdtempSync(path.join(createWorkspaceTemp(root), "sandbox-probe-"));
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-sandbox-canary-"));
   const outsidePath = path.join(outsideDir, "secret.txt");
   fs.writeFileSync(outsidePath, "sandbox-canary-secret", "utf8");
@@ -197,7 +198,7 @@ export async function verifySandboxAdapter({
   try {
     const probe = await runProbe({
       adapter: normalized,
-      workspace: root,
+      workspace: probeWorkspace,
       outsidePath,
       port,
       timeoutMs,
@@ -232,6 +233,7 @@ export async function verifySandboxAdapter({
   } finally {
     server.close();
     fs.rmSync(outsideDir, { recursive: true, force: true });
+    fs.rmSync(probeWorkspace, { recursive: true, force: true });
   }
 }
 
