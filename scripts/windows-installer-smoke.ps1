@@ -50,7 +50,8 @@ try {
   if ($task.Principal.RunLevel.ToString() -ne "Highest") { throw "host-preparation task is not configured for highest privileges: $($task.Principal.RunLevel)" }
   $taskActions = @($task.Actions)
   if ($taskActions.Count -ne 1) { throw "host-preparation task must have exactly one action" }
-  $taskExecute = [IO.Path]::GetFullPath($taskActions[0].Execute.Trim('"'))
+  $taskExecuteRaw = ([string]$taskActions[0].Execute).Trim('"')
+  $taskExecute = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($taskExecuteRaw))
   $expectedExecute = [IO.Path]::GetFullPath($installedPrep)
   if (-not [string]::Equals($taskExecute, $expectedExecute, [StringComparison]::OrdinalIgnoreCase)) { throw "host-preparation task executable is not the protected installed helper: $taskExecute" }
   if (([string]$taskActions[0].Arguments).Trim() -ne "--apply") { throw "host-preparation task Arguments must be fixed to --apply: $($taskActions[0].Arguments)" }
@@ -61,6 +62,29 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "installed host-prep check failed with exit $LASTEXITCODE" }
   $installed = $installedJson | ConvertFrom-Json
   if ($installed.status -ne "ready") { throw "installed host preparation is not ready: $installedJson" }
+
+  & $SourcePrep --remove
+  if ($LASTEXITCODE -ne 0) { throw "scheduled-task execution precondition remove failed with exit $LASTEXITCODE" }
+  $taskExecutionPreconditionJson = & $SourcePrep --check --json
+  if ($LASTEXITCODE -ne 0) { throw "scheduled-task execution precondition check failed with exit $LASTEXITCODE" }
+  $taskExecutionPrecondition = $taskExecutionPreconditionJson | ConvertFrom-Json
+  if ($taskExecutionPrecondition.status -ne "capability_ace_missing") { throw "scheduled-task execution precondition must be capability_ace_missing: $taskExecutionPreconditionJson" }
+
+  Start-ScheduledTask -TaskName $taskName
+  $taskRestoredReady = $false
+  $taskExecutionJson = ""
+  for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    Start-Sleep -Milliseconds 250
+    $taskExecutionJson = & $installedPrep --check --json
+    if ($LASTEXITCODE -eq 0) {
+      $taskExecution = $taskExecutionJson | ConvertFrom-Json
+      if ($taskExecution.status -eq "ready") {
+        $taskRestoredReady = $true
+        break
+      }
+    }
+  }
+  if (-not $taskRestoredReady) { throw "scheduled task did not restore host preparation to ready: $taskExecutionJson" }
 
   $repair = Start-Process -FilePath $installer.FullName -ArgumentList @("/S") -Wait -PassThru
   if ($repair.ExitCode -ne 0) { throw "silent NSIS repair installation failed with exit $($repair.ExitCode)" }
