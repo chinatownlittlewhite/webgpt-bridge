@@ -40,6 +40,7 @@ internal static class Program
     private const int StdInputHandle = -10;
     private const int StdOutputHandle = -11;
     private const int StdErrorHandle = -12;
+    private const string ProductNullDeviceCapabilityName = "com.localagenthost.desktop.null-device";
     private const string InternetClientCapabilitySid = "S-1-15-3-1";
 
     public static int Main(string[] args)
@@ -332,35 +333,52 @@ internal static class Program
             throw new Win32Exception(Marshal.GetLastWin32Error(), "InitializeProcThreadAttributeList failed");
         }
 
-        IntPtr capabilitySid = IntPtr.Zero;
+        var allocatedCapabilities = new List<(IntPtr Sid, bool LocalAllocated)>();
         IntPtr sidAndAttributes = IntPtr.Zero;
         IntPtr securityCapabilities = IntPtr.Zero;
         IntPtr job = IntPtr.Zero;
         try
         {
-            uint capabilityCount = 0;
+            var capabilities = new List<Native.SidAndAttributes>();
+            var productCapabilitySid = DeriveCapabilitySid(ProductNullDeviceCapabilityName);
+            allocatedCapabilities.Add((productCapabilitySid, true));
+            capabilities.Add(new Native.SidAndAttributes
+            {
+                Sid = productCapabilitySid,
+                Attributes = SeGroupEnabled,
+            });
+
             if (allowNetwork)
             {
-                capabilitySid = AllocateSid(InternetClientCapabilitySid);
-                var capability = new Native.SidAndAttributes
+                var internetClientSid = AllocateSid(InternetClientCapabilitySid);
+                allocatedCapabilities.Add((internetClientSid, false));
+                capabilities.Add(new Native.SidAndAttributes
                 {
-                    Sid = capabilitySid,
+                    Sid = internetClientSid,
                     Attributes = SeGroupEnabled,
-                };
-                sidAndAttributes = Marshal.AllocHGlobal(Marshal.SizeOf<Native.SidAndAttributes>());
-                Marshal.StructureToPtr(capability, sidAndAttributes, false);
-                capabilityCount = 1;
+                });
             }
 
-            var capabilities = new Native.SecurityCapabilities
+            var capabilitySize = Marshal.SizeOf<Native.SidAndAttributes>();
+            sidAndAttributes = Marshal.AllocHGlobal(capabilitySize * capabilities.Count);
+            for (var index = 0; index < capabilities.Count; index += 1)
+            {
+                Marshal.StructureToPtr(
+                    capabilities[index],
+                    IntPtr.Add(sidAndAttributes, index * capabilitySize),
+                    false
+                );
+            }
+
+            var securityCapabilityDescriptor = new Native.SecurityCapabilities
             {
                 AppContainerSid = appContainerSid,
                 Capabilities = sidAndAttributes,
-                CapabilityCount = capabilityCount,
+                CapabilityCount = (uint)capabilities.Count,
                 Reserved = 0,
             };
             securityCapabilities = Marshal.AllocHGlobal(Marshal.SizeOf<Native.SecurityCapabilities>());
-            Marshal.StructureToPtr(capabilities, securityCapabilities, false);
+            Marshal.StructureToPtr(securityCapabilityDescriptor, securityCapabilities, false);
 
             if (!Native.UpdateProcThreadAttribute(
                     startup.lpAttributeList,
@@ -464,7 +482,12 @@ internal static class Program
             if (job != IntPtr.Zero) Native.CloseHandle(job);
             if (securityCapabilities != IntPtr.Zero) Marshal.FreeHGlobal(securityCapabilities);
             if (sidAndAttributes != IntPtr.Zero) Marshal.FreeHGlobal(sidAndAttributes);
-            if (capabilitySid != IntPtr.Zero) Marshal.FreeHGlobal(capabilitySid);
+            foreach (var allocation in allocatedCapabilities)
+            {
+                if (allocation.Sid == IntPtr.Zero) continue;
+                if (allocation.LocalAllocated) Native.LocalFree(allocation.Sid);
+                else Marshal.FreeHGlobal(allocation.Sid);
+            }
             if (startup.lpAttributeList != IntPtr.Zero)
             {
                 Native.DeleteProcThreadAttributeList(startup.lpAttributeList);
@@ -556,6 +579,56 @@ internal static class Program
         finally
         {
             Marshal.FreeHGlobal(pointer);
+        }
+    }
+
+    private static IntPtr DeriveCapabilitySid(string capabilityName)
+    {
+        IntPtr groupSidArray = IntPtr.Zero;
+        IntPtr capabilitySidArray = IntPtr.Zero;
+        uint groupSidCount = 0;
+        uint capabilitySidCount = 0;
+        try
+        {
+            if (!Native.DeriveCapabilitySidsFromName(
+                    capabilityName,
+                    out groupSidArray,
+                    out groupSidCount,
+                    out capabilitySidArray,
+                    out capabilitySidCount))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), $"DeriveCapabilitySidsFromName failed for '{capabilityName}'");
+            }
+            if (capabilitySidCount != 1 || capabilitySidArray == IntPtr.Zero)
+            {
+                throw new InvalidOperationException($"expected exactly one capability SID for '{capabilityName}'");
+            }
+
+            var capabilitySid = Marshal.ReadIntPtr(capabilitySidArray);
+            Native.LocalFree(capabilitySidArray);
+            capabilitySidArray = IntPtr.Zero;
+            return capabilitySid;
+        }
+        finally
+        {
+            if (groupSidArray != IntPtr.Zero)
+            {
+                for (var index = 0; index < groupSidCount; index += 1)
+                {
+                    var groupSid = Marshal.ReadIntPtr(groupSidArray, index * IntPtr.Size);
+                    if (groupSid != IntPtr.Zero) Native.LocalFree(groupSid);
+                }
+                Native.LocalFree(groupSidArray);
+            }
+            if (capabilitySidArray != IntPtr.Zero)
+            {
+                for (var index = 0; index < capabilitySidCount; index += 1)
+                {
+                    var capabilitySid = Marshal.ReadIntPtr(capabilitySidArray, index * IntPtr.Size);
+                    if (capabilitySid != IntPtr.Zero) Native.LocalFree(capabilitySid);
+                }
+                Native.LocalFree(capabilitySidArray);
+            }
         }
     }
 
@@ -802,6 +875,15 @@ internal static class Program
 
         [DllImport("advapi32.dll")]
         internal static extern IntPtr FreeSid(IntPtr pSid);
+
+        [DllImport("kernelbase.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool DeriveCapabilitySidsFromName(
+            string capabilityName,
+            out IntPtr capabilityGroupSids,
+            out uint capabilityGroupSidCount,
+            out IntPtr capabilitySids,
+            out uint capabilitySidCount);
 
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
         internal static extern uint GetNamedSecurityInfoW(

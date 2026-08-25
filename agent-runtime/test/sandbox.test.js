@@ -207,6 +207,16 @@ test("Windows native helper preserves Win32 error codes in diagnostics", () => {
   assert.match(source, /NativeErrorCode/);
 });
 
+test("Windows helper always includes the fixed product capability and adds internet client only for network mode", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
+  assert.match(source, /com\.localagenthost\.desktop\.null-device/);
+  assert.match(source, /DeriveCapabilitySidsFromName/);
+  assert.match(source, /CapabilityCount\s*=\s*\(uint\)capabilities\.Count/);
+  assert.match(source, /if \(allowNetwork\)[\s\S]*InternetClientCapabilitySid/);
+  assert.doesNotMatch(source, /uint capabilityCount = 0;/);
+});
+
 test("Windows helper does not claim a custom Unicode environment when inheriting the parent environment", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
