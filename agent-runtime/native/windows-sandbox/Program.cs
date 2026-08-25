@@ -59,12 +59,14 @@ internal static class Program
                 var sidText = new SecurityIdentifier(appContainerSid).Value;
 
                 GrantAcl(workspace, sidText, modify: true, recursive: profile.Created);
+                GrantTraversalAcl(Path.GetDirectoryName(executable)!, sidText);
                 GrantAcl(executable, sidText, modify: false);
                 foreach (var readPath in options.ReadPaths)
                 {
                     var resolved = Path.GetFullPath(readPath);
                     if (Directory.Exists(resolved) || File.Exists(resolved))
                     {
+                        GrantTraversalAcl(resolved, sidText);
                         GrantAcl(resolved, sidText, modify: false);
                     }
                 }
@@ -170,6 +172,43 @@ internal static class Program
         if (process.ExitCode != 0)
         {
             throw new InvalidOperationException($"failed to grant AppContainer ACL on '{target}': {stderr.Trim()} {stdout.Trim()}".Trim());
+        }
+    }
+
+    private static void GrantTraversalAcl(string target, string sid)
+    {
+        var resolved = Path.GetFullPath(target);
+        DirectoryInfo? current = Directory.Exists(resolved)
+            ? new DirectoryInfo(resolved)
+            : new DirectoryInfo(Path.GetDirectoryName(resolved) ?? resolved);
+
+        while (current is not null)
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "icacls.exe"),
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add(current.FullName);
+            psi.ArgumentList.Add("/grant");
+            // Ancestors only need non-inheriting read/execute so Windows can traverse
+            // and query attributes while Node resolves a trusted runtime path.
+            psi.ArgumentList.Add($"*{sid}:(RX)");
+            psi.ArgumentList.Add("/C");
+            psi.ArgumentList.Add("/Q");
+
+            using var process = Process.Start(psi) ?? throw new InvalidOperationException("could not start icacls.exe");
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"failed to grant AppContainer traversal ACL on '{current.FullName}': {stderr.Trim()} {stdout.Trim()}".Trim());
+            }
+            current = current.Parent;
         }
     }
 

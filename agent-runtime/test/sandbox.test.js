@@ -231,6 +231,19 @@ test("Windows AppContainer child inherits the helper cwd instead of restating a 
   assert.match(source, /null,\s*ref startup,/s);
 });
 
+test("Windows helper grants only non-inheriting traversal access to trusted runtime ancestors", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
+  assert.match(source, /GrantTraversalAcl\(Path\.GetDirectoryName\(executable\)!/);
+  assert.match(source, /GrantTraversalAcl\(resolved, sidText\)/);
+  assert.match(source, /private static void GrantTraversalAcl/);
+  assert.match(source, /\$"\*\{sid\}:\(RX\)"/);
+  const traversalStart = source.indexOf("private static void GrantTraversalAcl");
+  const traversalEnd = source.indexOf("private static int LaunchInAppContainer", traversalStart);
+  const traversalBody = source.slice(traversalStart, traversalEnd);
+  assert.doesNotMatch(traversalBody, /\(OI\)|\(CI\)|\/T/);
+});
+
 test("Windows AppContainer adapter passes only trusted helper arguments and parent pid", () => {
   const adapter = createWindowsAppContainerAdapter({
     helperPath: "/trusted/lpc-windows-sandbox.exe",
