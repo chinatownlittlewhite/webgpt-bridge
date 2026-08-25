@@ -9,6 +9,7 @@ namespace LocalProjectCoding.WindowsHostPrep;
 internal static class Program
 {
     private const string CapabilityName = "com.localagenthost.desktop.null-device";
+    private const string AllApplicationPackagesSid = "S-1-15-2-1";
     private const string TargetName = "NUL";
     private const uint FileGenericRead = 0x00120089;
     private const uint FileGenericWrite = 0x00120116;
@@ -109,20 +110,27 @@ internal static class Program
         using var preparation = OpenPreparation(writeDacl: false, writeLabel: false);
         var dacl = ReadDacl(preparation.Handle);
         var present = HasOwnedAce(dacl, preparation.CapabilitySid);
+        var appContainerPresent = HasOwnedAce(dacl, preparation.AppContainerSid);
         var lowIntegrity = HasLowIntegrityLabel(preparation.Handle);
         return new
         {
-            status = present && lowIntegrity
+            status = present && appContainerPresent && lowIntegrity
                 ? "ready"
-                : !present ? "capability_ace_missing" : "integrity_label_missing",
+                : !present
+                    ? "capability_ace_missing"
+                    : !appContainerPresent ? "appcontainer_ace_missing" : "integrity_label_missing",
             capabilityName = CapabilityName,
             capabilitySid = preparation.CapabilitySid.Value,
+            appContainerSid = preparation.AppContainerSid.Value,
+            appContainerPackageAccess = appContainerPresent,
             target = TargetName,
             accessMask = $"0x{unchecked((uint)NullDeviceAccessMask):X8}",
             lowIntegrityLabel = lowIntegrity,
             elevated = IsAdministrator(),
             integrityLevel = GetIntegrityLevel(),
-            remediation = present && lowIntegrity ? null : "Run WebGPT Bridge installer repair as administrator to restore Windows host preparation.",
+            remediation = present && appContainerPresent && lowIntegrity
+                ? null
+                : "Run WebGPT Bridge installer repair as administrator to restore Windows host preparation.",
         };
     }
 
@@ -130,21 +138,41 @@ internal static class Program
     {
         using var preparation = OpenPreparation(writeDacl: true, writeLabel: true);
         var dacl = ReadDacl(preparation.Handle);
-        if (!HasOwnedAce(dacl, preparation.CapabilitySid))
+        var capabilityPresent = HasOwnedAce(dacl, preparation.CapabilitySid);
+        var appContainerPresent = HasOwnedAce(dacl, preparation.AppContainerSid);
+        var missingAceCount = (capabilityPresent ? 0 : 1) + (appContainerPresent ? 0 : 1);
+        if (missingAceCount > 0)
         {
-            var updated = CloneAcl(dacl, extraCapacity: 1, skipOwnedAce: false, preparation.CapabilitySid);
-            updated.InsertAce(updated.Count, new CommonAce(
-                AceFlags.None,
-                AceQualifier.AccessAllowed,
-                NullDeviceAccessMask,
-                preparation.CapabilitySid,
-                false,
-                null));
+            var updated = CloneAcl(dacl, extraCapacity: missingAceCount, skipOwnedAce: false, preparation.CapabilitySid);
+            if (!capabilityPresent)
+            {
+                updated.InsertAce(updated.Count, new CommonAce(
+                    AceFlags.None,
+                    AceQualifier.AccessAllowed,
+                    NullDeviceAccessMask,
+                    preparation.CapabilitySid,
+                    false,
+                    null));
+            }
+            if (!appContainerPresent)
+            {
+                updated.InsertAce(updated.Count, new CommonAce(
+                    AceFlags.None,
+                    AceQualifier.AccessAllowed,
+                    NullDeviceAccessMask,
+                    preparation.AppContainerSid,
+                    false,
+                    null));
+            }
             WriteDacl(preparation.Handle, updated);
             var persisted = ReadDacl(preparation.Handle);
             if (!HasOwnedAce(persisted, preparation.CapabilitySid))
             {
                 throw new InvalidOperationException("SetKernelObjectSecurity returned success but the product capability ACE was not persisted on NUL");
+            }
+            if (!HasOwnedAce(persisted, preparation.AppContainerSid))
+            {
+                throw new InvalidOperationException("SetKernelObjectSecurity returned success but the AppContainer package ACE was not persisted on NUL");
             }
         }
         if (!HasLowIntegrityLabel(preparation.Handle))
@@ -199,7 +227,10 @@ internal static class Program
             var capabilityPointer = DeriveCapabilitySid(CapabilityName);
             try
             {
-                return new PreparationHandle(handle, new SecurityIdentifier(capabilityPointer));
+                return new PreparationHandle(
+                    handle,
+                    new SecurityIdentifier(capabilityPointer),
+                    new SecurityIdentifier(AllApplicationPackagesSid));
             }
             finally
             {
@@ -492,11 +523,16 @@ internal static class Program
     {
         public IntPtr Handle { get; }
         public SecurityIdentifier CapabilitySid { get; }
+        public SecurityIdentifier AppContainerSid { get; }
 
-        public PreparationHandle(IntPtr handle, SecurityIdentifier capabilitySid)
+        public PreparationHandle(
+            IntPtr handle,
+            SecurityIdentifier capabilitySid,
+            SecurityIdentifier appContainerSid)
         {
             Handle = handle;
             CapabilitySid = capabilitySid;
+            AppContainerSid = appContainerSid;
         }
 
         public void Dispose()
