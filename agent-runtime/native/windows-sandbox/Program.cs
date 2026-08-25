@@ -251,7 +251,10 @@ internal static class Program
                     true,
                     flags,
                     IntPtr.Zero,
-                    cwd,
+                    // The helper itself is already spawned with cwd set to the requested workspace.
+                    // Inherit it here instead of restating a drive-qualified path, which avoids
+                    // depending on hidden per-drive current-directory environment entries on Windows.
+                    null,
                     ref startup,
                     out var processInfo))
             {
@@ -675,7 +678,7 @@ internal static class Program
             bool bInheritHandles,
             uint dwCreationFlags,
             IntPtr lpEnvironment,
-            string lpCurrentDirectory,
+            string? lpCurrentDirectory,
             ref StartupInfoEx lpStartupInfo,
             out ProcessInformation lpProcessInformation);
 

@@ -183,8 +183,8 @@ test("Windows helper does not claim a custom Unicode environment when inheriting
   const here = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
   assert.match(source, /var flags = ExtendedStartupInfoPresent \| CreateSuspended;/);
-  assert.doesNotMatch(source, /var flags = ExtendedStartupInfoPresent \| CreateUnicodeEnvironment/);
-  assert.match(source, /IntPtr\.Zero,\s*\/\/ inherited environment|IntPtr\.Zero,\s*cwd,/s);
+  assert.doesNotMatch(source, /CreateUnicodeEnvironment/);
+  assert.match(source, /IntPtr lpEnvironment/);
 });
 
 test("Windows helper passes only valid inheritable standard handles into AppContainer", () => {
@@ -196,6 +196,14 @@ test("Windows helper passes only valid inheritable standard handles into AppCont
   assert.doesNotMatch(source, /hStdInput = Native\.GetStdHandle/);
   assert.doesNotMatch(source, /hStdOutput = Native\.GetStdHandle/);
   assert.doesNotMatch(source, /hStdError = Native\.GetStdHandle/);
+});
+
+test("Windows AppContainer child inherits the helper cwd instead of restating a drive path", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
+  assert.match(source, /string\? lpCurrentDirectory/);
+  assert.match(source, /Inherit it here instead of restating a drive-qualified path/);
+  assert.match(source, /null,\s*ref startup,/s);
 });
 
 test("Windows AppContainer adapter passes only trusted helper arguments and parent pid", () => {
