@@ -20,6 +20,7 @@ test("Windows host preparation has a fixed null-device-only command surface", ()
   assert.match(source, /DeriveCapabilitySidsFromName/);
   assert.match(source, /GetSecurityInfo/);
   assert.match(source, /SetSecurityInfo/);
+  assert.match(source, /SetKernelObjectSecurity/);
   assert.match(source, /SeKernelObject/);
   assert.match(source, /LabelSecurityInformation/);
   assert.match(source, /WriteOwner/);
@@ -29,6 +30,7 @@ test("Windows host preparation has a fixed null-device-only command surface", ()
   assert.match(source, /CreateFileW\(\s*"NUL"/);
   assert.doesNotMatch(source, /SetNamedSecurityInfoW/);
   assert.doesNotMatch(source, /Process\.Start|CreateProcess/);
+  assert.match(source, /WriteDacl\(preparation\.Handle, updated\)[\s\S]*ReadDacl\(preparation\.Handle\)[\s\S]*HasOwnedAce/);
   assert.match(source, /args\.Length == 2 && args\[0\] == "--check" && args\[1\] == "--json"/);
   assert.match(source, /args\.Length == 1 && args\[0\] == "--apply"/);
   assert.match(source, /args\.Length == 1 && args\[0\] == "--remove"/);

@@ -140,6 +140,11 @@ internal static class Program
                 false,
                 null));
             WriteDacl(preparation.Handle, updated);
+            var persisted = ReadDacl(preparation.Handle);
+            if (!HasOwnedAce(persisted, preparation.CapabilitySid))
+            {
+                throw new InvalidOperationException("SetKernelObjectSecurity returned success but the product capability ACE was not persisted on NUL");
+            }
         }
         if (!HasLowIntegrityLabel(preparation.Handle))
         {
@@ -368,26 +373,28 @@ internal static class Program
     {
         var bytes = new byte[dacl.BinaryLength];
         dacl.GetBinaryForm(bytes, 0);
-        var pointer = Marshal.AllocHGlobal(bytes.Length);
+        var aclPointer = Marshal.AllocHGlobal(bytes.Length);
+        var descriptorPointer = Marshal.AllocHGlobal(Marshal.SizeOf<Native.SecurityDescriptor>());
         try
         {
-            Marshal.Copy(bytes, 0, pointer, bytes.Length);
-            var result = Native.SetSecurityInfo(
-                handle,
-                SeKernelObject,
-                DaclSecurityInformation,
-                IntPtr.Zero,
-                IntPtr.Zero,
-                pointer,
-                IntPtr.Zero);
-            if (result != 0)
+            Marshal.Copy(bytes, 0, aclPointer, bytes.Length);
+            if (!Native.InitializeSecurityDescriptor(descriptorPointer, SddlRevision1))
             {
-                throw new Win32Exception(unchecked((int)result), "SetSecurityInfo(SE_KERNEL_OBJECT) failed");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "InitializeSecurityDescriptor failed");
+            }
+            if (!Native.SetSecurityDescriptorDacl(descriptorPointer, true, aclPointer, false))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "SetSecurityDescriptorDacl failed");
+            }
+            if (!Native.SetKernelObjectSecurity(handle, DaclSecurityInformation, descriptorPointer))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "SetKernelObjectSecurity(DACL_SECURITY_INFORMATION) failed");
             }
         }
         finally
         {
-            Marshal.FreeHGlobal(pointer);
+            Marshal.FreeHGlobal(descriptorPointer);
+            Marshal.FreeHGlobal(aclPointer);
         }
     }
 
@@ -520,6 +527,18 @@ internal static class Program
             public SidAndAttributes Label;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct SecurityDescriptor
+        {
+            public byte Revision;
+            public byte Sbz1;
+            public ushort Control;
+            public IntPtr Owner;
+            public IntPtr Group;
+            public IntPtr Sacl;
+            public IntPtr Dacl;
+        }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         internal static extern IntPtr CreateFileW(
             string fileName,
@@ -561,6 +580,27 @@ internal static class Program
             IntPtr group,
             IntPtr dacl,
             IntPtr sacl);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool InitializeSecurityDescriptor(
+            IntPtr securityDescriptor,
+            uint revision);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool SetSecurityDescriptorDacl(
+            IntPtr securityDescriptor,
+            [MarshalAs(UnmanagedType.Bool)] bool daclPresent,
+            IntPtr dacl,
+            [MarshalAs(UnmanagedType.Bool)] bool daclDefaulted);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool SetKernelObjectSecurity(
+            IntPtr handle,
+            uint securityInformation,
+            IntPtr securityDescriptor);
 
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
