@@ -9,6 +9,7 @@ test("npm test delegates through the sandbox-aware test entrypoint", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const root = path.resolve(here, "..");
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const runnerSource = fs.readFileSync(path.join(root, "scripts", "run-tests.mjs"), "utf8");
   assert.equal(
     packageJson.scripts.test,
     "node --preserve-symlinks --preserve-symlinks-main scripts/run-tests.mjs",
@@ -18,6 +19,8 @@ test("npm test delegates through the sandbox-aware test entrypoint", () => {
     packageJson.scripts.lint,
     "node --preserve-symlinks --preserve-symlinks-main scripts/lint.mjs",
   );
+  assert.doesNotMatch(runnerSource, /\bawait main\(\)/);
+  assert.match(runnerSource, /\bmain\(\)\.catch\(/);
 });
 
 test("nested Windows detection is bound to the trusted workspace-local profile", () => {
