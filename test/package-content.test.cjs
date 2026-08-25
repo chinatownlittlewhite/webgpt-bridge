@@ -21,6 +21,8 @@ test("builder config fixes GitHub update source and platform targets", () => {
   assert.equal(config.nsis.perMachine, true);
   assert.equal(config.nsis.allowToChangeInstallationDirectory, false);
   assert.deepEqual(config.mac.target, ["dmg", "zip"]);
+  assert.equal(config.mac.mergeASARs, false, "universal packaging must not rebuild the fully unpacked Agent runtime into one giant ASAR glob");
+  assert.deepEqual(config.asarUnpack, ["agent-runtime/**/*"], "the external Agent runtime must remain on the real filesystem");
   assert.equal(config.mac.x64ArchFiles, "**/node-pty/prebuilds/darwin-*/{pty.node,spawn-helper}");
 });
 
@@ -222,6 +224,8 @@ test("Windows CI provisions host preparation and runs acceptance as an ephemeral
   assert.match(windows, /New-LocalUser/);
   assert.match(windows, /Get-LocalGroupMember[^\n]*Administrators/);
   assert.match(windows, /Start-Process[\s\S]*-Credential/);
+  assert.match(windows, /Write-Host\s+"Running as \$\{qualified\}: \$acceptanceCommand"/);
+  assert.doesNotMatch(windows, /Write-Host\s+"Running as \$qualified:/);
   assert.match(windows, /Remove-LocalUser/);
   assert.ok(acceptance > repairedCheck, "the standard-user acceptance command must run only after remove/reapply repair returns host preparation to ready");
   assert.match(windows, /if:\s*always\(\)[\s\S]*--remove/);

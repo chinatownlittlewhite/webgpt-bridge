@@ -81,7 +81,7 @@ jobs:
 
             $npm = (Get-Command npm.cmd).Source
             $acceptanceCommand = "npm --prefix agent-runtime run acceptance"
-            Write-Host "Running as $qualified: $acceptanceCommand"
+            Write-Host "Running as ${qualified}: $acceptanceCommand"
             $stdout = Join-Path $env:RUNNER_TEMP "webgpt-standard-user-acceptance.stdout.log"
             $stderr = Join-Path $env:RUNNER_TEMP "webgpt-standard-user-acceptance.stderr.log"
             $credential = [System.Management.Automation.PSCredential]::new($qualified, $securePassword)
