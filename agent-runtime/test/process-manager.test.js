@@ -47,8 +47,10 @@ async function waitForOutput(manager, processId, expected, trustedContext) {
 }
 
 test("managed process output is bounded and Goal ownership hides sibling processes", async (t) => {
-  if (process.platform === "darwin" && process.env.HOME === process.cwd()) {
-    t.skip("nested Seatbelt commands cannot signal child process groups");
+  const configuredHome = process.env.HOME ? path.resolve(process.env.HOME) : "";
+  const accountHome = path.resolve(os.userInfo().homedir);
+  if (process.platform === "darwin" && configuredHome && configuredHome !== accountHome) {
+    t.skip("nested Seatbelt rewrites HOME and cannot signal child process groups");
     return;
   }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-process-manager-"));
