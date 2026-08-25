@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { INTERNAL_STATE_DIR } from "./workspace.js";
 
 const WINDOWS_BATCH_EXTENSIONS = new Set([".cmd", ".bat"]);
 
@@ -183,6 +185,95 @@ function resolution({ platform, logicalCommand, argv, resolved, usedTrustedShim,
     resolved,
     usedTrustedShim,
     trustedReadPaths: Object.freeze(resolved ? trustedRuntimeReadPaths(runtimeValues, platform) : []),
+  });
+}
+
+function isInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function copyTrustedRuntimePackage(sourceRoot, destinationRoot) {
+  const canonicalSource = fs.realpathSync(sourceRoot);
+  fs.cpSync(canonicalSource, destinationRoot, {
+    recursive: true,
+    dereference: true,
+    filter(source) {
+      const canonicalEntry = fs.realpathSync(source);
+      if (!isInside(canonicalSource, canonicalEntry)) {
+        throw new Error("trusted runtime package contains a symlink escape");
+      }
+      const entry = fs.lstatSync(source);
+      if (!entry.isDirectory() && !entry.isFile() && !entry.isSymbolicLink()) {
+        throw new Error("trusted runtime package contains an unsupported filesystem entry");
+      }
+      return true;
+    },
+  });
+}
+
+export function stageWindowsNodeCliRuntime(platformCommand, {
+  workspace,
+  platform = process.platform,
+} = {}) {
+  if (platform !== "win32" || !["npm", "npx"].includes(platformCommand?.logicalCommand)) {
+    return platformCommand;
+  }
+  if (!platformCommand?.resolved || platformCommand.usedTrustedShim !== true) {
+    throw new Error("Windows Node CLI runtime staging requires a resolved trusted shim");
+  }
+  if (typeof workspace !== "string" || workspace.length === 0) {
+    throw new TypeError("workspace is required for Windows Node CLI runtime staging");
+  }
+  const workspaceRoot = fs.realpathSync(path.resolve(workspace));
+  const cliName = platformCommand.logicalCommand === "npx" ? "npx-cli.js" : "npm-cli.js";
+  const cli = platformCommand.argv?.[3];
+  if (typeof cli !== "string" || path.basename(cli).toLowerCase() !== cliName) {
+    throw new Error(`resolved ${platformCommand.logicalCommand} shim does not reference ${cliName}`);
+  }
+  const sourcePackageRoot = fs.realpathSync(path.dirname(path.dirname(cli)));
+  if (isInside(workspaceRoot, sourcePackageRoot)) return platformCommand;
+
+  const packageJsonPath = path.join(sourcePackageRoot, "package.json");
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+  if (packageJson?.name !== "npm" || typeof packageJson.version !== "string" || !/^[0-9A-Za-z._+-]{1,64}$/.test(packageJson.version)) {
+    throw new Error("resolved Windows npm runtime package metadata is invalid");
+  }
+
+  const runtimeParent = path.join(workspaceRoot, INTERNAL_STATE_DIR, "runtime", "npm");
+  fs.mkdirSync(runtimeParent, { recursive: true });
+  const stageRoot = fs.mkdtempSync(path.join(runtimeParent, `${packageJson.version}-${process.pid}-`));
+  const stagedPackageRoot = path.join(stageRoot, "package");
+  try {
+    copyTrustedRuntimePackage(sourcePackageRoot, stagedPackageRoot);
+  } catch (error) {
+    fs.rmSync(stageRoot, { recursive: true, force: true });
+    throw error;
+  }
+  const stagedCli = path.join(stagedPackageRoot, "bin", cliName);
+  if (!fs.statSync(stagedCli).isFile()) {
+    fs.rmSync(stageRoot, { recursive: true, force: true });
+    throw new Error(`staged Windows npm runtime is missing ${cliName}`);
+  }
+
+  const trustedReadPaths = (platformCommand.trustedReadPaths ?? [])
+    .filter((entry) => {
+      try {
+        return !isInside(sourcePackageRoot, fs.realpathSync(entry));
+      } catch {
+        return false;
+      }
+    });
+  trustedReadPaths.push(stagedPackageRoot);
+  return Object.freeze({
+    ...platformCommand,
+    argv: Object.freeze([
+      ...platformCommand.argv.slice(0, 3),
+      stagedCli,
+      ...platformCommand.argv.slice(4),
+    ]),
+    trustedReadPaths: Object.freeze([...new Set(trustedReadPaths.map((entry) => path.resolve(entry)))]),
+    stagedRuntimeRoots: Object.freeze([stageRoot]),
   });
 }
 
