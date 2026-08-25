@@ -35,7 +35,7 @@ try {
   $taskExecute = [IO.Path]::GetFullPath($taskActions[0].Execute.Trim('"'))
   $expectedExecute = [IO.Path]::GetFullPath($installedPrep)
   if (-not [string]::Equals($taskExecute, $expectedExecute, [StringComparison]::OrdinalIgnoreCase)) { throw "host-preparation task executable is not the protected installed helper: $taskExecute" }
-  if (($taskActions[0].Arguments ?? "").Trim() -ne "--apply") { throw "host-preparation task Arguments must be fixed to --apply: $($taskActions[0].Arguments)" }
+  if (([string]$taskActions[0].Arguments).Trim() -ne "--apply") { throw "host-preparation task Arguments must be fixed to --apply: $($taskActions[0].Arguments)" }
   $taskTriggers = @($task.Triggers)
   if ($taskTriggers.Count -ne 1 -or $taskTriggers[0].CimClass.CimClassName -ne "MSFT_TaskBootTrigger") { throw "host-preparation task must have exactly one boot trigger" }
 
