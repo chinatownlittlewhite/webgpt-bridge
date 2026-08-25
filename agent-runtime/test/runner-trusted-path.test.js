@@ -32,7 +32,7 @@ test("runner prepends host-derived staged runtime directories to child PATH", as
 
     assert.equal(result.status, "completed");
     assert.equal(result.exitCode, 0);
-    assert.equal(result.stdout, runtimeBin);
+    assert.equal(result.stdout, fs.realpathSync(runtimeBin));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
