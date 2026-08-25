@@ -417,8 +417,16 @@ try {
       },
       { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000 },
     );
-    assert.equal(finished.structuredContent.status, "completed");
-    assert.equal(finished.structuredContent.verified, true);
+    assert.equal(
+      finished.structuredContent.status,
+      "completed",
+      `goal_finish must complete: ${JSON.stringify(finished.structuredContent, null, 2)}`,
+    );
+    assert.equal(
+      finished.structuredContent.verified,
+      true,
+      `goal_finish must report verified=true: ${JSON.stringify(finished.structuredContent, null, 2)}`,
+    );
   }
 
   stage("audit hash-chain tail");

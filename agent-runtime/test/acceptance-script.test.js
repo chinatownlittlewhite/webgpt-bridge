@@ -38,3 +38,7 @@ test("Goal finish acceptance gives bounded long-running verification enough clie
   assert.match(callTail, /timeout: 5 \* 60_000/);
   assert.match(callTail, /maxTotalTimeout: 5 \* 60_000/);
 });
+
+test("Goal finish acceptance includes structured verification details in assertion failures", () => {
+  assert.match(source, /JSON\.stringify\(finished\.structuredContent, null, 2\)/);
+});
