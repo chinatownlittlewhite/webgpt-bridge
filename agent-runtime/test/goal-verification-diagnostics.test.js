@@ -42,3 +42,38 @@ test("goal_finish preserves bounded project-check diagnostics when verification 
   assert.equal(check.stdoutOmitted, true);
   assert.equal(check.stderrOmitted, true);
 });
+
+test("goal_finish extracts a bounded failure excerpt when the failing test is outside the output tail", async () => {
+  const stdout = [
+    "x".repeat(6_000),
+    "not ok 23 - nested Windows regression identifies the failure",
+    "  failureType: 'testCodeFailure'",
+    "  error: 'workspace child runtime assertion failed'",
+    "  code: 'ERR_ASSERTION'",
+    "y".repeat(6_000),
+  ].join("\n");
+  const projectTask = makeTool("run_project_task", async () => ({
+    status: "completed",
+    exitCode: 1,
+    stdout,
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  }));
+  const controller = createGoalController({
+    tools: [projectTask],
+    verificationTasks: ["test"],
+  });
+  const started = controller.start({ goal: "Find a failure that fell outside the output tail" });
+  const result = await controller.finish({
+    sessionId: started.sessionId,
+    summary: "verification attempted",
+  });
+
+  assert.equal(result.status, "continue_required");
+  const check = result.verification.checks[0];
+  assert.doesNotMatch(check.stdoutTail, /not ok 23/);
+  assert.match(check.failureExcerpt, /not ok 23 - nested Windows regression identifies the failure/);
+  assert.match(check.failureExcerpt, /workspace child runtime assertion failed/);
+  assert.ok(Buffer.byteLength(check.failureExcerpt) <= 4_096);
+});
