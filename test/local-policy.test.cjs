@@ -31,7 +31,7 @@ test("rejects sensitive paths and aliases while allowing ordinary development fi
   fs.writeFileSync(path.join(workspace, ".env"), "TOKEN=secret\n");
   fs.symlinkSync(ssh, path.join(workspace, "ssh-alias"));
 
-  const options = { homeDir: home, appDataRoots: [appData], platform: "darwin" };
+  const options = { homeDir: home, appDataRoots: [appData], sensitiveRoots: [browser] };
   assert.equal(classifyLocalPath(path.join(workspace, "index.js"), { operation: "read", ...options }).decision, "allow");
   assert.equal(classifyLocalPath(path.join(workspace, ".env"), { operation: "read", ...options }).decision, "deny");
   assert.equal(classifyLocalPath(path.join(ssh, "id_ed25519"), { operation: "read", ...options }).decision, "deny");
