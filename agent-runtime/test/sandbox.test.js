@@ -186,16 +186,19 @@ test("native sandbox verification requirements preserve stricter Windows no-netw
   assert.deepEqual(nativeSandboxVerificationRequirements({ platform: "win32", allowNetwork: false }), {
     requireNetworkBlocked: true,
     requireLoopback: false,
+    requireNullDevice: true,
     timeoutMs: 30_000,
   });
   assert.deepEqual(nativeSandboxVerificationRequirements({ platform: "darwin", allowNetwork: false }), {
     requireNetworkBlocked: true,
     requireLoopback: true,
+    requireNullDevice: false,
     timeoutMs: 5_000,
   });
   assert.deepEqual(nativeSandboxVerificationRequirements({ platform: "win32", allowNetwork: true }), {
     requireNetworkBlocked: false,
     requireLoopback: false,
+    requireNullDevice: true,
     timeoutMs: 30_000,
   });
 });

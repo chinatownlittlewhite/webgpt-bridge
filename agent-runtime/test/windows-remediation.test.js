@@ -12,9 +12,51 @@ test("Windows native sandbox publish is win-x64 self-contained without trimming 
   assert.doesNotMatch(buildNativeSource, /PublishSingleFile|PublishTrimmed|PublishAot|NativeAOT/i);
 });
 
+test("Windows host preparation probe is read-only, structured, and fixed to the product capability", async () => {
+  const nativeSandbox = await import("../src/native-sandbox.js");
+  assert.equal(typeof nativeSandbox.probeWindowsHostPreparation, "function");
+  if (typeof nativeSandbox.probeWindowsHostPreparation !== "function") return;
+
+  const missing = nativeSandbox.probeWindowsHostPreparation({
+    platform: "win32",
+    helperPath: "C:\\Bridge\\lpc-windows-host-prep.exe",
+    existsSync: () => false,
+  });
+  assert.equal(missing.status, "helper_missing");
+  assert.equal(missing.usable, false);
+  assert.equal(missing.capabilityName, "com.localagenthost.desktop.null-device");
+
+  let invocation;
+  const ready = nativeSandbox.probeWindowsHostPreparation({
+    platform: "win32",
+    helperPath: "C:\\Bridge\\lpc-windows-host-prep.exe",
+    existsSync: () => true,
+    spawnSyncImpl: (executable, args, options) => {
+      invocation = { executable, args, options };
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          status: "ready",
+          capabilityName: "com.localagenthost.desktop.null-device",
+          capabilitySid: "S-1-15-3-123",
+          target: "NUL",
+        }),
+        stderr: "",
+      };
+    },
+  });
+  assert.deepEqual(invocation.args, ["--check", "--json"]);
+  assert.equal(invocation.options.shell, false);
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.usable, true);
+  assert.equal(ready.capabilityName, "com.localagenthost.desktop.null-device");
+});
+
 test("Windows doctor treats dotnet as a build-host concern rather than a target runtime prerequisite", () => {
   assert.doesNotMatch(doctorSource, /check\("\.NET 8 SDK\/runtime"[^\n]*true\)/);
   assert.match(doctorSource, /Windows AppContainer sandbox helper/);
+  assert.match(doctorSource, /probeWindowsHostPreparation/);
+  assert.match(doctorSource, /Windows host preparation/);
 });
 
 test("doctor uses the trusted GitHub CLI resolver and reports resolved path/version diagnostics", () => {
@@ -49,6 +91,21 @@ test("sandbox preparation diagnostics distinguish disabled, missing helper, veri
   assert.equal(failed.status, "verification_failed");
   assert.equal(failed.errorCode, 2147516566);
   assert.equal(failed.usable, false);
+
+  const hostPreparationFailed = nativeSandbox.sandboxPreparationDiagnostic({
+    discovery: { available: true, reason: "Windows AppContainer helper found", expectedPath: "C:\\Bridge\\lpc-windows-sandbox.exe" },
+    hostPreparation: {
+      status: "capability_ace_missing",
+      usable: false,
+      capabilityName: "com.localagenthost.desktop.null-device",
+      remediation: "Repair the Windows installation as administrator.",
+    },
+    verification: { passed: false, reason: "Windows host preparation is capability_ace_missing", checks: null },
+    summary: { name: "windows-appcontainer", enforced: true, autoRunSafe: false },
+  }, { enabled: true, platform: "win32", allowNetwork: false });
+  assert.equal(hostPreparationFailed.status, "host_preparation_failed");
+  assert.equal(hostPreparationFailed.usable, false);
+  assert.equal(hostPreparationFailed.hostPreparation.status, "capability_ace_missing");
 
   const aclFailure = nativeSandbox.sandboxPreparationDiagnostic({
     discovery: { available: true, reason: "Windows AppContainer helper found", expectedPath: "C:\\Bridge\\lpc-windows-sandbox.exe" },

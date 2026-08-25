@@ -212,6 +212,18 @@ test("capabilities report final-acceptance guarantees without overclaiming inact
   assert.equal(Object.hasOwn(goalFinishInputSchema.properties, "criteriaEvidence"), true);
 });
 
+test("capabilities report bounded Windows host preparation state", () => {
+  const windowsHostPreparationState = {
+    status: "capability_ace_missing",
+    usable: false,
+    capabilityName: "com.localagenthost.desktop.null-device",
+    expectedPath: "C:\\Bridge\\lpc-windows-host-prep.exe",
+    remediation: "Repair the Windows installation as administrator.",
+  };
+  const report = createCapabilitiesTool({ windowsHostPreparationState, platform: "win32" }).invoke({});
+  assert.deepEqual(report.windowsHostPreparation, windowsHostPreparationState);
+});
+
 test("capabilities report trusted GitHub CLI path and version when startup probing succeeds", () => {
   const githubCliState = {
     status: "ready",

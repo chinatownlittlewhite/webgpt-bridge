@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { findExecutableInPath, normalizedPlatform } from "./platform.js";
 import {
   createBubblewrapAdapter,
@@ -11,8 +12,93 @@ import {
 } from "./sandbox.js";
 import { promoteVerifiedSandboxAdapter, verifySandboxAdapter } from "./sandbox-verify.js";
 
+export const WINDOWS_NULL_DEVICE_CAPABILITY_NAME = "com.localagenthost.desktop.null-device";
+
 function moduleRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+export function probeWindowsHostPreparation({
+  platform = process.platform,
+  helperPath,
+  existsSync = fs.existsSync,
+  spawnSyncImpl = spawnSync,
+} = {}) {
+  if (platform !== "win32") {
+    return Object.freeze({
+      status: "unsupported",
+      usable: false,
+      capabilityName: WINDOWS_NULL_DEVICE_CAPABILITY_NAME,
+      reason: `Windows host preparation is not required on ${normalizedPlatform(platform)}`,
+      remediation: null,
+    });
+  }
+  const expectedPath = helperPath ?? path.join(
+    moduleRoot(), "native", "windows-host-prep", "bin", "release", "lpc-windows-host-prep.exe",
+  );
+  if (!existsSync(expectedPath)) {
+    return Object.freeze({
+      status: "helper_missing",
+      usable: false,
+      capabilityName: WINDOWS_NULL_DEVICE_CAPABILITY_NAME,
+      expectedPath,
+      reason: `Windows host preparation helper not found at ${expectedPath}`,
+      remediation: "Repair or reinstall WebGPT Bridge as administrator.",
+    });
+  }
+  const result = spawnSyncImpl(expectedPath, ["--check", "--json"], {
+    encoding: "utf8",
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000,
+  });
+  if (result?.error) {
+    return Object.freeze({
+      status: "probe_failed",
+      usable: false,
+      capabilityName: WINDOWS_NULL_DEVICE_CAPABILITY_NAME,
+      expectedPath,
+      reason: result.error.message,
+      remediation: "Repair the Windows installation as administrator and rerun diagnostics.",
+    });
+  }
+  if (result?.status !== 0) {
+    return Object.freeze({
+      status: "probe_failed",
+      usable: false,
+      capabilityName: WINDOWS_NULL_DEVICE_CAPABILITY_NAME,
+      expectedPath,
+      errorCode: result?.status ?? null,
+      reason: String(result?.stderr ?? "Windows host preparation check failed").trim().slice(0, 2000),
+      remediation: "Repair the Windows installation as administrator and rerun diagnostics.",
+    });
+  }
+  try {
+    const parsed = JSON.parse(String(result?.stdout ?? "").trim());
+    const status = typeof parsed?.status === "string" ? parsed.status : "probe_failed";
+    const usable = status === "ready";
+    return Object.freeze({
+      status,
+      usable,
+      capabilityName: WINDOWS_NULL_DEVICE_CAPABILITY_NAME,
+      expectedPath,
+      ...(typeof parsed?.capabilitySid === "string" ? { capabilitySid: parsed.capabilitySid } : {}),
+      target: typeof parsed?.target === "string" ? parsed.target : "NUL",
+      reason: usable ? "Windows null-device capability ACE is ready" : `Windows host preparation is ${status}`,
+      remediation: usable ? null : (typeof parsed?.remediation === "string"
+        ? parsed.remediation
+        : "Repair the Windows installation as administrator."),
+    });
+  } catch (error) {
+    return Object.freeze({
+      status: "probe_failed",
+      usable: false,
+      capabilityName: WINDOWS_NULL_DEVICE_CAPABILITY_NAME,
+      expectedPath,
+      reason: `invalid Windows host preparation output: ${error.message}`,
+      remediation: "Repair the Windows installation as administrator and rerun diagnostics.",
+    });
+  }
 }
 
 export function discoverNativeSandboxAdapter({
@@ -128,6 +214,7 @@ export function sandboxPreparationDiagnostic(prepared, {
   const discovery = prepared?.discovery ?? null;
   const verification = prepared?.verification ?? null;
   const summary = prepared?.summary ?? null;
+  const hostPreparation = prepared?.hostPreparation ?? null;
   const expectedPath = discovery?.expectedPath;
   const base = {
     enabled: true,
@@ -157,6 +244,19 @@ export function sandboxPreparationDiagnostic(prepared, {
       reason,
       recoverable: !unsupported,
       ...(expectedPath ? { expectedPath } : {}),
+    });
+  }
+
+  if (platform === "win32" && hostPreparation && hostPreparation.status !== "ready") {
+    return Object.freeze({
+      ...base,
+      status: "host_preparation_failed",
+      usable: false,
+      reason: hostPreparation.reason ?? `Windows host preparation is ${hostPreparation.status}`,
+      recoverable: true,
+      ...(expectedPath ? { expectedPath } : {}),
+      hostPreparation,
+      ...(summary ? { sandbox: summary } : {}),
     });
   }
 
@@ -227,6 +327,7 @@ export function nativeSandboxVerificationRequirements({ platform = process.platf
     // localhost is blocked together with external network access. Do not weaken host network
     // isolation or mutate global CheckNetIsolation settings merely to satisfy the verifier.
     requireLoopback: platform !== "win32",
+    requireNullDevice: platform === "win32",
     // Windows profile creation and ACL initialization are substantially heavier than Seatbelt/bwrap.
     // Keep verification bounded, but give the real AppContainer probe the same human-scale budget
     // as the native developer smoke instead of failing a secure first launch at the 5s default.
@@ -240,14 +341,34 @@ export async function prepareNativeSandbox({
   allowNetwork = false,
   extraReadPaths = [],
   windowsHelperPath,
+  windowsHostPrepPath,
+  windowsHostPreparationState,
   verify = true,
 } = {}) {
   const discovered = discoverNativeSandboxAdapter({ platform, allowNetwork, extraReadPaths, windowsHelperPath });
+  const hostPreparation = platform === "win32"
+    ? (windowsHostPreparationState ?? probeWindowsHostPreparation({ platform, helperPath: windowsHostPrepPath }))
+    : null;
   if (!discovered.available || verify !== true) {
     return {
       adapter: discovered.adapter,
       discovery: discovered,
+      hostPreparation,
       verification: null,
+      summary: sandboxSummary(discovered.adapter),
+    };
+  }
+  if (platform === "win32" && hostPreparation?.status !== "ready") {
+    return {
+      adapter: discovered.adapter,
+      discovery: discovered,
+      hostPreparation,
+      verification: {
+        passed: false,
+        adapter: discovered.adapter,
+        reason: `Windows host preparation is ${hostPreparation?.status ?? "unavailable"}`,
+        checks: null,
+      },
       summary: sandboxSummary(discovered.adapter),
     };
   }
@@ -263,6 +384,7 @@ export async function prepareNativeSandbox({
   return {
     adapter,
     discovery: discovered,
+    hostPreparation,
     verification,
     summary: sandboxSummary(adapter),
   };

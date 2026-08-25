@@ -14,7 +14,7 @@ import {
   readWorkspaceFile,
   searchWorkspaceText,
 } from "./inspection.js";
-import { sandboxPreparationDiagnostic } from "./native-sandbox.js";
+import { sandboxPreparationDiagnostic, WINDOWS_NULL_DEVICE_CAPABILITY_NAME } from "./native-sandbox.js";
 import { normalizedPlatform } from "./platform.js";
 import { createProcessManager } from "./process-manager.js";
 import { createProjectTaskRunner } from "./project-task.js";
@@ -25,6 +25,19 @@ import { INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
 function audit(logger, event) {
   try { logger?.record?.(event); } catch {}
+}
+
+function resolveWindowsHostPreparationState(windowsHostPreparationState, platform) {
+  if (windowsHostPreparationState && typeof windowsHostPreparationState === "object") return windowsHostPreparationState;
+  return Object.freeze({
+    status: platform === "win32" ? "unknown" : "unsupported",
+    usable: false,
+    capabilityName: WINDOWS_NULL_DEVICE_CAPABILITY_NAME,
+    reason: platform === "win32"
+      ? "Windows host preparation has not been probed by the runtime host"
+      : "Windows host preparation is not required on this platform",
+    remediation: null,
+  });
 }
 
 function resolveGitHubCliState(githubCliState) {
@@ -698,6 +711,7 @@ export function createCapabilitiesTool({
   networkSandboxAdapter,
   networkSandboxState,
   githubCliState,
+  windowsHostPreparationState,
   workspace,
   goalSessionStore,
   goalPersistSessions = false,
@@ -723,6 +737,7 @@ export function createCapabilitiesTool({
           usableForStructuredNetworkTools: networkSandbox.usable === true,
         },
         githubCli: resolveGitHubCliState(githubCliState),
+        windowsHostPreparation: resolveWindowsHostPreparationState(windowsHostPreparationState, platform),
         nativePlatformSupport: {
           windows: "AppContainer compatibility backend + workspace/runtime ACL + Job Object + parent monitor; requires real Windows acceptance",
           macos: "Seatbelt policy + parent guard; requires real macOS acceptance",
