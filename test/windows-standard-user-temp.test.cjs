@@ -37,4 +37,17 @@ for (const [name, windows] of [
 
     assert.doesNotMatch(windows, /icacls\.exe[^\n]*(?:System32|Program Files)/i, "standard-user acceptance must not rewrite shared executable ACLs");
   });
+
+  test(`${name} standard-user Windows acceptance gives the project owner-equivalent workspace DACL rights`, () => {
+    assert.match(
+      windows,
+      /icacls\.exe[^\n]*\$env:GITHUB_WORKSPACE[^\n]*\$\{qualified\}:\(OI\)\(CI\)F/,
+      "the ephemeral standard user must be able to maintain AppContainer ACLs on the CI workspace like a real project owner",
+    );
+    assert.doesNotMatch(
+      windows,
+      /icacls\.exe[^\n]*\$env:GITHUB_WORKSPACE[^\n]*\$\{qualified\}:\(OI\)\(CI\)M/,
+      "Modify alone does not include WRITE_DAC and cannot model a user-owned project directory",
+    );
+  });
 }
