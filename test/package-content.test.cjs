@@ -129,15 +129,24 @@ test("Windows CI provisions host preparation and runs acceptance as an ephemeral
   const firstApply = windows.indexOf("--apply");
   const secondApply = windows.indexOf("--apply", firstApply + 1);
   const check = windows.indexOf("--check --json");
+  const repairRemove = windows.indexOf("--remove", check);
+  const removedCheck = windows.indexOf("--check --json", repairRemove);
+  const repairApply = windows.indexOf("--apply", removedCheck);
+  const repairedCheck = windows.indexOf("--check --json", repairApply);
   const acceptance = windows.indexOf("npm --prefix agent-runtime run acceptance");
   assert.ok(nativeBuild >= 0 && firstApply > nativeBuild, "host preparation must run only after native helpers are built");
   assert.ok(secondApply > firstApply, "host preparation apply must be exercised twice for idempotence");
   assert.ok(check > secondApply, "host preparation must be checked after repeated apply");
+  assert.ok(repairRemove > check, "CI must exercise removal after proving the initial ready state");
+  assert.ok(removedCheck > repairRemove, "CI must verify host preparation is not ready after removal");
+  assert.ok(repairApply > removedCheck, "CI must exercise repair after removal");
+  assert.ok(repairedCheck > repairApply, "CI must verify host preparation returns to ready after repair");
+  assert.match(windows, /capability_ace_missing/);
   assert.match(windows, /New-LocalUser/);
   assert.match(windows, /Get-LocalGroupMember[^\n]*Administrators/);
   assert.match(windows, /Start-Process[\s\S]*-Credential/);
   assert.match(windows, /Remove-LocalUser/);
-  assert.ok(acceptance > check, "the standard-user acceptance command must run after host preparation is ready");
+  assert.ok(acceptance > repairedCheck, "the standard-user acceptance command must run only after remove/reapply repair returns host preparation to ready");
   assert.match(windows, /if:\s*always\(\)[\s\S]*--remove/);
 });
 

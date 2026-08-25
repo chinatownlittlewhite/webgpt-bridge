@@ -306,7 +306,7 @@ git commit -m "feat: provision Windows AppContainer host preparation"
 - Modify: `test/package-content.test.cjs`
 
 **Interfaces:**
-- Elevated CI setup runs host-prep `--apply` twice and verifies idempotence.
+- Elevated CI setup runs host-prep `--apply` twice and verifies idempotence, then proves repair semantics with `ready -> --remove -> capability_ace_missing -> --apply -> ready` before standard-user acceptance.
 - Compatibility smoke executes under an ephemeral local account in `Users`, not `Administrators`.
 - Guaranteed cleanup removes the ephemeral account and reverses CI-only host preparation.
 - Release acceptance confirms Git no longer fails on `/dev/null` / `NUL` and all required shared executables launch through the verified AppContainer.
@@ -327,7 +327,7 @@ Expected: FAIL because CI currently runs acceptance as the hosted runner user wi
 
 - [ ] **Step 3: Implement elevated setup and idempotence checks**
 
-In the Windows job, after native build prerequisites are present, run the fixed host-prep executable `--check --json`, `--apply`, `--apply`, then `--check --json`; fail if state is not `ready` or repeated apply changes the owned ACE count/state unexpectedly.
+In the Windows job, after native build prerequisites are present, run the fixed host-prep executable `--apply`, `--apply`, then `--check --json`; fail if state is not `ready` or repeated apply changes the owned ACE count/state unexpectedly. Next run `--remove`, require a non-ready `capability_ace_missing` check, re-run `--apply`, and require `ready` again. The standard-user acceptance must start only after this repair cycle succeeds.
 
 - [ ] **Step 4: Implement standard-user compatibility harness**
 

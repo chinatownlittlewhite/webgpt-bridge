@@ -54,6 +54,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "host-prep check failed with exit $LASTEXITCODE" }
           $check = $checkJson | ConvertFrom-Json
           if ($check.status -ne "ready") { throw "host-prep did not become ready: $checkJson" }
+
+          & $prep --remove
+          if ($LASTEXITCODE -ne 0) { throw "host-prep remove failed with exit $LASTEXITCODE" }
+          $removedJson = & $prep --check --json
+          if ($LASTEXITCODE -ne 0) { throw "host-prep post-remove check failed with exit $LASTEXITCODE" }
+          $removed = $removedJson | ConvertFrom-Json
+          if ($removed.status -ne "capability_ace_missing") { throw "host-prep remained unexpectedly ready after remove: $removedJson" }
+
+          & $prep --apply
+          if ($LASTEXITCODE -ne 0) { throw "host-prep repair apply failed with exit $LASTEXITCODE" }
+          $repairedJson = & $prep --check --json
+          if ($LASTEXITCODE -ne 0) { throw "host-prep repair check failed with exit $LASTEXITCODE" }
+          $repaired = $repairedJson | ConvertFrom-Json
+          if ($repaired.status -ne "ready") { throw "host-prep repair did not return to ready: $repairedJson" }
       - name: Run Windows acceptance as standard user
         shell: pwsh
         run: |
