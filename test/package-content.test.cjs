@@ -63,6 +63,17 @@ test("Windows installer is per-machine NSIS and owns fixed host-preparation life
   assert.match(gitignore, /^!build\/installer\.nsh$/m, "the NSIS source include must be tracked even though generated build outputs are ignored");
 
   const installer = fs.readFileSync(path.join(__dirname, "..", "build", "installer.nsh"), "utf8");
+  assert.match(installer, /!macro customInit/);
+  const customInitStart = installer.indexOf("!macro customInit");
+  const customInitEnd = installer.indexOf("!macroend", customInitStart);
+  assert.ok(customInitStart >= 0 && customInitEnd > customInitStart, "installer must define a bounded customInit macro");
+  const customInit = installer.slice(customInitStart, customInitEnd);
+  assert.match(customInit, /\$PROGRAMFILES/);
+  assert.match(customInit, /\$PROGRAMFILES64/);
+  assert.match(customInit, /\$\{RunningX64\}/);
+  assert.match(customInit, /\$\{APP_FILENAME\}/);
+  assert.match(customInit, /StrCpy\s+\$INSTDIR/);
+  assert.doesNotMatch(customInit, /GetDParameter|\$CMDLINE|\/D=/i, "customInit must ignore command-line installation-directory overrides");
   assert.match(installer, /!macro customInstall/);
   assert.match(installer, /!macro customUnInstall/);
   assert.match(installer, /WebGPT Bridge Host Preparation/);

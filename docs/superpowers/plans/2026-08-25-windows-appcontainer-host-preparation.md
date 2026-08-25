@@ -242,7 +242,7 @@ git commit -m "feat: gate Windows sandbox on host preparation"
 
 **Interfaces:**
 - Windows installer target: NSIS x64 only; no supported ZIP artifact.
-- Install mode: per-machine / administrator-required.
+- Install mode: per-machine / administrator-required; installation directory is pinned to the protected Program Files path even when NSIS is invoked with `/D=...`.
 - Fixed scheduled task: `WebGPT Bridge Host Preparation`.
 - Fixed task action: installed Program Files host-prep executable with `--apply`; run as `SYSTEM`, highest privileges, at startup.
 - Install/repair immediately executes `--apply`; uninstall executes `--remove` and removes the fixed task.
@@ -261,7 +261,7 @@ assert.match(installerInclude, /--remove/);
 assert.match(installerInclude, /SYSTEM/i);
 ```
 
-Also assert the scheduled task action resolves under `$INSTDIR` / Program Files rather than a user-writable temp or profile path.
+Also assert the scheduled task action resolves under `$INSTDIR` / Program Files rather than a user-writable temp or profile path. Require a `customInit` macro that recomputes the electron-builder Program Files path from `$PROGRAMFILES` / `$PROGRAMFILES64`, `${RunningX64}`, `${MENU_FILENAME}`, and `${APP_FILENAME}`, then overwrites `$INSTDIR` without reading `GetDParameter`, `$CMDLINE`, or `/D=`.
 
 - [ ] **Step 2: Run and verify RED**
 
@@ -271,7 +271,7 @@ Expected: FAIL because Windows ZIP is still configured and there is no custom NS
 
 - [ ] **Step 3: Implement NSIS lifecycle**
 
-Set electron-builder NSIS to per-machine, request installer elevation, include `build/installer.nsh`, remove ZIP from Windows targets/scripts, and add install/uninstall macros that call the fixed host-prep payload and create/delete the fixed startup task.
+Set electron-builder NSIS to per-machine, request installer elevation, include `build/installer.nsh`, remove ZIP from Windows targets/scripts, and add install/uninstall macros that call the fixed host-prep payload and create/delete the fixed startup task. Disable installation-directory selection and use `customInit` to overwrite any earlier NSIS `/D=...` override with the same protected Program Files path calculation used by electron-builder's per-machine defaults.
 
 All command arguments are installer constants; do not use user-provided paths/SIDs/object names. Abort install/repair if `--apply` or task provisioning fails. During uninstall, log `--remove` failure and continue cleanup without resetting the full DACL.
 

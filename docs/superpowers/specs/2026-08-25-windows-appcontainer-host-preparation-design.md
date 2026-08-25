@@ -94,14 +94,14 @@ Windows installation becomes per-machine because the boot preparation executable
 
 The NSIS installer:
 
-1. installs the application and self-contained host-prep payload below the protected Program Files installation directory;
+1. installs the application and self-contained host-prep payload below the protected Program Files installation directory; the installer disables directory selection and its `customInit` re-pins `$INSTDIR` to the electron-builder Program Files path after multi-user initialization, so a command-line `/D=...` override cannot redirect the eventual SYSTEM task into a user-writable directory;
 2. creates a fixed Task Scheduler task named `WebGPT Bridge Host Preparation`;
 3. configures the task to run the fixed host-prep executable with fixed `--apply` arguments as `SYSTEM`, highest privileges, at system startup;
 4. only after the fixed SYSTEM task has been registered successfully, immediately runs one `--apply` during installation/repair so the first application launch does not depend on a reboot;
 5. if task creation fails, aborts before mutating `NUL`; if `--apply` fails after task creation, deletes the newly registered task before aborting;
 6. treats failure to provision the task or apply the ACE/label as an installation/repair failure with actionable diagnostics.
 
-The scheduled task is preferred to a resident Windows service because host preparation is a small idempotent boot-time mutation and does not require a privileged process to remain running after the ACL is prepared. The task action path is under Program Files and therefore is not writable by a standard user.
+The scheduled task is preferred to a resident Windows service because host preparation is a small idempotent boot-time mutation and does not require a privileged process to remain running after the ACL is prepared. The task action path is under Program Files and therefore is not writable by a standard user. The protected path is an installer invariant, not a UI convention: NSIS command-line directory overrides are ignored/reset before installation proceeds.
 
 On upgrade, the installer reuses the same capability name and task name, replaces the trusted payload, recreates/repairs the task if necessary, and runs `--apply` again.
 
