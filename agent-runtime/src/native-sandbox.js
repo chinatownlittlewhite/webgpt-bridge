@@ -77,6 +77,37 @@ export function discoverNativeSandboxAdapter({
   };
 }
 
+function parseWindowsSandboxInitializationError(verification) {
+  const stderr = verification?.probe?.stderr;
+  if (typeof stderr !== "string" || stderr.length === 0) return null;
+  for (const line of stderr.split(/\r?\n/)) {
+    const marker = "lpc-windows-sandbox: ";
+    const index = line.indexOf(marker);
+    if (index < 0) continue;
+    const payload = line.slice(index + marker.length).trim();
+    if (!payload.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(payload);
+      if (
+        parsed?.type === "sandbox_initialization_error"
+        && typeof parsed.api === "string"
+        && typeof parsed.target === "string"
+        && Number.isInteger(parsed.win32)
+      ) {
+        return Object.freeze({
+          api: parsed.api,
+          target: parsed.target,
+          win32: parsed.win32,
+          securityInformation: typeof parsed.securityInformation === "string" ? parsed.securityInformation : "unknown",
+        });
+      }
+    } catch {
+      // Ignore unrelated or malformed stderr and preserve the generic verifier failure.
+    }
+  }
+  return null;
+}
+
 export function sandboxPreparationDiagnostic(prepared, {
   enabled = true,
   platform = process.platform,
@@ -141,6 +172,28 @@ export function sandboxPreparationDiagnostic(prepared, {
   }
 
   if (verification?.passed === false) {
+    const initializationError = platform === "win32"
+      ? parseWindowsSandboxInitializationError(verification)
+      : null;
+    if (initializationError) {
+      return Object.freeze({
+        ...base,
+        status: "sandbox_initialization_error",
+        usable: false,
+        reason: `${initializationError.api} failed for '${initializationError.target}' (win32=${initializationError.win32})`,
+        recoverable: true,
+        ...(expectedPath ? { expectedPath } : {}),
+        errorCode: initializationError.win32,
+        ...(verification?.probe?.code !== undefined && verification?.probe?.code !== null
+          ? { processExitCode: verification.probe.code }
+          : {}),
+        api: initializationError.api,
+        target: initializationError.target,
+        securityInformation: initializationError.securityInformation,
+        verification,
+        ...(summary ? { sandbox: summary } : {}),
+      });
+    }
     return Object.freeze({
       ...base,
       status: "verification_failed",

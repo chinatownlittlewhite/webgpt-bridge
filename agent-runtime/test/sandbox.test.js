@@ -234,15 +234,18 @@ test("Windows AppContainer child inherits the helper cwd instead of restating a 
   assert.match(source, /null,\s*ref startup,/s);
 });
 
-test("Windows helper grants only explicit runtime ACLs and never rewrites host ancestors", () => {
+test("Windows helper mutates ACLs only for workspace-owned paths and never for shared executables", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
   assert.match(source, /Native\.GetNamedSecurityInfoW/);
   assert.match(source, /Native\.SetEntriesInAclW/);
   assert.match(source, /Native\.SetNamedSecurityInfoW/);
-  assert.match(source, /if \(profile\.Created\)\s*\{[\s\S]*?GrantAcl\(workspace, appContainerSid, modify: true\);[\s\S]*?\}/);
-  assert.match(source, /GrantAcl\(executable, appContainerSid, modify: false\)/);
-  assert.match(source, /GrantAcl\(resolved, appContainerSid, modify: false\)/);
+  assert.match(source, /GrantWorkspaceAcl\(workspace, workspace, appContainerSid, modify: true\)/);
+  assert.match(source, /FileAttributes\.ReparsePoint/);
+  assert.match(source, /ACL target traverses a reparse point/);
+  assert.doesNotMatch(source, /GrantAcl\(executable, appContainerSid/);
+  assert.match(source, /if \(IsInside\(workspace, resolved\)\)\s*\{[\s\S]*?GrantWorkspaceAcl\(workspace, resolved, appContainerSid, modify: false\);[\s\S]*?\}/);
+  assert.match(source, /if \(!IsInside\(workspace, resolved\)\)\s*\{[\s\S]*?write path escapes the configured workspace[\s\S]*?\}/);
   assert.doesNotMatch(source, /GrantTraversalAcl/);
   assert.doesNotMatch(source, /icacls\.exe/);
   assert.doesNotMatch(source, /Process\.Start\(psi\)/);

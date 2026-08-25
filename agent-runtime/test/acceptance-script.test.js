@@ -37,6 +37,16 @@ test("Windows acceptance verifies self-contained native runtime payload before s
   assert.match(source, /lpc-windows-sandbox\.exe/);
 });
 
+test("Windows acceptance exercises shared executables through AppContainer without ACL rewriting", () => {
+  assert.match(source, /verifyWindowsExternalExecutableCompatibility/);
+  assert.match(source, /cmd\.exe/);
+  assert.match(source, /\["git", "--version"\]/);
+  assert.match(source, /\["dotnet", "--list-runtimes"\]/);
+  assert.match(source, /\["node", "--version"\]/);
+  assert.match(source, /\["gh", "--version"\]/);
+  assert.match(source, /wrapWithSandbox\(runtime\.normalSandbox\.adapter/);
+});
+
 test("Windows acceptance verifies the dedicated network sandbox and structured dependency path", () => {
   assert.match(source, /enableNetworkTools:\s*process\.platform === "win32"/);
   assert.match(source, /networkSandboxState\.status,\s*"ready"/);

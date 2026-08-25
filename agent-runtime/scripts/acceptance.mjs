@@ -159,6 +159,58 @@ async function createAcceptanceGitBroker() {
   };
 }
 
+async function verifyWindowsExternalExecutableCompatibility(runtime) {
+  if (process.platform !== "win32") return;
+  const { wrapWithSandbox } = await import("../dist/sandbox.js");
+  const { createSandboxProbeEnvironment } = await import("../dist/sandbox-verify.js");
+  const smokeWorkspace = fs.mkdtempSync(path.join(root, "acceptance-windows-sandbox-"));
+  const commands = [
+    ["cmd.exe", "/d", "/c", "echo", "webgpt-bridge-appcontainer-smoke"],
+    ["git", "--version"],
+    ["dotnet", "--list-runtimes"],
+    ["node", "--version"],
+    ["gh", "--version"],
+  ];
+  try {
+    const env = createSandboxProbeEnvironment(smokeWorkspace, { platform: "win32", sourceEnv: process.env });
+    for (const argv of commands) {
+      let resolvedArgv;
+      let trustedReadPaths;
+      if (argv[0] === "gh" && runtime.githubCliState?.status === "ready") {
+        resolvedArgv = [runtime.githubCliState.resolvedPath, ...argv.slice(1)];
+        trustedReadPaths = [path.dirname(runtime.githubCliState.resolvedPath)];
+      } else {
+        const resolved = resolvePlatformArgv(argv, { env: process.env, platform: "win32" });
+        assert.equal(resolved.resolved, true, `${argv[0]} must be installed for Windows native release acceptance`);
+        resolvedArgv = resolved.argv;
+        trustedReadPaths = resolved.trustedReadPaths;
+      }
+      const wrapped = wrapWithSandbox(runtime.normalSandbox.adapter, {
+        argv: resolvedArgv,
+        cwd: smokeWorkspace,
+        workspace: smokeWorkspace,
+        extraReadPaths: trustedReadPaths,
+      });
+      const result = spawnSync(wrapped[0], wrapped.slice(1), {
+        cwd: smokeWorkspace,
+        env,
+        encoding: "utf8",
+        shell: false,
+        windowsHide: true,
+        timeout: 120_000,
+      });
+      if (result.error) throw result.error;
+      assert.equal(
+        result.status,
+        0,
+        `${argv[0]} must launch through the verified AppContainer without rewriting its persistent ACL: ${JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr, resolvedArgv })}`,
+      );
+    }
+  } finally {
+    fs.rmSync(smokeWorkspace, { recursive: true, force: true });
+  }
+}
+
 async function verifyNativeDeveloperWorkflow(runtime) {
   const { createCommandRunner } = await import("../dist/runner.js");
   const run = createCommandRunner({
@@ -336,6 +388,10 @@ try {
         "internet-client-capability",
         `dependency_sync must be bound to the dedicated network sandbox: ${JSON.stringify(dependencyProbe.sandbox)}`,
       );
+    }
+    if (process.platform === "win32") {
+      stage("Windows shared executable AppContainer compatibility");
+      await verifyWindowsExternalExecutableCompatibility(server.runtime);
     }
     stage("native Node/npm/Git/process/worktree compatibility");
     await verifyNativeDeveloperWorkflow(server.runtime);

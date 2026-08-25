@@ -50,6 +50,26 @@ test("sandbox preparation diagnostics distinguish disabled, missing helper, veri
   assert.equal(failed.errorCode, 2147516566);
   assert.equal(failed.usable, false);
 
+  const aclFailure = nativeSandbox.sandboxPreparationDiagnostic({
+    discovery: { available: true, reason: "Windows AppContainer helper found", expectedPath: "C:\\Bridge\\lpc-windows-sandbox.exe" },
+    verification: {
+      passed: false,
+      reason: "sandbox probe failed to execute",
+      probe: {
+        code: 125,
+        stderr: 'lpc-windows-sandbox: {"type":"sandbox_initialization_error","api":"SetNamedSecurityInfoW","target":"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe","win32":5,"securityInformation":"DACL"}',
+      },
+    },
+    summary: { name: "windows-appcontainer", enforced: true, autoRunSafe: false },
+  }, { enabled: true, platform: "win32", allowNetwork: false });
+  assert.equal(aclFailure.status, "sandbox_initialization_error");
+  assert.equal(aclFailure.errorCode, 5);
+  assert.equal(aclFailure.processExitCode, 125);
+  assert.equal(aclFailure.api, "SetNamedSecurityInfoW");
+  assert.equal(aclFailure.target, "C:\\Program Files\\GitHub CLI\\gh.exe");
+  assert.equal(aclFailure.securityInformation, "DACL");
+  assert.match(aclFailure.reason, /SetNamedSecurityInfoW/);
+
   const ready = nativeSandbox.sandboxPreparationDiagnostic({
     discovery: { available: true, reason: "Windows AppContainer helper found", expectedPath: "C:\\Bridge\\lpc-windows-sandbox.exe" },
     verification: { passed: true },
