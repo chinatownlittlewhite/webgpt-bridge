@@ -52,4 +52,26 @@ test("Windows formal release uses OIDC and never falls back to unsigned output",
   assert.doesNotMatch(windows, /unsigned fallback|continue-on-error:\s*true/i);
 });
 
+test("formal macOS release is universal signed notarized and Gatekeeper checked", () => {
+  const release = readReleaseWorkflow();
+  const mac = release.slice(release.indexOf("  macos:"), release.indexOf("  publish:"));
+  assert.match(mac, /environment:\s*desktop-release-macos/);
+  assert.match(mac, /WEBGPT_FORMAL_RELEASE:\s*["']macos["']/);
+  assert.match(mac, /CSC_LINK/);
+  assert.match(mac, /CSC_KEY_PASSWORD/);
+  assert.match(mac, /APPLE_API_KEY_BASE64/);
+  assert.match(mac, /APPLE_API_KEY_ID/);
+  assert.match(mac, /APPLE_API_ISSUER/);
+  assert.match(mac, /APPLE_API_KEY=/);
+  assert.match(mac, /lipo\s+-archs/);
+  assert.match(mac, /Contents\/MacOS\/WebGPT Bridge/);
+  assert.match(mac, /Contents\/Resources\/tunnel-client\/tunnel-client/);
+  assert.match(mac, /Contents\/Resources\/tunnel-client\/cloudflared/);
+  assert.match(mac, /codesign\s+--verify/);
+  assert.match(mac, /xcrun\s+stapler\s+validate/);
+  assert.match(mac, /spctl\s+--assess/);
+  assert.match(mac, /Remove-Item|rm -f/);
+  assert.doesNotMatch(mac, /xattr\s+-cr|unsigned fallback|continue-on-error:\s*true/i);
+});
+
 module.exports = { readReleaseWorkflow };

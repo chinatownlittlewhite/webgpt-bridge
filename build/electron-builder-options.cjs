@@ -66,6 +66,10 @@ function createBuilderConfig(env = process.env) {
     config.mac.notarize = true;
     config.mac.entitlements = "build/entitlements.mac.plist";
     config.mac.entitlementsInherit = "build/entitlements.mac.plist";
+    config.mac.binaries = [
+      "Contents/Resources/tunnel-client/tunnel-client",
+      "Contents/Resources/tunnel-client/cloudflared",
+    ];
   }
 
   return config;

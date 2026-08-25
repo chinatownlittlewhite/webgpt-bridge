@@ -94,10 +94,39 @@ test("bundled tunnel-client is the default and custom path is advanced-only", ()
 
   const manifest = require("../scripts/tunnel-client-release.json");
   assert.equal(manifest.version, "0.0.11");
+  assert.equal(packageJson.scripts["prepare:tunnel-client:mac"], "node scripts/prepare-tunnel-client.cjs darwin-universal");
   for (const key of ["darwin-arm64", "windows-amd64"]) {
     assert.match(manifest.assets[key].sha256, /^[a-f0-9]{64}$/);
     assert.equal(manifest.assets[key].file, `tunnel-client-v0.0.11-${key}.zip`);
   }
+  assert.equal(manifest.assets["darwin-amd64"].file, "tunnel-client-v0.0.11-darwin-amd64.zip");
+  assert.equal(manifest.assets["darwin-amd64"].sha256, "a48c8a37983d9bf9442309cb661cd2f14d7321cfacf72375d7fa31a6a7420db0");
+  const prepare = fs.readFileSync(path.join(__dirname, "..", "scripts", "prepare-tunnel-client.cjs"), "utf8");
+  assert.match(prepare, /darwin-universal/);
+  assert.match(prepare, /\/usr\/bin\/lipo/);
+  assert.match(prepare, /darwin-arm64/);
+  assert.match(prepare, /darwin-amd64/);
+});
+
+test("formal mac builder signs embedded native binaries and notarizes", () => {
+  const config = createBuilderConfig({
+    WEBGPT_FORMAL_RELEASE: "macos",
+    WEBGPT_MAC_IDENTITY: "Developer ID Application: WebGPT Bridge (TEAMID1234)",
+  });
+  assert.equal(config.mac.forceCodeSigning, true);
+  assert.equal(config.mac.identity, "Developer ID Application: WebGPT Bridge (TEAMID1234)");
+  assert.equal(config.mac.notarize, true);
+  assert.equal(config.mac.entitlements, "build/entitlements.mac.plist");
+  assert.equal(config.mac.entitlementsInherit, "build/entitlements.mac.plist");
+  assert.ok(config.mac.binaries.includes("Contents/Resources/tunnel-client/tunnel-client"));
+  assert.ok(config.mac.binaries.includes("Contents/Resources/tunnel-client/cloudflared"));
+});
+
+test("mac entitlements stay minimal", () => {
+  const plist = fs.readFileSync(path.join(__dirname, "..", "build", "entitlements.mac.plist"), "utf8");
+  assert.match(plist, /com\.apple\.security\.cs\.allow-jit/);
+  assert.match(plist, /com\.apple\.security\.cs\.allow-unsigned-executable-memory/);
+  assert.doesNotMatch(plist, /disable-library-validation|allow-dyld-environment-variables/);
 });
 
 test("Windows installer is per-machine NSIS and owns fixed host-preparation lifecycle", () => {
@@ -249,6 +278,7 @@ test("mac packaging uses a reproducible generated icns asset", () => {
   assert.equal(builderConfig.mac.icon, "build/icon.icns");
   assert.equal(packageJson.scripts["build:icon"], "node scripts/build-icon.cjs");
   assert.match(packageJson.scripts["dist:mac"], /npm run build:icon/);
+  assert.match(packageJson.scripts["dist:mac"], /--universal/);
   const generator = fs.readFileSync(path.join(__dirname, "..", "scripts", "build-icon.cjs"), "utf8");
   assert.match(generator, /function renderPng/);
   assert.match(generator, /function buildIcns/);
