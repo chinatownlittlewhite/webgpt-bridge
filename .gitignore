@@ -12,6 +12,8 @@ agent-runtime/.DS_Store
 build/*
 !build/icon.svg
 !build/installer.nsh
+!build/electron-builder-options.cjs
+!build/entitlements.mac.plist
 .DS_Store
 *.log
 *.key

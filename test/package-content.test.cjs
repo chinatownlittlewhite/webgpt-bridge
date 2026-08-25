@@ -3,10 +3,35 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const packageJson = require("../package.json");
+const { createBuilderConfig } = require("../build/electron-builder-options.cjs");
+const builderConfig = createBuilderConfig({});
+
+
+test("desktop updater dependencies are pinned to the published stable v26 line", () => {
+  assert.equal(packageJson.dependencies["electron-updater"], "6.8.9");
+  assert.equal(packageJson.devDependencies["electron-builder"], "26.15.3");
+  assert.equal(packageJson.devDependencies["js-yaml"], "4.1.0");
+});
+
+test("builder config fixes GitHub update source and platform targets", () => {
+  const config = createBuilderConfig({});
+  assert.deepEqual(config.publish, [{ provider: "github", owner: "chinatownlittlewhite", repo: "webgpt-bridge", releaseType: "draft" }]);
+  assert.deepEqual(config.win.target, ["nsis"]);
+  assert.equal(config.win.verifyUpdateCodeSignature, true);
+  assert.equal(config.nsis.perMachine, true);
+  assert.equal(config.nsis.allowToChangeInstallationDirectory, false);
+  assert.deepEqual(config.mac.target, ["dmg", "zip"]);
+});
+
+test("formal builder config scopes credentials to one platform and fails closed", () => {
+  assert.throws(() => createBuilderConfig({ WEBGPT_FORMAL_RELEASE: "windows" }), /WEBGPT_WINDOWS_PUBLISHER/);
+  assert.throws(() => createBuilderConfig({ WEBGPT_FORMAL_RELEASE: "macos" }), /WEBGPT_MAC_IDENTITY/);
+  assert.throws(() => createBuilderConfig({ WEBGPT_FORMAL_RELEASE: "linux" }), /WEBGPT_FORMAL_RELEASE must be windows or macos/);
+});
 
 test("packaging excludes Agent runtime state and npm logs", () => {
-  assert.ok(packageJson.build.files.includes("!agent-runtime/.webgpt-bridge{,/**}"));
-  assert.ok(packageJson.build.files.includes("!agent-runtime/.npm{,/**}"));
+  assert.ok(builderConfig.files.includes("!agent-runtime/.webgpt-bridge{,/**}"));
+  assert.ok(builderConfig.files.includes("!agent-runtime/.npm{,/**}"));
 });
 
 test("desktop host enables the dedicated network-tool sandbox", () => {
@@ -40,7 +65,7 @@ test("bundled tunnel-client is the default and custom path is advanced-only", ()
   assert.match(html, /自定义 tunnel-client（可选）/);
   assert.match(html, /留空使用内置 v0\.0\.11/);
 
-  const extras = packageJson.build.extraResources || [];
+  const extras = builderConfig.extraResources || [];
   assert.ok(extras.some((item) => item.from === "build/tunnel-client" && item.to === "tunnel-client"));
   assert.match(packageJson.scripts["dist:mac"], /prepare:tunnel-client:mac/);
   assert.match(packageJson.scripts["dist:win"], /prepare:tunnel-client:win/);
@@ -55,10 +80,10 @@ test("bundled tunnel-client is the default and custom path is advanced-only", ()
 
 test("Windows installer is per-machine NSIS and owns fixed host-preparation lifecycle", () => {
   assert.doesNotMatch(packageJson.scripts["dist:win"], /\bzip\b/);
-  assert.deepEqual(packageJson.build.win.target, ["nsis"]);
-  assert.equal(packageJson.build.nsis.perMachine, true);
-  assert.equal(packageJson.build.nsis.allowToChangeInstallationDirectory, false);
-  assert.equal(packageJson.build.nsis.include, "build/installer.nsh");
+  assert.deepEqual(builderConfig.win.target, ["nsis"]);
+  assert.equal(builderConfig.nsis.perMachine, true);
+  assert.equal(builderConfig.nsis.allowToChangeInstallationDirectory, false);
+  assert.equal(builderConfig.nsis.include, "build/installer.nsh");
   const gitignore = fs.readFileSync(path.join(__dirname, "..", ".gitignore"), "utf8");
   assert.match(gitignore, /^!build\/installer\.nsh$/m, "the NSIS source include must be tracked even though generated build outputs are ignored");
 
@@ -210,7 +235,7 @@ test("desktop visual system uses the refreshed bridge mark and polished surface 
 });
 
 test("mac packaging uses a reproducible generated icns asset", () => {
-  assert.equal(packageJson.build.mac.icon, "build/icon.icns");
+  assert.equal(builderConfig.mac.icon, "build/icon.icns");
   assert.equal(packageJson.scripts["build:icon"], "node scripts/build-icon.cjs");
   assert.match(packageJson.scripts["dist:mac"], /npm run build:icon/);
   const generator = fs.readFileSync(path.join(__dirname, "..", "scripts", "build-icon.cjs"), "utf8");
