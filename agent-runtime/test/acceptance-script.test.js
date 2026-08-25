@@ -53,6 +53,8 @@ test("Windows acceptance verifies the dedicated network sandbox and structured d
   assert.match(source, /networkSandbox\?\.verification\?\.passed/);
   assert.match(source, /dependency_sync/);
   assert.match(source, /network_unavailable/);
+  assert.match(source, /dependencyProbe\.sandbox\?\.capabilities\?\.networkIsolation/);
+  assert.doesNotMatch(source, /dependencyProbe\.sandbox\?\.networkIsolation/);
   assert.match(source, /internet-client-capability/);
 });
 

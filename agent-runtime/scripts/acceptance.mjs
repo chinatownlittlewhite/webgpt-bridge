@@ -384,7 +384,7 @@ try {
       );
       assert.equal(dependencyProbe.status, "approval_required", "dependency_sync smoke must stop at approval without mutating dependencies");
       assert.equal(
-        dependencyProbe.sandbox?.networkIsolation,
+        dependencyProbe.sandbox?.capabilities?.networkIsolation,
         "internet-client-capability",
         `dependency_sync must be bound to the dedicated network sandbox: ${JSON.stringify(dependencyProbe.sandbox)}`,
       );
