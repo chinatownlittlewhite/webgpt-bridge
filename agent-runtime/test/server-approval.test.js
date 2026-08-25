@@ -5,15 +5,40 @@ import os from "node:os";
 import path from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { startProductionServer } from "../src/server.js";
+import { INTERNAL_STATE_DIR } from "../src/workspace.js";
 
-function shouldSkipLoopbackServerApproval({ platform = process.platform, home = process.env.HOME, cwd = process.cwd() } = {}) {
-  return platform === "win32" && home === cwd;
+function shouldSkipLoopbackServerApproval({
+  platform = process.platform,
+  localAppData = process.env.LOCALAPPDATA,
+  cwd = process.cwd(),
+} = {}) {
+  if (platform !== "win32" || typeof localAppData !== "string" || localAppData.length === 0) return false;
+  const expectedLocalAppData = path.win32.join(
+    path.win32.resolve(cwd),
+    INTERNAL_STATE_DIR,
+    "windows-profile",
+    "AppData",
+    "Local",
+  );
+  return path.win32.resolve(localAppData).toLowerCase() === expectedLocalAppData.toLowerCase();
 }
 
-test("loopback-only server approval test skips only in a nested Windows sandbox", () => {
-  assert.equal(shouldSkipLoopbackServerApproval({ platform: "win32", home: "C:\\project", cwd: "C:\\project" }), true);
-  assert.equal(shouldSkipLoopbackServerApproval({ platform: "win32", home: "C:\\host", cwd: "C:\\project" }), false);
-  assert.equal(shouldSkipLoopbackServerApproval({ platform: "darwin", home: "/project", cwd: "/project" }), false);
+test("loopback-only server approval test skips only in a nested Windows runner environment", () => {
+  assert.equal(shouldSkipLoopbackServerApproval({
+    platform: "win32",
+    localAppData: "C:\\project\\.webgpt-bridge\\windows-profile\\AppData\\Local",
+    cwd: "C:\\project",
+  }), true);
+  assert.equal(shouldSkipLoopbackServerApproval({
+    platform: "win32",
+    localAppData: "C:\\Users\\runner\\AppData\\Local",
+    cwd: "C:\\project",
+  }), false);
+  assert.equal(shouldSkipLoopbackServerApproval({
+    platform: "darwin",
+    localAppData: "/project/.webgpt-bridge/windows-profile/AppData/Local",
+    cwd: "/project",
+  }), false);
 });
 
 test("a command awaiting host approval is returned as a normal MCP tool result", async (t) => {
