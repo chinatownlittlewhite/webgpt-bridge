@@ -179,6 +179,14 @@ test("Windows native helper preserves Win32 error codes in diagnostics", () => {
   assert.match(source, /NativeErrorCode/);
 });
 
+test("Windows helper does not claim a custom Unicode environment when inheriting the parent environment", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
+  assert.match(source, /var flags = ExtendedStartupInfoPresent \| CreateSuspended;/);
+  assert.doesNotMatch(source, /var flags = ExtendedStartupInfoPresent \| CreateUnicodeEnvironment/);
+  assert.match(source, /IntPtr\.Zero,\s*\/\/ inherited environment|IntPtr\.Zero,\s*cwd,/s);
+});
+
 test("Windows AppContainer adapter passes only trusted helper arguments and parent pid", () => {
   const adapter = createWindowsAppContainerAdapter({
     helperPath: "/trusted/lpc-windows-sandbox.exe",

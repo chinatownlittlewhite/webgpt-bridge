@@ -233,7 +233,9 @@ internal static class Program
             }
 
             var commandLine = new StringBuilder(BuildWindowsCommandLine(command));
-            var flags = ExtendedStartupInfoPresent | CreateUnicodeEnvironment | CreateSuspended;
+            // lpEnvironment is NULL, so CreateProcessW inherits the caller's environment.
+            // Do not set CREATE_UNICODE_ENVIRONMENT unless we actually supply a Unicode environment block.
+            var flags = ExtendedStartupInfoPresent | CreateSuspended;
             if (!Native.CreateProcessW(
                     executable,
                     commandLine,
