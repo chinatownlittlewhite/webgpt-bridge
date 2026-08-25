@@ -56,7 +56,7 @@ The host-prep executable has a deliberately narrow command surface:
 - `--remove`: remove only the exact product-capability ACE owned by WebGPT Bridge;
 - `--check --json`: report non-mutating preparation status and diagnostics.
 
-`--check --json` must remain usable from a standard-user token. `--apply` and `--remove` explicitly reject non-administrator tokens with a bounded `elevation_required` diagnostic instead of relying on a later access-denied failure. Release builds also embed a Windows application manifest with `requestedExecutionLevel level="requireAdministrator"` and `uiAccess="false"`, providing a loader-level elevation boundary in addition to the runtime token check. The desktop/Agent runtime never invokes mutation modes.
+`--check --json` must remain usable from a standard-user token. `--apply` and `--remove` explicitly reject non-administrator tokens with a bounded `elevation_required` diagnostic instead of relying on a later access-denied failure. Because the same binary owns the read-only `--check --json` path, it must not embed a process-wide `requireAdministrator` manifest; elevation is enforced only for mutation modes by the fixed runtime token check. The desktop/Agent runtime never invokes mutation modes.
 
 It must not launch arbitrary commands, accept arbitrary object names, accept arbitrary SIDs, edit file ACLs, access the network, or expose a model-facing interface.
 
