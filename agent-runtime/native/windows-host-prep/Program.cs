@@ -143,7 +143,12 @@ internal static class Program
         var missingAceCount = (capabilityPresent ? 0 : 1) + (appContainerPresent ? 0 : 1);
         if (missingAceCount > 0)
         {
-            var updated = CloneAcl(dacl, extraCapacity: missingAceCount, skipOwnedAce: false, preparation.CapabilitySid);
+            var updated = CloneAcl(
+                dacl,
+                extraCapacity: missingAceCount,
+                skipOwnedAce: false,
+                preparation.CapabilitySid,
+                preparation.AppContainerSid);
             if (!capabilityPresent)
             {
                 updated.InsertAce(updated.Count, new CommonAce(
@@ -186,15 +191,22 @@ internal static class Program
     {
         using var preparation = OpenPreparation(writeDacl: true, writeLabel: false);
         var dacl = ReadDacl(preparation.Handle);
-        if (HasOwnedAce(dacl, preparation.CapabilitySid))
+        if (HasOwnedAce(dacl, preparation.CapabilitySid) || HasOwnedAce(dacl, preparation.AppContainerSid))
         {
-            var updated = CloneAcl(dacl, extraCapacity: 0, skipOwnedAce: true, preparation.CapabilitySid);
+            var updated = CloneAcl(
+                dacl,
+                extraCapacity: 0,
+                skipOwnedAce: true,
+                preparation.CapabilitySid,
+                preparation.AppContainerSid);
             WriteDacl(preparation.Handle, updated);
         }
         var remaining = ReadDacl(preparation.Handle);
         return new
         {
-            status = HasOwnedAce(remaining, preparation.CapabilitySid) ? "remove_failed" : "not_provisioned",
+            status = HasOwnedAce(remaining, preparation.CapabilitySid) || HasOwnedAce(remaining, preparation.AppContainerSid)
+                ? "remove_failed"
+                : "not_provisioned",
             capabilityName = CapabilityName,
             capabilitySid = preparation.CapabilitySid.Value,
             target = TargetName,
@@ -371,13 +383,18 @@ internal static class Program
         }
     }
 
-    private static RawAcl CloneAcl(RawAcl source, int extraCapacity, bool skipOwnedAce, SecurityIdentifier capabilitySid)
+    private static RawAcl CloneAcl(
+        RawAcl source,
+        int extraCapacity,
+        bool skipOwnedAce,
+        SecurityIdentifier capabilitySid,
+        SecurityIdentifier appContainerSid)
     {
         var clone = new RawAcl(source.Revision, source.Count + extraCapacity);
         for (var index = 0; index < source.Count; index += 1)
         {
             var ace = source[index];
-            if (skipOwnedAce && IsOwnedAce(ace, capabilitySid)) continue;
+            if (skipOwnedAce && (IsOwnedAce(ace, capabilitySid) || IsOwnedAce(ace, appContainerSid))) continue;
             clone.InsertAce(clone.Count, ace);
         }
         return clone;
