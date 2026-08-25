@@ -4,6 +4,7 @@ import fs from "node:fs";
 
 const buildNativeSource = fs.readFileSync(new URL("../scripts/build-native.mjs", import.meta.url), "utf8");
 const doctorSource = fs.readFileSync(new URL("../scripts/doctor.mjs", import.meta.url), "utf8");
+const sandboxVerifySource = fs.readFileSync(new URL("../src/sandbox-verify.js", import.meta.url), "utf8");
 
 test("Windows native sandbox publish is win-x64 self-contained without trimming or single-file modes", () => {
   assert.match(buildNativeSource, /"-r",\s*"win-x64"/);
@@ -50,6 +51,18 @@ test("Windows host preparation probe is read-only, structured, and fixed to the 
   assert.equal(ready.status, "ready");
   assert.equal(ready.usable, true);
   assert.equal(ready.capabilityName, "com.localagenthost.desktop.null-device");
+});
+
+test("Windows NUL sandbox probe preserves the failing syscall diagnostics", () => {
+  assert.match(sandboxVerifySource, /nullDeviceFailure/);
+  assert.match(sandboxVerifySource, /nullDeviceStage\s*=\s*"open"/);
+  assert.match(sandboxVerifySource, /nullDeviceStage\s*=\s*"write"/);
+  assert.match(sandboxVerifySource, /nullDeviceStage\s*=\s*"read"/);
+  assert.match(sandboxVerifySource, /stage:\s*nullDeviceStage/);
+  assert.match(sandboxVerifySource, /code:\s*error\?\.code/);
+  assert.match(sandboxVerifySource, /errno:\s*error\?\.errno/);
+  assert.match(sandboxVerifySource, /syscall:\s*error\?\.syscall/);
+  assert.match(sandboxVerifySource, /path:\s*error\?\.path/);
 });
 
 test("Windows doctor treats dotnet as a build-host concern rather than a target runtime prerequisite", () => {
