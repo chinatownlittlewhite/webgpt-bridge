@@ -68,6 +68,7 @@ internal static class Program
                 {
                     GrantAcl(workspace, appContainerSid, modify: true);
                 }
+                EnsureAppContainerTemp(profileName, workspace);
                 GrantAcl(executable, appContainerSid, modify: false);
                 foreach (var readPath in options.ReadPaths)
                 {
@@ -124,6 +125,24 @@ internal static class Program
     {
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(workspace))).ToLowerInvariant();
         return $"{prefix}.{digest[..20]}";
+    }
+
+    private static void EnsureAppContainerTemp(string profileName, string workspace)
+    {
+        var configuredLocalAppData = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+        if (string.IsNullOrWhiteSpace(configuredLocalAppData))
+        {
+            throw new InvalidOperationException("LOCALAPPDATA is required for the Windows AppContainer profile");
+        }
+
+        var localAppData = Path.GetFullPath(configuredLocalAppData);
+        if (!IsInside(workspace, localAppData))
+        {
+            throw new InvalidOperationException("LOCALAPPDATA must stay inside the configured workspace");
+        }
+
+        var temp = Path.Combine(localAppData, "Packages", profileName, "AC", "Temp");
+        Directory.CreateDirectory(temp);
     }
 
     private static (IntPtr Sid, bool Created) EnsureAppContainerProfile(string profileName)
