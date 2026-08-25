@@ -10,8 +10,8 @@ internal static class Program
 {
     private const string CapabilityName = "com.localagenthost.desktop.null-device";
     private const string TargetName = "NUL";
-    private const uint GenericRead = 0x80000000;
-    private const uint GenericWrite = 0x40000000;
+    private const uint FileGenericRead = 0x00120089;
+    private const uint FileGenericWrite = 0x00120116;
     private const uint ReadControl = 0x00020000;
     private const uint WriteDac = 0x00040000;
     private const uint WriteOwner = 0x00080000;
@@ -26,7 +26,7 @@ internal static class Program
     private const uint FileAttributeNormal = 0x00000080;
     private const int AclSizeInformation = 2;
     private static readonly IntPtr InvalidHandleValue = new(-1);
-    private static readonly int NullDeviceAccessMask = unchecked((int)(GenericRead | GenericWrite));
+    private static readonly int NullDeviceAccessMask = unchecked((int)(FileGenericRead | FileGenericWrite));
 
     public static int Main(string[] args)
     {
