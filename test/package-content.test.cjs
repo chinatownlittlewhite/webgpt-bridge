@@ -150,6 +150,38 @@ test("Windows CI provisions host preparation and runs acceptance as an ephemeral
   assert.match(windows, /if:\s*always\(\)[\s\S]*--remove/);
 });
 
+test("Windows CI smoke-installs and uninstalls the generated per-machine NSIS artifact before upload", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "build-desktop.yml"), "utf8");
+  const windows = workflow.slice(workflow.indexOf("  windows:"));
+  const packaging = windows.indexOf("npm run dist:win");
+  const smoke = windows.indexOf("Smoke install Windows NSIS artifact");
+  const preInstallRemove = windows.indexOf("--remove", smoke);
+  const preInstallCheck = windows.indexOf("--check --json", preInstallRemove);
+  const installerLaunch = windows.indexOf("Start-Process -FilePath $installer.FullName", smoke);
+  const uninstallLaunch = windows.indexOf("Start-Process -FilePath $uninstaller.FullName", installerLaunch);
+  const upload = windows.indexOf("actions/upload-artifact@v4");
+  assert.ok(packaging >= 0 && smoke > packaging, "the real installer smoke must run after the NSIS artifact is built");
+  assert.ok(preInstallRemove > smoke && preInstallCheck > preInstallRemove, "installer smoke must revoke the source-owned capability ACE and verify a non-ready precondition before installation");
+  assert.ok(installerLaunch > preInstallCheck, "the real installer must launch only after the pre-install capability state is verified missing");
+  assert.ok(uninstallLaunch > installerLaunch, "the real uninstaller must run after installed-state verification");
+  assert.ok(upload > uninstallLaunch, "artifact upload must wait for the complete real installer lifecycle smoke");
+  assert.match(windows, /WebGPT Bridge-\*-win-x64\.exe/);
+  assert.match(windows, /pre-install host preparation must be capability_ace_missing/);
+  assert.match(windows, /pre-existing SYSTEM host-preparation task/);
+  assert.match(windows, /Start-Process[\s\S]*-ArgumentList\s+@\("\/S"\)/);
+  assert.match(windows, /\$env:ProgramFiles[\s\S]*WebGPT Bridge/);
+  assert.match(windows, /lpc-windows-host-prep\.exe/);
+  assert.match(windows, /Get-ScheduledTask[^\n]*WebGPT Bridge Host Preparation/);
+  assert.match(windows, /Principal\.UserId/);
+  assert.match(windows, /Principal\.RunLevel/);
+  assert.match(windows, /MSFT_TaskBootTrigger/);
+  assert.match(windows, /Actions\)\.Count|Actions\.Count/);
+  assert.match(windows, /Arguments[^\n]*--apply/);
+  assert.match(windows, /Uninstall\*\.exe/);
+  assert.match(windows, /installed host-prep payload remained after uninstall/);
+  assert.match(windows, /capability_ace_missing/);
+});
+
 test("platform dist scripts enforce desktop tests and native Agent acceptance before packaging", () => {
   assert.equal(packageJson.scripts["verify:desktop"], "node scripts/verify-desktop.cjs");
   for (const name of ["dist:mac", "dist:win"]) {
