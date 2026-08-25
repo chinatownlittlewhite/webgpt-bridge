@@ -21,7 +21,7 @@ test("builder config fixes GitHub update source and platform targets", () => {
   assert.equal(config.nsis.perMachine, true);
   assert.equal(config.nsis.allowToChangeInstallationDirectory, false);
   assert.deepEqual(config.mac.target, ["dmg", "zip"]);
-  assert.equal(config.mac.x64ArchFiles, "**/node-pty/prebuilds/darwin-*/pty.node");
+  assert.equal(config.mac.x64ArchFiles, "**/node-pty/prebuilds/darwin-*/{pty.node,spawn-helper}");
 });
 
 test("formal builder config scopes credentials to one platform and fails closed", () => {
