@@ -15,7 +15,7 @@
     "verify:desktop": "node scripts/verify-desktop.cjs",
     "pack": "npm run build:icon && npm run prepare:tunnel-client:mac && npm run prepare:agent && electron-builder --dir",
     "dist:mac": "npm run build:icon && npm run prepare:tunnel-client:mac && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --mac dmg zip --arm64 --publish never",
-    "dist:win": "npm run prepare:tunnel-client:win && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --win nsis zip --x64 --publish never",
+    "dist:win": "npm run prepare:tunnel-client:win && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --win nsis --x64 --publish never",
     "dist:all": "npm run dist:mac && npm run dist:win"
   },
   "devDependencies": {
@@ -61,13 +61,14 @@
     },
     "win": {
       "target": [
-        "nsis",
-        "zip"
+        "nsis"
       ]
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "perMachine": true,
+      "include": "build/installer.nsh",
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }

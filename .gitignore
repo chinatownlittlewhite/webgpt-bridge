@@ -11,6 +11,7 @@ agent-runtime/.local-project-coding/
 agent-runtime/.DS_Store
 build/*
 !build/icon.svg
+!build/installer.nsh
 .DS_Store
 *.log
 *.key

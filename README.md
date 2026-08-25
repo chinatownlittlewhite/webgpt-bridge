@@ -169,10 +169,12 @@ npm start
 
 ```bash
 npm run dist:mac   # macOS Apple Silicon：DMG 与 ZIP
-npm run dist:win   # Windows x64：NSIS 与 ZIP
+npm run dist:win   # Windows x64：per-machine NSIS
 ```
 
-产物写入 `release/`。正式 tag 发布由 `.github/workflows/build-desktop.yml` 在 macOS arm64 与 Windows x64 原生 runner 上分别下载并校验对应的 OpenAI `tunnel-client v0.0.11`、执行桌面测试、Agent native acceptance 和打包，再汇总到同一个 GitHub Release。`npm run prepare:agent` 会在 Windows 自动构建 AppContainer native helper，在其他系统上安全跳过该步骤。
+产物写入 `release/`。正式 tag 发布由 `.github/workflows/build-desktop.yml` 在 macOS arm64 与 Windows x64 原生 runner 上分别下载并校验对应的 OpenAI `tunnel-client v0.0.11`、执行桌面测试、Agent native acceptance 和打包，再汇总到同一个 GitHub Release。`npm run prepare:agent` 会在 Windows 自动构建 AppContainer native helper 与 host-prep helper，在其他系统上安全跳过该步骤。
+
+Windows 正式发行当前只支持 **per-machine NSIS**。安装器会以管理员权限把固定的 host-prep payload 安装到受保护的 Program Files 目录，立即准备 WebGPT Bridge 专属 AppContainer capability 对 Windows `NUL` 设备的最小访问，并注册固定的 SYSTEM 启动任务以便重启后幂等修复。卸载只移除 WebGPT Bridge 自己的 ACE 和该固定任务，不会重置整个对象 DACL。Portable ZIP 暂不作为正式 Windows 发行物，因为让 SYSTEM 启动任务指向用户可写的解压目录会形成不安全的提权边界。
 
 ## 故障排除
 

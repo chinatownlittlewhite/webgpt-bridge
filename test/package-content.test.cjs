@@ -53,6 +53,30 @@ test("bundled tunnel-client is the default and custom path is advanced-only", ()
   }
 });
 
+test("Windows installer is per-machine NSIS and owns fixed host-preparation lifecycle", () => {
+  assert.doesNotMatch(packageJson.scripts["dist:win"], /\bzip\b/);
+  assert.deepEqual(packageJson.build.win.target, ["nsis"]);
+  assert.equal(packageJson.build.nsis.perMachine, true);
+  assert.equal(packageJson.build.nsis.allowToChangeInstallationDirectory, false);
+  assert.equal(packageJson.build.nsis.include, "build/installer.nsh");
+  const gitignore = fs.readFileSync(path.join(__dirname, "..", ".gitignore"), "utf8");
+  assert.match(gitignore, /^!build\/installer\.nsh$/m, "the NSIS source include must be tracked even though generated build outputs are ignored");
+
+  const installer = fs.readFileSync(path.join(__dirname, "..", "build", "installer.nsh"), "utf8");
+  assert.match(installer, /!macro customInstall/);
+  assert.match(installer, /!macro customUnInstall/);
+  assert.match(installer, /WebGPT Bridge Host Preparation/);
+  assert.match(installer, /lpc-windows-host-prep\.exe/);
+  assert.match(installer, /--apply/);
+  assert.match(installer, /--remove/);
+  assert.match(installer, /\/RU SYSTEM/);
+  assert.match(installer, /\/SC ONSTART/);
+  assert.match(installer, /\/RL HIGHEST/);
+  assert.ok(installer.includes('!define WEBGPT_BRIDGE_HOST_PREP_RELATIVE "resources\\app.asar.unpacked\\agent-runtime\\native\\windows-host-prep\\bin\\release\\lpc-windows-host-prep.exe"'));
+  assert.ok(installer.includes('$INSTDIR\\${WEBGPT_BRIDGE_HOST_PREP_RELATIVE}'));
+  assert.doesNotMatch(installer, /\$TEMP|\$APPDATA|\$LOCALAPPDATA/);
+});
+
 test("desktop release workflow delegates platform preparation to the dist scripts", () => {
   const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "build-desktop.yml"), "utf8");
   assert.match(workflow, /macOS universal[\s\S]*npm run dist:mac/);
