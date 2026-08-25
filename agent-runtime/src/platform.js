@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { INTERNAL_STATE_DIR } from "./workspace.js";
@@ -235,15 +235,24 @@ export function stageWindowsNodeCliRuntime(platformCommand, {
   if (isInside(workspaceRoot, sourcePackageRoot)) return platformCommand;
 
   const packageJsonPath = path.join(sourcePackageRoot, "package.json");
-  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+  const packageJsonRaw = fs.readFileSync(packageJsonPath, "utf8");
+  const packageJson = JSON.parse(packageJsonRaw);
   if (packageJson?.name !== "npm" || typeof packageJson.version !== "string" || !/^[0-9A-Za-z._+-]{1,64}$/.test(packageJson.version)) {
     throw new Error("resolved Windows npm runtime package metadata is invalid");
   }
 
+  const stageKey = createHash("sha256")
+    .update(sourcePackageRoot)
+    .update("\0")
+    .update(packageJsonRaw)
+    .digest("hex")
+    .slice(0, 16);
   const runtimeParent = path.join(workspaceRoot, INTERNAL_STATE_DIR, "runtime", "npm");
-  fs.mkdirSync(runtimeParent, { recursive: true });
-  const stageRoot = fs.mkdtempSync(path.join(runtimeParent, `${packageJson.version}-${process.pid}-`));
+  const stageRoot = path.join(runtimeParent, `${packageJson.version}-${stageKey}`);
   const stagedPackageRoot = path.join(stageRoot, "package");
+  fs.mkdirSync(runtimeParent, { recursive: true });
+  fs.rmSync(stageRoot, { recursive: true, force: true });
+  fs.mkdirSync(stageRoot, { recursive: true });
   try {
     copyTrustedRuntimePackage(sourcePackageRoot, stagedPackageRoot);
   } catch (error) {
