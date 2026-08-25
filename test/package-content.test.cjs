@@ -60,6 +60,11 @@ test("desktop release workflow delegates platform preparation to the dist script
   assert.doesNotMatch(workflow, /prepare:tunnel-client:/);
 });
 
+test("desktop pull requests trigger the Windows native acceptance workflow", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "build-desktop.yml"), "utf8");
+  assert.match(workflow, /pull_request:\s*\n\s*branches:\s*\n\s*-\s*main/);
+});
+
 test("Windows CI runs native Agent acceptance as a hard gate before desktop packaging", () => {
   const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "build-desktop.yml"), "utf8");
   const windows = workflow.slice(workflow.indexOf("  windows:"));
