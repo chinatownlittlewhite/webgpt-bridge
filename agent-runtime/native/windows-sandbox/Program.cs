@@ -10,9 +10,15 @@ namespace LocalProjectCoding.WindowsSandbox;
 internal static class Program
 {
     private const uint ExtendedStartupInfoPresent = 0x00080000;
-    private const uint CreateUnicodeEnvironment = 0x00000400;
     private const uint CreateSuspended = 0x00000004;
     private const uint StartfUseStdHandles = 0x00000100;
+    private const uint GenericRead = 0x80000000;
+    private const uint GenericWrite = 0x40000000;
+    private const uint FileShareRead = 0x00000001;
+    private const uint FileShareWrite = 0x00000002;
+    private const uint OpenExisting = 3;
+    private const uint FileAttributeNormal = 0x00000080;
+    private const uint DuplicateSameAccess = 0x00000002;
     private const uint ProcThreadAttributeSecurityCapabilities = 0x00020009;
     private const uint Infinite = 0xFFFFFFFF;
     private const uint WaitObject0 = 0x00000000;
@@ -175,12 +181,13 @@ internal static class Program
         int parentPid,
         bool allowNetwork)
     {
+        var stdHandles = PrepareInheritableStdHandles();
         var startup = new Native.StartupInfoEx();
         startup.StartupInfo.cb = Marshal.SizeOf<Native.StartupInfoEx>();
         startup.StartupInfo.dwFlags = StartfUseStdHandles;
-        startup.StartupInfo.hStdInput = Native.GetStdHandle(StdInputHandle);
-        startup.StartupInfo.hStdOutput = Native.GetStdHandle(StdOutputHandle);
-        startup.StartupInfo.hStdError = Native.GetStdHandle(StdErrorHandle);
+        startup.StartupInfo.hStdInput = stdHandles.Input;
+        startup.StartupInfo.hStdOutput = stdHandles.Output;
+        startup.StartupInfo.hStdError = stdHandles.Error;
 
         var attributeListSize = IntPtr.Zero;
         Native.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeListSize);
@@ -325,6 +332,72 @@ internal static class Program
                 Native.DeleteProcThreadAttributeList(startup.lpAttributeList);
                 Marshal.FreeHGlobal(startup.lpAttributeList);
             }
+            Native.CloseHandle(stdHandles.Input);
+            Native.CloseHandle(stdHandles.Output);
+            Native.CloseHandle(stdHandles.Error);
+        }
+    }
+
+    private static (IntPtr Input, IntPtr Output, IntPtr Error) PrepareInheritableStdHandles()
+    {
+        var input = IntPtr.Zero;
+        var output = IntPtr.Zero;
+        var error = IntPtr.Zero;
+        try
+        {
+            input = PrepareInheritableStdHandle(StdInputHandle, input: true);
+            output = PrepareInheritableStdHandle(StdOutputHandle, input: false);
+            error = PrepareInheritableStdHandle(StdErrorHandle, input: false);
+            return (input, output, error);
+        }
+        catch
+        {
+            if (input != IntPtr.Zero) Native.CloseHandle(input);
+            if (output != IntPtr.Zero) Native.CloseHandle(output);
+            if (error != IntPtr.Zero) Native.CloseHandle(error);
+            throw;
+        }
+    }
+
+    private static IntPtr PrepareInheritableStdHandle(int stdHandle, bool input)
+    {
+        var source = Native.GetStdHandle(stdHandle);
+        var fallback = IntPtr.Zero;
+        if (source == IntPtr.Zero || source == new IntPtr(-1))
+        {
+            fallback = Native.CreateFileW("NUL",
+                input ? GenericRead : GenericWrite,
+                FileShareRead | FileShareWrite,
+                IntPtr.Zero,
+                OpenExisting,
+                FileAttributeNormal,
+                IntPtr.Zero);
+            if (fallback == new IntPtr(-1))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateFileW(NUL) failed");
+            }
+            source = fallback;
+        }
+
+        try
+        {
+            var currentProcess = Native.GetCurrentProcess();
+            if (!Native.DuplicateHandle(
+                    currentProcess,
+                    source,
+                    currentProcess,
+                    out var duplicate,
+                    0,
+                    true,
+                    DuplicateSameAccess))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "DuplicateHandle(stdio) failed");
+            }
+            return duplicate;
+        }
+        finally
+        {
+            if (fallback != IntPtr.Zero) Native.CloseHandle(fallback);
         }
     }
 
@@ -646,5 +719,28 @@ internal static class Program
 
         [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern IntPtr GetStdHandle(int nStdHandle);
+
+        [DllImport("kernel32.dll")]
+        internal static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        internal static extern bool DuplicateHandle(
+            IntPtr hSourceProcessHandle,
+            IntPtr hSourceHandle,
+            IntPtr hTargetProcessHandle,
+            out IntPtr lpTargetHandle,
+            uint dwDesiredAccess,
+            bool bInheritHandle,
+            uint dwOptions);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        internal static extern IntPtr CreateFileW(
+            string lpFileName,
+            uint dwDesiredAccess,
+            uint dwShareMode,
+            IntPtr lpSecurityAttributes,
+            uint dwCreationDisposition,
+            uint dwFlagsAndAttributes,
+            IntPtr hTemplateFile);
     }
 }
