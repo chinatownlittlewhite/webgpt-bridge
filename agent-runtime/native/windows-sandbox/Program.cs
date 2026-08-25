@@ -14,6 +14,15 @@ internal static class Program
     private const uint StartfUseStdHandles = 0x00000100;
     private const uint GenericRead = 0x80000000;
     private const uint GenericWrite = 0x40000000;
+    private const uint GenericExecute = 0x20000000;
+    private const uint Delete = 0x00010000;
+    private const uint DaclSecurityInformation = 0x00000004;
+    private const uint SeFileObject = 1;
+    private const uint GrantAccess = 1;
+    private const uint TrusteeIsSid = 0;
+    private const uint TrusteeIsUnknown = 0;
+    private const uint NoInheritance = 0;
+    private const uint SubContainersAndObjectsInherit = 0x00000003;
     private const uint FileShareRead = 0x00000001;
     private const uint FileShareWrite = 0x00000002;
     private const uint OpenExisting = 3;
@@ -56,18 +65,16 @@ internal static class Program
             var appContainerSid = profile.Sid;
             try
             {
-                var sidText = new SecurityIdentifier(appContainerSid).Value;
-
-                GrantAcl(workspace, sidText, modify: true, recursive: profile.Created);
-                GrantTraversalAcl(Path.GetDirectoryName(executable)!, sidText);
-                GrantAcl(executable, sidText, modify: false);
+                GrantAcl(workspace, appContainerSid, modify: true);
+                GrantTraversalAcl(Path.GetDirectoryName(executable)!, appContainerSid);
+                GrantAcl(executable, appContainerSid, modify: false);
                 foreach (var readPath in options.ReadPaths)
                 {
                     var resolved = Path.GetFullPath(readPath);
                     if (Directory.Exists(resolved) || File.Exists(resolved))
                     {
-                        GrantTraversalAcl(resolved, sidText);
-                        GrantAcl(resolved, sidText, modify: false);
+                        GrantTraversalAcl(resolved, appContainerSid);
+                        GrantAcl(resolved, appContainerSid, modify: false);
                     }
                 }
                 foreach (var writePath in options.WritePaths)
@@ -75,7 +82,7 @@ internal static class Program
                     var resolved = Path.GetFullPath(writePath);
                     if (Directory.Exists(resolved) || File.Exists(resolved))
                     {
-                        GrantAcl(resolved, sidText, modify: true);
+                        GrantAcl(resolved, appContainerSid, modify: true);
                     }
                 }
 
@@ -142,40 +149,12 @@ internal static class Program
         return (sid, false);
     }
 
-    private static void GrantAcl(string target, string sid, bool modify, bool recursive = false)
+    private static void GrantAcl(string target, IntPtr sid, bool modify)
     {
-        var isDirectory = Directory.Exists(target);
-        var rights = modify ? "M" : "RX";
-        var acl = isDirectory ? $"(OI)(CI){rights}" : rights;
-        var psi = new ProcessStartInfo
-        {
-            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "icacls.exe"),
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add(target);
-        psi.ArgumentList.Add("/grant");
-        psi.ArgumentList.Add($"*{sid}:{acl}");
-        // The first profile creation initializes existing workspace children.
-        // Later launches rely on inheritable OI/CI ACEs instead of rescanning
-        // the whole repository every time. Protected ACLs remain fail-closed.
-        if (recursive && isDirectory) psi.ArgumentList.Add("/T");
-        psi.ArgumentList.Add("/C");
-        psi.ArgumentList.Add("/Q");
-
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("could not start icacls.exe");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"failed to grant AppContainer ACL on '{target}': {stderr.Trim()} {stdout.Trim()}".Trim());
-        }
+        ApplyAcl(target, sid, modify, inherit: Directory.Exists(target));
     }
 
-    private static void GrantTraversalAcl(string target, string sid)
+    private static void GrantTraversalAcl(string target, IntPtr sid)
     {
         var resolved = Path.GetFullPath(target);
         DirectoryInfo? current = Directory.Exists(resolved)
@@ -184,31 +163,76 @@ internal static class Program
 
         while (current is not null)
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "icacls.exe"),
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            psi.ArgumentList.Add(current.FullName);
-            psi.ArgumentList.Add("/grant");
             // Ancestors only need non-inheriting read/execute so Windows can traverse
             // and query attributes while Node resolves a trusted runtime path.
-            psi.ArgumentList.Add($"*{sid}:(RX)");
-            psi.ArgumentList.Add("/C");
-            psi.ArgumentList.Add("/Q");
-
-            using var process = Process.Start(psi) ?? throw new InvalidOperationException("could not start icacls.exe");
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException($"failed to grant AppContainer traversal ACL on '{current.FullName}': {stderr.Trim()} {stdout.Trim()}".Trim());
-            }
+            ApplyAcl(current.FullName, sid, modify: false, inherit: false);
             current = current.Parent;
+        }
+    }
+
+    private static void ApplyAcl(string target, IntPtr sid, bool modify, bool inherit)
+    {
+        IntPtr oldDacl = IntPtr.Zero;
+        IntPtr securityDescriptor = IntPtr.Zero;
+        IntPtr newDacl = IntPtr.Zero;
+        try
+        {
+            var status = Native.GetNamedSecurityInfoW(
+                target,
+                SeFileObject,
+                DaclSecurityInformation,
+                out _,
+                out _,
+                out oldDacl,
+                out _,
+                out securityDescriptor
+            );
+            if (status != 0)
+            {
+                throw new Win32Exception(unchecked((int)status), $"GetNamedSecurityInfoW failed for '{target}'");
+            }
+
+            var access = new Native.ExplicitAccess
+            {
+                grfAccessPermissions = modify
+                    ? GenericRead | GenericWrite | GenericExecute | Delete
+                    : GenericRead | GenericExecute,
+                grfAccessMode = GrantAccess,
+                grfInheritance = inherit ? SubContainersAndObjectsInherit : NoInheritance,
+                Trustee = new Native.Trustee
+                {
+                    pMultipleTrustee = IntPtr.Zero,
+                    MultipleTrusteeOperation = 0,
+                    TrusteeForm = TrusteeIsSid,
+                    TrusteeType = TrusteeIsUnknown,
+                    ptstrName = sid,
+                },
+            };
+
+            status = Native.SetEntriesInAclW(1, new[] { access }, oldDacl, out newDacl);
+            if (status != 0)
+            {
+                throw new Win32Exception(unchecked((int)status), $"SetEntriesInAclW failed for '{target}'");
+            }
+
+            status = Native.SetNamedSecurityInfoW(
+                target,
+                SeFileObject,
+                DaclSecurityInformation,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                newDacl,
+                IntPtr.Zero
+            );
+            if (status != 0)
+            {
+                throw new Win32Exception(unchecked((int)status), $"SetNamedSecurityInfoW failed for '{target}'");
+            }
+        }
+        finally
+        {
+            if (newDacl != IntPtr.Zero) Native.LocalFree(newDacl);
+            if (securityDescriptor != IntPtr.Zero) Native.LocalFree(securityDescriptor);
         }
     }
 
@@ -635,6 +659,25 @@ internal static class Program
             public uint Attributes;
         }
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        internal struct Trustee
+        {
+            public IntPtr pMultipleTrustee;
+            public uint MultipleTrusteeOperation;
+            public uint TrusteeForm;
+            public uint TrusteeType;
+            public IntPtr ptstrName;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        internal struct ExplicitAccess
+        {
+            public uint grfAccessPermissions;
+            public uint grfAccessMode;
+            public uint grfInheritance;
+            public Trustee Trustee;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         internal struct IoCounters
         {
@@ -687,6 +730,37 @@ internal static class Program
 
         [DllImport("advapi32.dll")]
         internal static extern IntPtr FreeSid(IntPtr pSid);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern uint GetNamedSecurityInfoW(
+            string pObjectName,
+            uint objectType,
+            uint securityInfo,
+            out IntPtr ppsidOwner,
+            out IntPtr ppsidGroup,
+            out IntPtr ppDacl,
+            out IntPtr ppSacl,
+            out IntPtr ppSecurityDescriptor);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern uint SetNamedSecurityInfoW(
+            string pObjectName,
+            uint objectType,
+            uint securityInfo,
+            IntPtr psidOwner,
+            IntPtr psidGroup,
+            IntPtr pDacl,
+            IntPtr pSacl);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern uint SetEntriesInAclW(
+            uint countOfExplicitEntries,
+            [In] ExplicitAccess[] listOfExplicitEntries,
+            IntPtr oldAcl,
+            out IntPtr newAcl);
+
+        [DllImport("kernel32.dll")]
+        internal static extern IntPtr LocalFree(IntPtr hMem);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern bool InitializeProcThreadAttributeList(
