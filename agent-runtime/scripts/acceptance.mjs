@@ -200,6 +200,13 @@ async function verifyWindowsExternalExecutableCompatibility(runtime) {
         timeout: 120_000,
       });
       if (result.error) throw result.error;
+      if (argv[0] === "git") {
+        assert.doesNotMatch(
+          `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+          /\/dev\/null.*Permission denied/i,
+          `Git for Windows must be able to use /dev/null through the product null-device capability: ${JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr, resolvedArgv })}`,
+        );
+      }
       assert.equal(
         result.status,
         0,
@@ -362,6 +369,11 @@ try {
     );
     assert.equal(server.runtime.normalSandbox.summary.autoRunSafe, true, "verified sandbox must be promoted");
     if (process.platform === "win32") {
+      assert.equal(
+        server.runtime.windowsHostPreparationState.status,
+        "ready",
+        `Windows host preparation must be ready before native acceptance: ${JSON.stringify(server.runtime.windowsHostPreparationState)}`,
+      );
       assert.equal(
         server.runtime.networkSandboxState.status,
         "ready",

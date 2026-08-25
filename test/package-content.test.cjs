@@ -103,6 +103,25 @@ test("Windows CI runs native Agent acceptance as a hard gate before desktop pack
   assert.ok(packaging > acceptance, "Windows packaging must not run until native acceptance passes");
 });
 
+test("Windows CI provisions host preparation and runs acceptance as an ephemeral standard user", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "build-desktop.yml"), "utf8");
+  const windows = workflow.slice(workflow.indexOf("  windows:"));
+  const nativeBuild = windows.indexOf("npm --prefix agent-runtime run build:native");
+  const firstApply = windows.indexOf("--apply");
+  const secondApply = windows.indexOf("--apply", firstApply + 1);
+  const check = windows.indexOf("--check --json");
+  const acceptance = windows.indexOf("npm --prefix agent-runtime run acceptance");
+  assert.ok(nativeBuild >= 0 && firstApply > nativeBuild, "host preparation must run only after native helpers are built");
+  assert.ok(secondApply > firstApply, "host preparation apply must be exercised twice for idempotence");
+  assert.ok(check > secondApply, "host preparation must be checked after repeated apply");
+  assert.match(windows, /New-LocalUser/);
+  assert.match(windows, /Get-LocalGroupMember[^\n]*Administrators/);
+  assert.match(windows, /Start-Process[\s\S]*-Credential/);
+  assert.match(windows, /Remove-LocalUser/);
+  assert.ok(acceptance > check, "the standard-user acceptance command must run after host preparation is ready");
+  assert.match(windows, /if:\s*always\(\)[\s\S]*--remove/);
+});
+
 test("platform dist scripts enforce desktop tests and native Agent acceptance before packaging", () => {
   assert.equal(packageJson.scripts["verify:desktop"], "node scripts/verify-desktop.cjs");
   for (const name of ["dist:mac", "dist:win"]) {

@@ -45,6 +45,9 @@ test("Windows acceptance exercises shared executables through AppContainer witho
   assert.match(source, /\["node", "--version"\]/);
   assert.match(source, /\["gh", "--version"\]/);
   assert.match(source, /wrapWithSandbox\(runtime\.normalSandbox\.adapter/);
+  assert.match(source, /dev\\\/null.*Permission denied/i);
+  assert.match(source, /windowsHostPreparationState\.status/);
+  assert.match(source, /Windows host preparation must be ready/);
 });
 
 test("Windows acceptance verifies the dedicated network sandbox and structured dependency path", () => {
