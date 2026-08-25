@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as platformModule from "../src/platform.js";
 import {
   normalizedPlatform,
   platformSecurityNotes,
@@ -89,6 +90,48 @@ test("Windows Node CLI shim preserves lexical module paths without host-root ACL
     ]);
     assert.ok(result.trustedReadPaths.includes(path.win32.resolve(path.dirname(cli))));
     assert.equal(result.trustedReadPaths.includes(path.win32.resolve(path.dirname(fixture))), false);
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("Windows sandbox stages npm package runtime inside the host-private workspace namespace", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-win-npm-stage-"));
+  try {
+    const hostRoot = path.join(fixture, "host");
+    const packageRoot = path.join(hostRoot, "node_modules", "npm");
+    const cli = path.join(packageRoot, "bin", "npm-cli.js");
+    const marker = path.join(packageRoot, "lib", "marker.js");
+    const nodePath = path.join(hostRoot, "node.exe");
+    const workspace = path.join(fixture, "workspace");
+    fs.mkdirSync(path.dirname(cli), { recursive: true });
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.writeFileSync(nodePath, "fixture", "utf8");
+    fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "npm", version: "99.0.0" }), "utf8");
+    fs.writeFileSync(cli, "require('../lib/marker.js');\n", "utf8");
+    fs.writeFileSync(marker, "module.exports = 'staged';\n", "utf8");
+
+    const materialize = platformModule.stageWindowsNodeCliRuntime;
+    assert.equal(typeof materialize, "function", "Windows sandbox must expose a host-only Node CLI runtime staging helper");
+    const result = materialize(Object.freeze({
+      platform: "windows",
+      logicalCommand: "npm",
+      argv: Object.freeze([nodePath, "--preserve-symlinks", "--preserve-symlinks-main", cli, "--version"]),
+      resolved: true,
+      usedTrustedShim: true,
+      trustedReadPaths: Object.freeze([path.dirname(nodePath), packageRoot]),
+    }), { workspace, platform: "win32" });
+
+    const stagedCli = result.argv[3];
+    const relativeCli = path.relative(workspace, stagedCli);
+    assert.equal(relativeCli.startsWith("..") || path.isAbsolute(relativeCli), false, "staged npm CLI must remain inside the sandbox workspace");
+    assert.match(relativeCli, /^\.webgpt-bridge[\\/]runtime[\\/]npm[\\/]/);
+    const stagedPackageRoot = path.dirname(path.dirname(stagedCli));
+    assert.equal(fs.readFileSync(path.join(stagedPackageRoot, "lib", "marker.js"), "utf8"), "module.exports = 'staged';\n");
+    assert.equal(result.argv[0], nodePath, "external Node executable stays host-resolved rather than being copied");
+    assert.equal(result.trustedReadPaths.includes(packageRoot), false, "external npm package root must no longer be an AppContainer read grant");
+    assert.ok(result.trustedReadPaths.includes(stagedPackageRoot), "staged npm package root must be the runtime read grant");
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }
