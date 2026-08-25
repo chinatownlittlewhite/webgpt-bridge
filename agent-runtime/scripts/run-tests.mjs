@@ -61,5 +61,8 @@ export async function main() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(scriptPath)) {
-  await main();
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }
