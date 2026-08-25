@@ -18,9 +18,11 @@
 
 !macro customInstall
   DetailPrint "Registering ${WEBGPT_BRIDGE_HOST_PREP_TASK}..."
-  ExecWait '"$SYSDIR\schtasks.exe" /Create /TN "${WEBGPT_BRIDGE_HOST_PREP_TASK}" /TR "$\"$INSTDIR\${WEBGPT_BRIDGE_HOST_PREP_RELATIVE}$\" --apply" /SC ONSTART /RU SYSTEM /RL HIGHEST /F' $1
+  nsExec::ExecToStack /OEM '"$SYSDIR\schtasks.exe" /Create /TN "${WEBGPT_BRIDGE_HOST_PREP_TASK}" /TR "$\"$INSTDIR\${WEBGPT_BRIDGE_HOST_PREP_RELATIVE}$\" --apply" /SC ONSTART /RU SYSTEM /RL HIGHEST /F'
+  Pop $1
+  Pop $2
   ${If} $1 != 0
-    Abort "Unable to register WebGPT Bridge Windows host preparation task (exit $1)."
+    Abort "Unable to register WebGPT Bridge Windows host preparation task (exit $1): $2"
   ${EndIf}
 
   DetailPrint "Preparing Windows AppContainer host access..."
