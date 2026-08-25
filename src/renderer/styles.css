@@ -110,6 +110,12 @@ button:active { transform: translateY(0); }
 .status-list span { display: block; color: var(--muted); font-size: 10.5px; }
 .status-list strong { display: block; margin-top: 6px; font-size: 13px; letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connection-settings { margin-top: 10px; padding: 20px; }
+.update-card { margin-top: 10px; padding: 20px; }
+.update-card .section-heading { align-items: center; }
+.update-notes { margin: 12px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; white-space: pre-wrap; }
+.update-progress { display: grid; gap: 7px; margin-top: 12px; color: var(--muted); font-size: 10.5px; }
+.update-progress progress { width: 100%; height: 8px; accent-color: var(--accent); }
+button:disabled { cursor: default; opacity: .56; transform: none; }
 .section-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
 .section-heading h2 { font-size: 13px; line-height: 1.3; }
 .section-heading p, .section-heading span { color: var(--muted); font-size: 10.5px; line-height: 1.5; }

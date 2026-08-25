@@ -6,6 +6,9 @@ const test = require("node:test");
 const root = path.join(__dirname, "..");
 const main = fs.readFileSync(path.join(root, "src", "main.cjs"), "utf8");
 const preload = fs.readFileSync(path.join(root, "src", "preload.cjs"), "utf8");
+const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
+const renderer = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
+const styles = fs.readFileSync(path.join(root, "src", "renderer", "styles.css"), "utf8");
 
 test("renderer update IPC has no URL repository path or installer arguments", () => {
   for (const channel of ["update:get-state", "update:check", "update:download", "update:install"]) {
@@ -48,4 +51,28 @@ test("macOS child shutdown waits for real exit before fallback kill", () => {
 test("update state subscription is removable", () => {
   assert.match(preload, /onUpdateState:\s*\(callback\)\s*=>\s*\{/);
   assert.match(preload, /ipcRenderer\.removeListener\("update:state",\s*listener\)/);
+});
+
+test("renderer exposes one bounded update panel and state-dependent action", () => {
+  for (const id of ["updateCurrentVersion", "updateHeadline", "updateNotes", "updateProgress", "updateProgressBar", "updateMeta", "updateAction"]) {
+    assert.match(html, new RegExp(`id=["']${id}["']`));
+  }
+  assert.match(renderer, /api\.getUpdateState\(\)/);
+  assert.match(renderer, /api\.onUpdateState/);
+  assert.match(renderer, /api\.checkForUpdates\(\)/);
+  assert.match(renderer, /api\.downloadUpdate\(\)/);
+  assert.match(renderer, /api\.installUpdateAndRestart\(\)/);
+  assert.match(renderer, /updateNotes[^\n]*\.textContent|byId\(["']updateNotes["']\)\.textContent/);
+  assert.doesNotMatch(renderer, /updateNotes[^\n]*\.innerHTML|byId\(["']updateNotes["']\)\.innerHTML/);
+  assert.doesNotMatch(renderer, /fetch\(|XMLHttpRequest|setFeedURL|github\.com\/.*releases/i);
+  assert.match(styles, /\.update-card/);
+});
+
+test("tray can surface a downloaded or available update without installing it", () => {
+  assert.match(main, /发现更新/);
+  assert.match(main, /更新已下载/);
+  const trayStart = main.indexOf("function updateTray");
+  const trayEnd = main.indexOf("function createTray", trayStart);
+  const tray = main.slice(trayStart, trayEnd);
+  assert.doesNotMatch(tray, /update:install|installUpdateAndRestart|quitAndInstall/);
 });

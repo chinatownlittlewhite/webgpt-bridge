@@ -430,9 +430,16 @@ function updateTray() {
   if (!trayRef) return;
   const status = getStatus();
   const connected = status.tunnel;
+  const update = updateService?.getState();
+  const updateItem = update?.status === "downloaded"
+    ? { label: `更新已下载 · v${update.availableVersion}`, enabled: false }
+    : update?.status === "available"
+      ? { label: `发现更新 · v${update.availableVersion}`, enabled: false }
+      : null;
   trayRef.setToolTip(`WebGPT Bridge · ${connected ? "已连接" : "未连接"}`);
   trayRef.setContextMenu(Menu.buildFromTemplate([
     { label: connected ? "已连接到 ChatGPT" : "未连接", enabled: false },
+    ...(updateItem ? [updateItem] : []),
     { type: "separator" },
     { label: "显示控制器", click: showWindow },
     {
