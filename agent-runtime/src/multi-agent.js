@@ -17,6 +17,7 @@ export function createMultiAgentCoordinator({
   workspace,
   tools = [],
   sandboxAdapter,
+  localBrokerSocket = "",
   platform = process.platform,
   auditLogger,
   maxAgents = 4,
@@ -28,6 +29,7 @@ export function createMultiAgentCoordinator({
   const manageWorktree = createManagedWorktreeRunner({
     workspace,
     sandboxAdapter,
+    localBrokerSocket,
     platform,
     auditLogger,
   });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -93,6 +94,71 @@ async function closeClient(client, transport) {
   await client.close();
 }
 
+function isInsideAcceptanceRoot(candidate) {
+  const relative = path.relative(root, path.resolve(candidate));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function createAcceptanceGitBroker() {
+  if (process.platform !== "win32") return null;
+  const socketPath = `\\\\.\\pipe\\webgpt-bridge-acceptance-${process.pid}-${crypto.randomUUID()}`;
+  const server = net.createServer((socket) => {
+    let buffered = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffered += chunk;
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let request = null;
+        try {
+          request = JSON.parse(line);
+          const argv = request?.params?.argv;
+          const cwd = request?.params?.cwd;
+          if (request?.method !== "local_run_command") throw new Error("acceptance broker only supports local_run_command");
+          if (!Array.isArray(argv) || argv[0] !== "git") throw new Error("acceptance broker only permits structured Git argv");
+          if (typeof cwd !== "string" || !path.isAbsolute(cwd) || !isInsideAcceptanceRoot(cwd)) {
+            throw new Error("acceptance broker cwd escapes workspace");
+          }
+          const resolved = resolvePlatformArgv(argv, { env: process.env, platform: process.platform });
+          if (!resolved.resolved) throw new Error("acceptance broker could not resolve Git");
+          const result = spawnSync(resolved.argv[0], resolved.argv.slice(1), {
+            cwd,
+            env: process.env,
+            encoding: "utf8",
+            shell: false,
+            windowsHide: true,
+            timeout: 120_000,
+          });
+          if (result.error) throw result.error;
+          socket.end(`${JSON.stringify({
+            id: request.id,
+            ok: true,
+            result: {
+              code: result.status ?? -1,
+              signal: result.signal ?? undefined,
+              stdout: result.stdout ?? "",
+              stderr: result.stderr ?? "",
+              truncated: false,
+            },
+          })}\n`);
+        } catch (error) {
+          socket.end(`${JSON.stringify({ id: request?.id ?? null, ok: false, error: error.message })}\n`);
+        }
+      }
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  return {
+    socketPath,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
+
 async function verifyNativeDeveloperWorkflow(runtime) {
   const { createCommandRunner } = await import("../dist/runner.js");
   const run = createCommandRunner({
@@ -102,34 +168,53 @@ async function verifyNativeDeveloperWorkflow(runtime) {
     auditLogger: runtime.auditLogger,
     timeoutMs: process.platform === "win32" ? 120_000 : 30_000,
   });
-  for (const argv of [["node", "--version"], ["npm", "--version"], ["git", "--version"]]) {
+  const sandboxCommands = process.platform === "win32" ? [["node", "--version"], ["npm", "--version"]] : [["node", "--version"], ["npm", "--version"], ["git", "--version"]];
+  for (const argv of sandboxCommands) {
     const result = await run({ argv, cwd: ".", requestApproval: () => true });
     assert.equal(result.status, "completed", `${argv[0]} must execute in the verified native sandbox: ${result.error ?? result.stderr ?? ""}`);
     assert.equal(result.exitCode, 0, `${argv[0]} native sandbox smoke must exit 0: ${JSON.stringify({ status: result.status, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, resolvedArgv: result.resolvedArgv ?? null })}`);
   }
 
-  const started = await runtime.processManager.start(
+  const gitBroker = await createAcceptanceGitBroker();
+  const gitBrokerSocket = gitBroker?.socketPath ?? "";
+  try {
+    const started = await runtime.processManager.start(
     { argv: ["node", "-e", "setInterval(() => {}, 1000)"], cwd: "." },
     { requestApproval: () => true },
   );
-  assert.equal(started.status, "running", "managed process must start inside the verified native sandbox");
-  const killed = await runtime.processManager.kill({ processId: started.processId, force: true });
-  assert.equal(killed.status, "kill_requested", "managed process tree must accept native termination");
+    assert.equal(started.status, "running", "managed process must start inside the verified native sandbox");
+    const killed = await runtime.processManager.kill({ processId: started.processId, force: true });
+    assert.equal(killed.status, "kill_requested", "managed process tree must accept native termination");
 
-  const repo = fs.mkdtempSync(path.join(root, "acceptance-repo-"));
-  let worktreePath = null;
-  try {
+    const repo = fs.mkdtempSync(path.join(root, "acceptance-repo-"));
+    let worktreePath = null;
+    try {
     runHost(["git", "init"], { cwd: repo });
     runHost(["git", "config", "user.email", "acceptance@example.invalid"], { cwd: repo });
     runHost(["git", "config", "user.name", "Local Project Coding Acceptance"], { cwd: repo });
     fs.writeFileSync(path.join(repo, "README.txt"), "acceptance\n", "utf8");
     runHost(["git", "add", "README.txt"], { cwd: repo });
-    runHost(["git", "commit", "-m", "acceptance seed"], { cwd: repo });
+      runHost(["git", "commit", "-m", "acceptance seed"], { cwd: repo });
 
-    const { createManagedWorktreeRunner } = await import("../dist/worktree.js");
+      if (process.platform === "win32") {
+        const { createGitTool } = await import("../dist/tool.js");
+        const git = createGitTool({
+          workspace: root,
+          sandboxAdapter: runtime.normalSandbox.adapter,
+          localBrokerSocket: gitBrokerSocket,
+          platform: process.platform,
+          auditLogger: runtime.auditLogger,
+        });
+        const gitStatus = await git.invoke({ action: "status", cwd: path.relative(root, repo) });
+        assert.equal(gitStatus.status, "completed", `structured Git broker smoke failed: ${gitStatus.error ?? gitStatus.stderr ?? ""}`);
+        assert.equal(gitStatus.exitCode, 0);
+      }
+
+      const { createManagedWorktreeRunner } = await import("../dist/worktree.js");
     const manageWorktree = createManagedWorktreeRunner({
       workspace: root,
       sandboxAdapter: runtime.normalSandbox.adapter,
+      localBrokerSocket: gitBrokerSocket,
       platform: process.platform,
       auditLogger: runtime.auditLogger,
       timeoutMs: 30_000,
@@ -155,10 +240,13 @@ async function verifyNativeDeveloperWorkflow(runtime) {
     );
     assert.equal(removed.status, "completed", `managed worktree remove failed: ${removed.error ?? removed.stderr ?? ""}`);
     assert.equal(removed.exitCode, 0);
-    worktreePath = null;
+      worktreePath = null;
+    } finally {
+      if (worktreePath) fs.rmSync(worktreePath, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   } finally {
-    if (worktreePath) fs.rmSync(worktreePath, { recursive: true, force: true });
-    fs.rmSync(repo, { recursive: true, force: true });
+    await gitBroker?.close();
   }
 }
 

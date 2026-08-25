@@ -115,6 +115,52 @@ test("GitHub tool delegates authenticated CLI calls to the App-owned broker", as
   assert.deepEqual(request.params.argv, ["gh", "run", "list", "--limit", "20", "--json", "databaseId,status,conclusion,name,workflowName,url,headBranch,headSha"]);
 });
 
+test("Windows structured Git delegates every action to the App-owned broker", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("this regression probe uses a Unix-domain App broker socket");
+    return;
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-win-git-broker-workspace-"));
+  const socketPath = testBrokerSocketPath("lpc-win-git-broker");
+  let request = null;
+  const server = net.createServer((socket) => {
+    socket.setEncoding("utf8");
+    socket.once("data", (line) => {
+      request = JSON.parse(line);
+      socket.end(`${JSON.stringify({ id: request.id, ok: true, result: { code: 0, stdout: " M file.txt\\n", stderr: "", truncated: false } })}\n`);
+    });
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+  } catch (error) {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(socketPath, { force: true });
+    if (error?.code === "EPERM") {
+      t.skip("nested Seatbelt blocks IPC sockets; this App-broker probe runs in the desktop environment.");
+      return;
+    }
+    throw error;
+  }
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(socketPath, { force: true });
+  });
+
+  const git = createGitTool({ workspace: root, localBrokerSocket: socketPath, platform: "win32" });
+  const result = await git.invoke({ action: "status" });
+  assert.equal(result.status, "completed");
+  assert.equal(result.exitCode, 0);
+  assert.equal(request.method, "local_run_command");
+  assert.equal(request.params.cwd, fs.realpathSync(root));
+  assert.deepEqual(request.params.argv, ["git", "status", "--short"]);
+  assert.equal(result.policy.rule, "app-owned-windows-git-broker");
+});
+
 test("Git push is fixed to origin HEAD and delegates to the App-owned broker", async (t) => {
   if (process.platform === "win32") {
     t.skip("this regression probe uses a Unix-domain App broker socket");

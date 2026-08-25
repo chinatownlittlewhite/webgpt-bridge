@@ -6,11 +6,31 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createMultiAgentCoordinator } from "../src/multi-agent.js";
 import { createCoreTools } from "../src/tool.js";
+import { createManagedWorktreeRunner } from "../src/worktree.js";
 
 function git(cwd, args) {
   const result = spawnSync("git", args, { cwd, shell: false, encoding: "utf8" });
   if (result.status !== 0) throw new Error(`${args.join(" ")}: ${result.stderr || result.stdout}`);
 }
+
+test("Windows managed worktrees require the App-owned Git broker", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-win-worktree-broker-"));
+  const repo = path.join(root, "repo");
+  fs.mkdirSync(repo);
+  try {
+    const manage = createManagedWorktreeRunner({
+      workspace: root,
+      platform: "win32",
+      localBrokerSocket: path.join(root, "missing-broker.sock"),
+    });
+    await assert.rejects(
+      manage({ action: "list", cwd: "repo" }),
+      /本机代理|local broker|connect/i,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("multi-agent coordinator isolates agents in managed Git worktrees without auto-merge", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-multi-agent-"));

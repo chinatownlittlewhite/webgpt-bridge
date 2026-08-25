@@ -372,6 +372,13 @@ export function createRunCommandTool({ workspace, defaultTimeoutMs = 120_000, sa
     description: "Run an argv-based project command without a model-controlled shell. Commands may be allowed, denied, or require exact-request approval.",
     inputSchema: runCommandInputSchema,
     async invoke(input, trustedContext = {}) {
+      if (platform === "win32" && /^git(?:\.exe)?$/i.test(input.argv?.[0] ?? "")) {
+        return {
+          status: "platform_error",
+          platform,
+          error: "Git for Windows cannot run inside the AppContainer because it requires the host NUL device; use the structured git tool, which is routed through the App-owned Git broker.",
+        };
+      }
       const run = createCommandRunner({ workspace, timeoutMs: input.timeoutMs ?? defaultTimeoutMs, sandboxAdapter, platform, auditLogger });
       return await run({ argv: input.argv, cwd: input.cwd ?? ".", env: input.env ?? {}, requestApproval: trustedContext.requestApproval });
     },
@@ -393,13 +400,22 @@ export function createRunProjectTaskTool({ workspace, defaultTimeoutMs = 120_000
 export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger } = {}) {
   return {
     name: "git",
-    description: "Run a structured Git operation, including isolated worktree management. The fixed origin/HEAD push action runs through the desktop App's native confirmation broker.",
+    description: "Run a structured Git operation, including isolated worktree management. Windows Git and fixed origin/HEAD pushes run through the desktop App's policy-controlled local broker.",
     inputSchema: gitInputSchema,
     async invoke(input, trustedContext = {}) {
-      if (input.action === "push" && typeof localBrokerSocket === "string" && localBrokerSocket) {
+      const hasLocalBroker = typeof localBrokerSocket === "string" && localBrokerSocket.length > 0;
+      if (platform === "win32" && !hasLocalBroker) {
+        return {
+          status: "platform_error",
+          platform,
+          error: "Windows structured Git requires the App-owned local broker because Git for Windows cannot open the NUL device from the AppContainer.",
+        };
+      }
+      if ((platform === "win32" || input.action === "push") && hasLocalBroker) {
         const cwd = resolveModelWorkspaceCwd(workspace, input.cwd ?? ".", { platform }).cwd;
+        const argv = buildGitArgv(input);
         const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000 })
-          .request("local_run_command", { argv: buildGitArgv(input), cwd });
+          .request("local_run_command", { argv, cwd });
         return {
           status: "completed",
           exitCode: result?.code ?? -1,
@@ -410,8 +426,11 @@ export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAd
           stderrTruncated: false,
           cwd: input.cwd ?? ".",
           platform,
-          resolvedArgv: buildGitArgv(input),
-          policy: { decision: "approval_required", rule: "app-owned-git-push-broker" },
+          resolvedArgv: argv,
+          policy: {
+            decision: "brokered",
+            rule: platform === "win32" ? "app-owned-windows-git-broker" : "app-owned-git-push-broker",
+          },
         };
       }
       const run = createGitRunner({ workspace, timeoutMs: defaultTimeoutMs, sandboxAdapter, platform, auditLogger });

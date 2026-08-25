@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createCommandRunner } from "./runner.js";
+import { createLocalBrokerClient } from "./local-broker-client.js";
 import {
   INTERNAL_STATE_DIR,
   resolveModelWorkspaceCwd,
@@ -27,9 +28,38 @@ function repoKey(repoRoot) {
   return createHash("sha256").update(repoRoot).digest("hex").slice(0, 16);
 }
 
-export function createManagedWorktreeRunner({ workspace, sandboxAdapter, platform = process.platform, auditLogger, timeoutMs = 120_000 } = {}) {
+export function createManagedWorktreeRunner({ workspace, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger, timeoutMs = 120_000 } = {}) {
   const root = resolveWorkspace(workspace);
   const run = createCommandRunner({ workspace: root, sandboxAdapter, platform, auditLogger, timeoutMs });
+  const localBroker = platform === "win32" && typeof localBrokerSocket === "string" && localBrokerSocket.length > 0
+    ? createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000 })
+    : null;
+
+  async function runGit(argv, { repoRoot, repoRelative, requestApproval, sandboxExtraWritePaths = [] }) {
+    if (platform === "win32") {
+      if (!localBroker) {
+        return {
+          status: "platform_error",
+          platform,
+          error: "Windows managed worktrees require the App-owned Git broker because Git for Windows cannot open the NUL device from the AppContainer.",
+        };
+      }
+      const result = await localBroker.request("local_run_command", { argv, cwd: repoRoot });
+      return {
+        status: "completed",
+        exitCode: result?.code ?? -1,
+        signal: result?.signal ?? null,
+        stdout: result?.stdout ?? "",
+        stderr: result?.stderr ?? "",
+        stdoutTruncated: result?.truncated === true,
+        stderrTruncated: false,
+        platform,
+        resolvedArgv: argv,
+        policy: { decision: "brokered", rule: "app-owned-windows-git-broker" },
+      };
+    }
+    return await run({ argv, cwd: repoRelative, requestApproval, sandboxExtraWritePaths });
+  }
 
   function targetFor(repoRoot, name) {
     const targetRelative = path.join(INTERNAL_STATE_DIR, "worktrees", repoKey(repoRoot), safeName(name, "worktree name"));
@@ -42,7 +72,11 @@ export function createManagedWorktreeRunner({ workspace, sandboxAdapter, platfor
     const repoRelative = path.relative(root, repoRoot) || ".";
 
     if (input.action === "list") {
-      return await run({ argv: ["git", "worktree", "list", "--porcelain"], cwd: repoRelative, requestApproval: trustedContext.requestApproval });
+      return await runGit(["git", "worktree", "list", "--porcelain"], {
+        repoRoot,
+        repoRelative,
+        requestApproval: trustedContext.requestApproval,
+      });
     }
 
     const name = safeName(input.name, "worktree name");
@@ -54,18 +88,18 @@ export function createManagedWorktreeRunner({ workspace, sandboxAdapter, platfor
       const argv = input.createBranch === false
         ? ["git", "worktree", "add", target, branch]
         : ["git", "worktree", "add", "-b", branch, target, revision];
-      const result = await run({
-        argv,
-        cwd: repoRelative,
+      const result = await runGit(argv, {
+        repoRoot,
+        repoRelative,
         requestApproval: trustedContext.requestApproval,
         sandboxExtraWritePaths: [path.dirname(target)],
       });
       return { ...result, worktreeName: name, worktreePath: targetRelative, branch };
     }
     if (input.action === "remove") {
-      const result = await run({
-        argv: ["git", "worktree", "remove", ...(input.force === true ? ["--force"] : []), target],
-        cwd: repoRelative,
+      const result = await runGit(["git", "worktree", "remove", ...(input.force === true ? ["--force"] : []), target], {
+        repoRoot,
+        repoRelative,
         requestApproval: trustedContext.requestApproval,
         sandboxExtraWritePaths: [path.dirname(target)],
       });

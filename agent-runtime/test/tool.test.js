@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   createCapabilitiesTool,
   createCoreTools,
+  createGitTool,
   createRunCommandTool,
   dependencySyncInputSchema,
   gitInputSchema,
@@ -78,6 +79,35 @@ test("trusted execution controls cannot be supplied through model-facing schemas
     assert.equal(Object.hasOwn(schema.properties, "agentStep"), false);
     assert.equal(Object.hasOwn(schema.properties, "verifyCompletion"), false);
     assert.equal(schema.additionalProperties, false);
+  }
+});
+
+test("Windows structured Git requires the App-owned broker instead of the AppContainer runner", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-win-structured-git-"));
+  try {
+    const tool = createGitTool({
+      workspace: root,
+      platform: "win32",
+      localBrokerSocket: path.join(root, "missing-broker.sock"),
+    });
+    await assert.rejects(
+      tool.invoke({ action: "status" }),
+      /本机代理|local broker|connect/i,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Windows run_command refuses raw Git and directs callers to the structured Git tool", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-win-raw-git-"));
+  try {
+    const tool = createRunCommandTool({ workspace: root, platform: "win32" });
+    const result = await tool.invoke({ argv: ["git", "status"] });
+    assert.equal(result.status, "platform_error");
+    assert.match(result.error, /structured git tool/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
