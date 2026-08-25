@@ -16,7 +16,10 @@
     "pack": "npm run build:icon && npm run prepare:tunnel-client:mac && npm run prepare:agent && electron-builder --config electron-builder.config.cjs --dir",
     "dist:mac": "npm run build:icon && npm run prepare:tunnel-client:mac && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --config electron-builder.config.cjs --mac dmg zip --universal --publish never",
     "dist:win": "npm run prepare:tunnel-client:win && npm run prepare:agent && npm run verify:desktop && npm --prefix agent-runtime run acceptance && electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never",
-    "dist:all": "npm run dist:mac && npm run dist:win"
+    "dist:all": "npm run dist:mac && npm run dist:win",
+    "release:verify-tag": "node scripts/verify-release-tag.cjs",
+    "release:validate-assets": "node scripts/validate-release-assets.cjs",
+    "release:checksums": "node scripts/write-release-checksums.cjs"
   },
   "dependencies": {
     "electron-updater": "6.8.9"
