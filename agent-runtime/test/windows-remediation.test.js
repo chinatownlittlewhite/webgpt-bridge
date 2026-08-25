@@ -65,6 +65,11 @@ test("Windows NUL sandbox probe preserves the failing syscall diagnostics", () =
   assert.match(sandboxVerifySource, /path:\s*error\?\.path/);
 });
 
+test("Windows NUL sandbox probe uses Node's platform null-device path", () => {
+  assert.match(sandboxVerifySource, /fs\.openSync\(os\.devNull,\s*"r\+"\)/);
+  assert.doesNotMatch(sandboxVerifySource, /fs\.openSync\("NUL",\s*"r\+"\)/);
+});
+
 test("Windows doctor treats dotnet as a build-host concern rather than a target runtime prerequisite", () => {
   assert.doesNotMatch(doctorSource, /check\("\.NET 8 SDK\/runtime"[^\n]*true\)/);
   assert.match(doctorSource, /Windows AppContainer sandbox helper/);
