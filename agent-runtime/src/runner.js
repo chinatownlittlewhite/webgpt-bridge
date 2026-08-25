@@ -162,6 +162,41 @@ function normalizeSandboxAccessPaths(paths = [], label) {
   }))].sort();
 }
 
+function normalizeTrustedRuntimePathEntries(entries = [], root, platform = process.platform) {
+  if (!Array.isArray(entries) || entries.length > 16) {
+    throw new TypeError("trustedPathEntries must be an array with at most 16 trusted-host directories");
+  }
+  const impl = platform === "win32" ? path.win32 : path;
+  const canonicalRoot = fs.realpathSync(root);
+  const normalized = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    if (
+      typeof entry !== "string" ||
+      entry.length === 0 ||
+      entry.includes("\0") ||
+      !(path.isAbsolute(entry) || (platform === "win32" && path.win32.isAbsolute(entry)))
+    ) {
+      throw new TypeError("trustedPathEntries entries must be absolute paths without NUL bytes");
+    }
+    const lexicalStat = fs.lstatSync(entry);
+    if (!lexicalStat.isDirectory() || lexicalStat.isSymbolicLink()) {
+      throw new Error("trusted runtime PATH entries must be plain directories");
+    }
+    const canonicalEntry = fs.realpathSync(entry);
+    const relative = impl.relative(canonicalRoot, canonicalEntry);
+    if (relative.startsWith("..") || impl.isAbsolute(relative)) {
+      throw new Error("trusted runtime PATH entries must remain inside the command cwd");
+    }
+    const key = platform === "win32" ? canonicalEntry.toLowerCase() : canonicalEntry;
+    if (!seen.has(key)) {
+      seen.add(key);
+      normalized.push(canonicalEntry);
+    }
+  }
+  return normalized;
+}
+
 export function createCommandRunner({
   workspace,
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -206,7 +241,6 @@ export function createCommandRunner({
     const normalizedCwd = relativeCwd(root, resolvedCwd);
     const trustedExtraReadPaths = normalizeSandboxAccessPaths(sandboxExtraReadPaths, "sandboxExtraReadPaths");
     const trustedExtraWritePaths = normalizeSandboxAccessPaths(sandboxExtraWritePaths, "sandboxExtraWritePaths");
-    const childEnv = buildCommandEnvironment(resolvedCwd, validatedEnv, platform);
 
     let platformCommand;
     try {
@@ -241,6 +275,24 @@ export function createCommandRunner({
       const message = error instanceof Error ? error.message : String(error);
       audit(auditLogger, { type: "command_platform_error", argv, cwd: normalizedCwd, platform, error: message });
       return { status: "platform_error", policy, sandbox: sandboxInfo, error: message };
+    }
+
+    let trustedRuntimePathEntries;
+    try {
+      trustedRuntimePathEntries = normalizeTrustedRuntimePathEntries(
+        platformCommand.trustedPathEntries ?? [],
+        resolvedCwd,
+        platform,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      audit(auditLogger, { type: "command_platform_error", argv, cwd: normalizedCwd, platform, error: message });
+      return { status: "platform_error", policy, sandbox: sandboxInfo, error: message };
+    }
+    const childEnv = buildCommandEnvironment(resolvedCwd, validatedEnv, platform);
+    if (trustedRuntimePathEntries.length > 0) {
+      const delimiter = platform === "win32" ? ";" : path.delimiter;
+      childEnv.PATH = [...trustedRuntimePathEntries, childEnv.PATH].filter(Boolean).join(delimiter);
     }
 
     let approvalRequest = null;
