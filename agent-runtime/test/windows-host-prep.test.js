@@ -51,6 +51,16 @@ test("Windows host preparation mutations explicitly require an administrator tok
   assert.match(source, /return 65/);
 });
 
+test("Windows host preparation also requires elevation at the Windows loader boundary", () => {
+  const project = fs.readFileSync(hostPrepProject, "utf8");
+  assert.match(project, /<ApplicationManifest>app\.manifest<\/ApplicationManifest>/);
+  const manifestPath = path.join(root, "native", "windows-host-prep", "app.manifest");
+  assert.ok(fs.existsSync(manifestPath), "windows-host-prep must ship an application manifest");
+  const manifest = fs.readFileSync(manifestPath, "utf8");
+  assert.match(manifest, /requestedExecutionLevel[^>]*level="requireAdministrator"/);
+  assert.match(manifest, /uiAccess="false"/);
+});
+
 test("Windows native build publishes sandbox and host preparation as self-contained win-x64 payloads", () => {
   const build = fs.readFileSync(path.join(root, "scripts", "build-native.mjs"), "utf8");
   assert.match(build, /windows-sandbox/);

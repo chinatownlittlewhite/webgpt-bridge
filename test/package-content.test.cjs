@@ -75,6 +75,14 @@ test("Windows installer is per-machine NSIS and owns fixed host-preparation life
   assert.ok(installer.includes('!define WEBGPT_BRIDGE_HOST_PREP_RELATIVE "resources\\app.asar.unpacked\\agent-runtime\\native\\windows-host-prep\\bin\\release\\lpc-windows-host-prep.exe"'));
   assert.ok(installer.includes('$INSTDIR\\${WEBGPT_BRIDGE_HOST_PREP_RELATIVE}'));
   assert.doesNotMatch(installer, /\$TEMP|\$APPDATA|\$LOCALAPPDATA/);
+
+  const createTask = installer.indexOf('/Create /TN "${WEBGPT_BRIDGE_HOST_PREP_TASK}"');
+  const apply = installer.indexOf('--apply');
+  assert.ok(createTask >= 0 && apply > createTask, "SYSTEM task must be registered before mutating the null-device security descriptor");
+  const applyFailure = installer.indexOf('host preparation failed');
+  assert.ok(applyFailure > apply, "installer must have an explicit host-prep failure branch");
+  const rollbackDelete = installer.indexOf('/Delete /TN "${WEBGPT_BRIDGE_HOST_PREP_TASK}"', apply);
+  assert.ok(rollbackDelete > apply && rollbackDelete < applyFailure, "failed host preparation must delete the newly registered SYSTEM task before aborting");
 });
 
 test("desktop release workflow delegates platform preparation to the dist scripts", () => {

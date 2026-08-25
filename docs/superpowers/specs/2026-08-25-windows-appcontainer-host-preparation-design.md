@@ -56,7 +56,7 @@ The host-prep executable has a deliberately narrow command surface:
 - `--remove`: remove only the exact product-capability ACE owned by WebGPT Bridge;
 - `--check --json`: report non-mutating preparation status and diagnostics.
 
-`--check --json` must remain usable from a standard-user token. `--apply` and `--remove` explicitly reject non-administrator tokens with a bounded `elevation_required` diagnostic instead of relying on a later access-denied failure. The desktop/Agent runtime never invokes mutation modes.
+`--check --json` must remain usable from a standard-user token. `--apply` and `--remove` explicitly reject non-administrator tokens with a bounded `elevation_required` diagnostic instead of relying on a later access-denied failure. Release builds also embed a Windows application manifest with `requestedExecutionLevel level="requireAdministrator"` and `uiAccess="false"`, providing a loader-level elevation boundary in addition to the runtime token check. The desktop/Agent runtime never invokes mutation modes.
 
 It must not launch arbitrary commands, accept arbitrary object names, accept arbitrary SIDs, edit file ACLs, access the network, or expose a model-facing interface.
 
@@ -97,8 +97,9 @@ The NSIS installer:
 1. installs the application and self-contained host-prep payload below the protected Program Files installation directory;
 2. creates a fixed Task Scheduler task named `WebGPT Bridge Host Preparation`;
 3. configures the task to run the fixed host-prep executable with fixed `--apply` arguments as `SYSTEM`, highest privileges, at system startup;
-4. immediately runs one `--apply` during installation/repair so the first application launch does not depend on a reboot;
-5. treats failure to provision the task or apply the ACE as an installation/repair failure with actionable diagnostics.
+4. only after the fixed SYSTEM task has been registered successfully, immediately runs one `--apply` during installation/repair so the first application launch does not depend on a reboot;
+5. if task creation fails, aborts before mutating `NUL`; if `--apply` fails after task creation, deletes the newly registered task before aborting;
+6. treats failure to provision the task or apply the ACE/label as an installation/repair failure with actionable diagnostics.
 
 The scheduled task is preferred to a resident Windows service because host preparation is a small idempotent boot-time mutation and does not require a privileged process to remain running after the ACL is prepared. The task action path is under Program Files and therefore is not writable by a standard user.
 

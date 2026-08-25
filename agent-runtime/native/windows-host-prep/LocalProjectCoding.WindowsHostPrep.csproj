@@ -7,5 +7,6 @@
     <AssemblyName>lpc-windows-host-prep</AssemblyName>
     <RootNamespace>LocalProjectCoding.WindowsHostPrep</RootNamespace>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 </Project>
