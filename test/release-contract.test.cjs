@@ -23,6 +23,14 @@ test("release tag must exactly equal v + root version", () => {
   assert.throws(() => verifyTagVersion({ tag: "0.3.5", version: "0.3.5" }), /tag\/version mismatch/);
 });
 
+test("root package and lockfile versions stay aligned for release tags", () => {
+  const root = path.join(__dirname, "..");
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const lock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
+  assert.equal(lock.version, pkg.version);
+  assert.equal(lock.packages?.[""]?.version, pkg.version);
+});
+
 test("manifest validation requires same version existing assets and matching sha512", () => {
   const dir = tempDir();
   const asset = path.join(dir, "WebGPT Bridge-0.3.5-win-x64.exe");
