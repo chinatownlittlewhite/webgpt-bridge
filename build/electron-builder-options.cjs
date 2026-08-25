@@ -33,6 +33,7 @@ function createBuilderConfig(env = process.env) {
       icon: "build/icon.icns",
       category: "public.app-category.developer-tools",
       target: ["dmg", "zip"],
+      x64ArchFiles: "**/node-pty/prebuilds/darwin-*/pty.node",
       hardenedRuntime: true,
       gatekeeperAssess: false,
     },
