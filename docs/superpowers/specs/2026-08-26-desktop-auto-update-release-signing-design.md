@@ -1,7 +1,7 @@
 # WebGPT Bridge Desktop Auto-Update, Release, and Signing Design
 
 Date: 2026-08-26
-Status: Design approved; written specification pending user review
+Status: Written specification approved; implementation planning in progress
 
 ## Summary
 
