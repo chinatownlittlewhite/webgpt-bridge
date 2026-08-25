@@ -37,4 +37,19 @@ test("platform jobs cannot publish directly and publish waits for both", () => {
   assert.doesNotMatch(publish, /--clobber/);
 });
 
+test("Windows formal release uses OIDC and never falls back to unsigned output", () => {
+  const release = readReleaseWorkflow();
+  const windows = release.slice(release.indexOf("  windows:"), release.indexOf("  macos:"));
+  assert.match(windows, /permissions:[\s\S]*id-token:\s*write/);
+  assert.match(windows, /environment:\s*desktop-release-windows/);
+  assert.match(windows, /AZURE_FEDERATED_TOKEN_FILE/);
+  assert.match(windows, /WEBGPT_FORMAL_RELEASE:\s*["']windows["']/);
+  assert.match(windows, /Get-AuthenticodeSignature/);
+  assert.match(windows, /Status[^\n]*Valid/);
+  assert.match(windows, /WEBGPT_WINDOWS_PUBLISHER/);
+  assert.match(windows, /windows-installer-smoke\.ps1/);
+  assert.doesNotMatch(windows, /AZURE_CLIENT_SECRET/);
+  assert.doesNotMatch(windows, /unsigned fallback|continue-on-error:\s*true/i);
+});
+
 module.exports = { readReleaseWorkflow };

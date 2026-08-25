@@ -49,8 +49,18 @@ jobs:
   windows:
     needs: [verify, draft]
     runs-on: windows-latest
+    environment: desktop-release-windows
     permissions:
       contents: read
+      id-token: write
+    env:
+      WEBGPT_FORMAL_RELEASE: "windows"
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      WEBGPT_WINDOWS_SIGN_ENDPOINT: ${{ vars.WEBGPT_WINDOWS_SIGN_ENDPOINT }}
+      WEBGPT_WINDOWS_SIGN_ACCOUNT: ${{ vars.WEBGPT_WINDOWS_SIGN_ACCOUNT }}
+      WEBGPT_WINDOWS_SIGN_PROFILE: ${{ vars.WEBGPT_WINDOWS_SIGN_PROFILE }}
+      WEBGPT_WINDOWS_PUBLISHER: ${{ vars.WEBGPT_WINDOWS_PUBLISHER }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -61,11 +71,141 @@ jobs:
         with:
           dotnet-version: "8.0.x"
       - run: npm ci
+      - run: npm --prefix agent-runtime ci
+      - name: Create Azure workload identity token file
+        shell: pwsh
+        run: |
+          foreach ($name in @(
+            "AZURE_TENANT_ID",
+            "AZURE_CLIENT_ID",
+            "WEBGPT_WINDOWS_SIGN_ENDPOINT",
+            "WEBGPT_WINDOWS_SIGN_ACCOUNT",
+            "WEBGPT_WINDOWS_SIGN_PROFILE",
+            "WEBGPT_WINDOWS_PUBLISHER"
+          )) {
+            if (-not (Get-Item "Env:$name" -ErrorAction SilentlyContinue).Value) {
+              throw "missing protected Windows release configuration: $name"
+            }
+          }
+          $audience = [uri]::EscapeDataString("api://AzureADTokenExchange")
+          $separator = if ($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains("?")) { "&" } else { "?" }
+          $uri = "$env:ACTIONS_ID_TOKEN_REQUEST_URL${separator}audience=$audience"
+          $response = Invoke-RestMethod -Uri $uri -Headers @{ Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" }
+          if (-not $response.value) { throw "GitHub OIDC response did not contain a token" }
+          $tokenFile = Join-Path $env:RUNNER_TEMP "webgpt-azure-federated-token.jwt"
+          [IO.File]::WriteAllText($tokenFile, $response.value, [Text.UTF8Encoding]::new($false))
+          "AZURE_FEDERATED_TOKEN_FILE=$tokenFile" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build Windows native helpers
+        run: npm --prefix agent-runtime run build:native
+      - name: Prepare Windows AppContainer host access
+        shell: pwsh
+        run: |
+          $prep = (Resolve-Path "agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe").Path
+          & $prep --apply
+          if ($LASTEXITCODE -ne 0) { throw "host-prep first apply failed with exit $LASTEXITCODE" }
+          & $prep --apply
+          if ($LASTEXITCODE -ne 0) { throw "host-prep second apply failed with exit $LASTEXITCODE" }
+          $readyJson = & $prep --check --json
+          if ($LASTEXITCODE -ne 0) { throw "host-prep check failed with exit $LASTEXITCODE" }
+          if (($readyJson | ConvertFrom-Json).status -ne "ready") { throw "host-prep did not become ready: $readyJson" }
+          & $prep --remove
+          if ($LASTEXITCODE -ne 0) { throw "host-prep remove failed with exit $LASTEXITCODE" }
+          $removedJson = & $prep --check --json
+          if ($LASTEXITCODE -ne 0) { throw "host-prep post-remove check failed with exit $LASTEXITCODE" }
+          if (($removedJson | ConvertFrom-Json).status -ne "capability_ace_missing") { throw "host-prep remained unexpectedly ready after remove: $removedJson" }
+          & $prep --apply
+          if ($LASTEXITCODE -ne 0) { throw "host-prep repair apply failed with exit $LASTEXITCODE" }
+          $repairedJson = & $prep --check --json
+          if ($LASTEXITCODE -ne 0) { throw "host-prep repair check failed with exit $LASTEXITCODE" }
+          if (($repairedJson | ConvertFrom-Json).status -ne "ready") { throw "host-prep repair did not return to ready: $repairedJson" }
+      - name: Run Windows acceptance as standard user
+        shell: pwsh
+        run: |
+          $username = "wgbrel$PID"
+          $passwordPlain = "WgB!$([guid]::NewGuid().ToString('N'))9a"
+          $securePassword = ConvertTo-SecureString $passwordPlain -AsPlainText -Force
+          New-LocalUser -Name $username -Password $securePassword -AccountNeverExpires -PasswordNeverExpires | Out-Null
+          $qualified = "$env:COMPUTERNAME\$username"
+          try {
+            $adminMembers = Get-LocalGroupMember -Group "Administrators"
+            if ($adminMembers.Name -contains $qualified) { throw "acceptance user unexpectedly belongs to Administrators" }
+            & "$env:SystemRoot\System32\icacls.exe" $env:GITHUB_WORKSPACE /grant "${qualified}:(OI)(CI)M" /Q | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "failed to grant the standard user workspace access" }
+            $npm = (Get-Command npm.cmd).Source
+            $stdout = Join-Path $env:RUNNER_TEMP "webgpt-release-standard-user.stdout.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "webgpt-release-standard-user.stderr.log"
+            $credential = [System.Management.Automation.PSCredential]::new($qualified, $securePassword)
+            $process = Start-Process -FilePath $npm `
+              -ArgumentList @("--prefix", "agent-runtime", "run", "acceptance") `
+              -WorkingDirectory $env:GITHUB_WORKSPACE `
+              -Credential $credential `
+              -LoadUserProfile `
+              -RedirectStandardOutput $stdout `
+              -RedirectStandardError $stderr `
+              -Wait -PassThru
+            if (Test-Path $stdout) { Get-Content $stdout | Write-Host }
+            if (Test-Path $stderr) { Get-Content $stderr | Write-Host }
+            if ($process.ExitCode -ne 0) { throw "standard-user Windows acceptance failed with exit $($process.ExitCode)" }
+          }
+          finally {
+            Remove-LocalUser -Name $username -ErrorAction SilentlyContinue
+          }
       - run: npm run dist:win
+      - name: Smoke install Windows NSIS artifact
+        shell: pwsh
+        run: |
+          $prep = (Resolve-Path "agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe").Path
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File "scripts\windows-installer-smoke.ps1" `
+            -ArtifactsDir "release" `
+            -SourcePrep $prep
+          if ($LASTEXITCODE -ne 0) { throw "Windows installer lifecycle smoke failed with exit $LASTEXITCODE" }
+      - name: Verify required Authenticode signatures
+        shell: pwsh
+        run: |
+          function Resolve-One([string]$Filter) {
+            $matches = @(Get-ChildItem -Path "release" -Recurse -Filter $Filter -File)
+            if ($matches.Count -ne 1) { throw "required signed release executable must resolve exactly once: $Filter (found $($matches.Count))" }
+            return $matches[0].FullName
+          }
+          $required = @(
+            (Resolve-One "WebGPT Bridge-*-win-x64.exe"),
+            (Resolve-One "WebGPT Bridge.exe"),
+            (Resolve-One "lpc-windows-sandbox.exe"),
+            (Resolve-One "lpc-windows-host-prep.exe")
+          )
+          foreach ($file in $required) {
+            $sig = Get-AuthenticodeSignature -FilePath $file
+            if ($sig.Status -ne "Valid") { throw "invalid Authenticode signature: $file ($($sig.Status))" }
+            if ($sig.SignerCertificate.Subject -ne $env:WEBGPT_WINDOWS_PUBLISHER) { throw "publisher mismatch: $file ($($sig.SignerCertificate.Subject))" }
+            if (-not $sig.TimeStamperCertificate) { throw "timestamp missing: $file" }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-release-windows
           path: release/*
+      - name: Cleanup Windows release credentials and host preparation
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:AZURE_FEDERATED_TOKEN_FILE) {
+            Remove-Item -LiteralPath $env:AZURE_FEDERATED_TOKEN_FILE -Force -ErrorAction SilentlyContinue
+          }
+          $installRoot = Join-Path $env:ProgramFiles "WebGPT Bridge"
+          if (Test-Path $installRoot) {
+            $uninstaller = Get-ChildItem -Path $installRoot -Filter "Uninstall*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($uninstaller) {
+              $cleanup = Start-Process -FilePath $uninstaller.FullName -ArgumentList @("/S") -Wait -PassThru
+              if ($cleanup.ExitCode -ne 0) { Write-Warning "release cleanup uninstall returned exit $($cleanup.ExitCode)" }
+            }
+          }
+          & "$env:SystemRoot\System32\schtasks.exe" /Delete /TN "WebGPT Bridge Host Preparation" /F *> $null
+          $prep = "agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe"
+          if (Test-Path $prep) {
+            & $prep --remove
+            if ($LASTEXITCODE -ne 0) { Write-Warning "host-prep cleanup returned exit $LASTEXITCODE" }
+          }
 
   macos:
     needs: [verify, draft]

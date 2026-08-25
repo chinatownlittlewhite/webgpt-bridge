@@ -27,6 +27,28 @@ test("formal builder config scopes credentials to one platform and fails closed"
   assert.throws(() => createBuilderConfig({ WEBGPT_FORMAL_RELEASE: "windows" }), /WEBGPT_WINDOWS_PUBLISHER/);
   assert.throws(() => createBuilderConfig({ WEBGPT_FORMAL_RELEASE: "macos" }), /WEBGPT_MAC_IDENTITY/);
   assert.throws(() => createBuilderConfig({ WEBGPT_FORMAL_RELEASE: "linux" }), /WEBGPT_FORMAL_RELEASE must be windows or macos/);
+
+  const windows = createBuilderConfig({
+    WEBGPT_FORMAL_RELEASE: "windows",
+    WEBGPT_WINDOWS_PUBLISHER: "CN=WebGPT Bridge",
+    WEBGPT_WINDOWS_SIGN_ENDPOINT: "https://example.codesigning.azure.net/",
+    WEBGPT_WINDOWS_SIGN_ACCOUNT: "webgpt-signing",
+    WEBGPT_WINDOWS_SIGN_PROFILE: "public-trust",
+  });
+  assert.equal(windows.win.forceCodeSigning, true);
+  assert.equal(windows.win.azureSignOptions.publisherName, "CN=WebGPT Bridge");
+  assert.equal(windows.win.azureSignOptions.codeSigningAccountName, "webgpt-signing");
+  assert.equal(windows.win.azureSignOptions.certificateProfileName, "public-trust");
+  assert.equal(windows.mac.forceCodeSigning, undefined);
+});
+
+test("Windows signing setup is documented without a client secret fallback", () => {
+  const docs = fs.readFileSync(path.join(__dirname, "..", "docs", "release-signing.md"), "utf8");
+  assert.match(docs, /Artifact Signing Certificate Profile Signer/);
+  assert.match(docs, /desktop-release-windows/);
+  assert.match(docs, /AZURE_FEDERATED_TOKEN_FILE/);
+  assert.match(docs, /WEBGPT_WINDOWS_PUBLISHER/);
+  assert.doesNotMatch(docs, /AZURE_CLIENT_SECRET/);
 });
 
 test("packaging excludes Agent runtime state and npm logs", () => {
