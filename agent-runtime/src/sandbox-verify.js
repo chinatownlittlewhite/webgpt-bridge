@@ -57,6 +57,7 @@ function runProbe({ adapter, workspace, outsidePath, port, timeoutMs }) {
   const script = `
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 const [insidePath, outsidePath, portText] = process.argv.slice(1);
 const result = { insideWrite: false, outsideReadBlocked: false, outsideWriteBlocked: false, loopbackAllowed: false, externalNetworkBlocked: false, nullDeviceReadWrite: process.platform !== "win32", nullDeviceFailure: null };
 try { fs.writeFileSync(insidePath, "inside", "utf8"); result.insideWrite = true; } catch {}
@@ -64,7 +65,7 @@ if (process.platform === "win32") {
   let fd;
   let nullDeviceStage = "open";
   try {
-    fd = fs.openSync("NUL", "r+");
+    fd = fs.openSync(os.devNull, "r+");
     nullDeviceStage = "write";
     fs.writeSync(fd, Buffer.from("bridge-null-device-probe"));
     nullDeviceStage = "read";
