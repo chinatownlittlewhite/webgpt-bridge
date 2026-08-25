@@ -22,18 +22,16 @@ export const NESTED_WINDOWS_TEST_FILES = Object.freeze([
 
 export function isNestedWindowsAppContainer({
   platform = process.platform,
-  localAppData = process.env.LOCALAPPDATA,
+  userProfile = process.env.USERPROFILE,
   cwd = process.cwd(),
 } = {}) {
-  if (platform !== "win32" || typeof localAppData !== "string" || localAppData.length === 0) return false;
+  if (platform !== "win32" || typeof userProfile !== "string" || userProfile.length === 0) return false;
   const expected = path.win32.join(
     path.win32.resolve(cwd),
     INTERNAL_STATE_DIR,
     "windows-profile",
-    "AppData",
-    "Local",
   );
-  return path.win32.resolve(localAppData).toLowerCase() === expected.toLowerCase();
+  return path.win32.resolve(userProfile).toLowerCase() === expected.toLowerCase();
 }
 
 async function runStandardSuite() {
