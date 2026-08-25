@@ -12,6 +12,7 @@ const DEFAULT_MAX_SESSIONS = 100;
 const DEFAULT_TTL_MS = 24 * 60 * 60_000;
 const MAX_HISTORY_EVENTS = 80;
 const MAX_EVENT_BYTES = 32_000;
+const MAX_VERIFICATION_DIAGNOSTIC_BYTES = 4_096;
 const TERMINAL = new Set(["completed", "canceled", "budget_exhausted", "stalled", "failed"]);
 const STORED_STATUSES = new Set([...TERMINAL, "active", "blocked_approval"]);
 
@@ -150,6 +151,33 @@ function compactToolResult(result) {
     truncated: true,
     sha256: hash(result),
     bytes,
+  };
+}
+
+function boundedUtf8Tail(value, maxBytes = MAX_VERIFICATION_DIAGNOSTIC_BYTES) {
+  if (typeof value !== "string" || value.length === 0) return { text: "", omitted: false };
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.length <= maxBytes) return { text: value, omitted: false };
+  let start = buffer.length - maxBytes;
+  while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start += 1;
+  return { text: buffer.subarray(start).toString("utf8"), omitted: true };
+}
+
+function verificationCheck(task, result, includeDiagnostics = false) {
+  const basic = {
+    task,
+    status: result?.status ?? null,
+    exitCode: result?.exitCode ?? null,
+  };
+  if (!includeDiagnostics) return basic;
+  const stdout = boundedUtf8Tail(result?.stdout);
+  const stderr = boundedUtf8Tail(result?.stderr);
+  return {
+    ...basic,
+    stdoutTail: stdout.text,
+    stderrTail: stderr.text,
+    stdoutOmitted: stdout.omitted || result?.stdoutTruncated === true,
+    stderrOmitted: stderr.omitted || result?.stderrTruncated === true,
   };
 }
 
@@ -549,8 +577,9 @@ export function createGoalController({
       }
       session.activeElapsedMs += Date.now() - started;
       if (approvalBlock(result)) return { passed: false, blocked: true, checks, result };
-      checks.push({ task, status: result.status, exitCode: result.exitCode ?? null });
-      if (result.status !== "completed" || result.exitCode !== 0) {
+      const passed = result.status === "completed" && result.exitCode === 0;
+      checks.push(verificationCheck(task, result, !passed));
+      if (!passed) {
         return { passed: false, verified: true, checks, feedback: `${task} verification did not pass` };
       }
     }
