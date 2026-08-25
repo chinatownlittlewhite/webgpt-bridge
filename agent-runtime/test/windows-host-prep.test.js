@@ -42,10 +42,20 @@ test("Windows host preparation has a fixed null-device-only command surface", ()
   assert.doesNotMatch(source, /CapabilityName\s*=\s*args|TargetName\s*=\s*args/);
 });
 
+test("Windows NUL preparation adds only the regular-AppContainer package compatibility grant", () => {
+  const source = fs.readFileSync(hostPrepSource, "utf8");
+  assert.match(source, /AllApplicationPackagesSid\s*=\s*"S-1-15-2-1"/);
+  assert.doesNotMatch(source, /S-1-15-2-2/);
+  assert.match(source, /AppContainerSid/);
+  assert.match(source, /appContainerPresent/);
+  assert.match(source, /present\s*&&\s*appContainerPresent\s*&&\s*lowIntegrity/);
+  assert.match(source, /new CommonAce\([\s\S]*preparation\.AppContainerSid/);
+});
+
 test("Windows host preparation requires the low-integrity NUL label as well as the product capability ACE", () => {
   const source = fs.readFileSync(hostPrepSource, "utf8");
   assert.match(source, /HasLowIntegrityLabel/);
-  assert.match(source, /present\s*&&\s*lowIntegrity/);
+  assert.match(source, /present\s*&&[\s\S]*lowIntegrity/);
   assert.match(source, /EnsureLowIntegrityLabel/);
   assert.match(source, /LABEL_SECURITY_INFORMATION|LabelSecurityInformation/);
 });
