@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { resolveGitHubCli } from "../src/github-cli.js";
 
 const require = createRequire(import.meta.url);
 const problems = [];
@@ -41,15 +42,18 @@ packageAvailable("node-pty", false);
 
 const git = commandVersion("git");
 check("git", git.ok, git.detail, true);
-const gh = commandVersion("gh");
-check("GitHub CLI (optional)", gh.ok, gh.detail, false);
+const gh = resolveGitHubCli({ explicitPath: process.env.LPC_GITHUB_CLI_PATH ?? "" });
+check(
+  "GitHub CLI (optional)",
+  gh.status === "ready",
+  gh.status === "ready" ? `${gh.version} @ ${gh.resolvedPath}` : `${gh.status}: ${gh.reason}`,
+  false,
+);
 
 const workspace = path.resolve(process.env.LPC_WORKSPACE ?? process.cwd());
 check("workspace exists", fs.existsSync(workspace) && fs.statSync(workspace).isDirectory(), workspace, true);
 
 if (process.platform === "win32") {
-  const dotnet = commandVersion("dotnet");
-  check(".NET 8 SDK/runtime", dotnet.ok, dotnet.detail, true);
   const helper = path.resolve(process.env.LPC_WINDOWS_SANDBOX_HELPER ?? "native/windows-sandbox/bin/release/lpc-windows-sandbox.exe");
   check("Windows AppContainer sandbox helper", fs.existsSync(helper), helper, true);
   const taskkill = path.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32", "taskkill.exe");

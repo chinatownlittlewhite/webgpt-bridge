@@ -34,12 +34,14 @@ export function discoverNativeSandboxAdapter({
       return {
         adapter: createNoSandboxAdapter(),
         available: false,
+        expectedPath: helper,
         reason: `Windows AppContainer helper not found at ${helper}; run npm run build:native on Windows`,
       };
     }
     return {
       adapter: createWindowsAppContainerAdapter({ helperPath: helper, allowNetwork, extraReadPaths }),
       available: true,
+      expectedPath: helper,
       reason: "Windows AppContainer helper found",
     };
   }
@@ -73,6 +75,96 @@ export function discoverNativeSandboxAdapter({
     available: false,
     reason: `no native sandbox backend is implemented for ${normalizedPlatform(platform)}`,
   };
+}
+
+export function sandboxPreparationDiagnostic(prepared, {
+  enabled = true,
+  platform = process.platform,
+  allowNetwork = false,
+} = {}) {
+  if (enabled !== true) {
+    return Object.freeze({
+      status: "disabled",
+      usable: false,
+      enabled: false,
+      platform,
+      allowNetwork: allowNetwork === true,
+      reason: "dedicated network sandbox is disabled",
+      recoverable: true,
+    });
+  }
+
+  const discovery = prepared?.discovery ?? null;
+  const verification = prepared?.verification ?? null;
+  const summary = prepared?.summary ?? null;
+  const expectedPath = discovery?.expectedPath;
+  const base = {
+    enabled: true,
+    platform,
+    allowNetwork: allowNetwork === true,
+    usable: summary?.autoRunSafe === true,
+  };
+
+  if (!prepared || !discovery) {
+    return Object.freeze({
+      ...base,
+      status: "preparation_failed",
+      usable: false,
+      reason: "native sandbox preparation did not produce discovery state",
+      recoverable: true,
+    });
+  }
+
+  if (discovery.available !== true) {
+    const reason = discovery.reason ?? "native sandbox backend is unavailable";
+    const helperMissing = platform === "win32" && /helper not found/i.test(reason);
+    const unsupported = /not implemented|unsupported platform/i.test(reason);
+    return Object.freeze({
+      ...base,
+      status: helperMissing ? "helper_missing" : unsupported ? "unsupported" : "backend_unavailable",
+      usable: false,
+      reason,
+      recoverable: !unsupported,
+      ...(expectedPath ? { expectedPath } : {}),
+    });
+  }
+
+  if (summary?.autoRunSafe === true) {
+    return Object.freeze({
+      ...base,
+      status: "ready",
+      reason: discovery.reason ?? "native sandbox is verified",
+      recoverable: false,
+      ...(expectedPath ? { expectedPath } : {}),
+      ...(summary ? { sandbox: summary } : {}),
+    });
+  }
+
+  if (verification?.passed === false) {
+    return Object.freeze({
+      ...base,
+      status: "verification_failed",
+      usable: false,
+      reason: verification.reason ?? "native sandbox verification failed",
+      recoverable: true,
+      ...(expectedPath ? { expectedPath } : {}),
+      ...(verification?.probe?.code !== undefined && verification?.probe?.code !== null
+        ? { errorCode: verification.probe.code }
+        : {}),
+      verification,
+      ...(summary ? { sandbox: summary } : {}),
+    });
+  }
+
+  return Object.freeze({
+    ...base,
+    status: "unverified",
+    usable: false,
+    reason: discovery.reason ?? "native sandbox has not been verified",
+    recoverable: true,
+    ...(expectedPath ? { expectedPath } : {}),
+    ...(summary ? { sandbox: summary } : {}),
+  });
 }
 
 export function nativeSandboxVerificationRequirements({ platform = process.platform, allowNetwork = false } = {}) {

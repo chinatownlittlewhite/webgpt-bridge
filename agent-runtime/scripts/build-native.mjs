@@ -13,7 +13,7 @@ fs.mkdirSync(output, { recursive: true });
 
 const result = spawnSync(
   "dotnet",
-  ["publish", project, "-c", "Release", "-o", output, "--self-contained", "false"],
+  ["publish", project, "-c", "Release", "-r", "win-x64", "-o", output, "--self-contained", "true"],
   {
     stdio: "inherit",
     shell: false,

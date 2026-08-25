@@ -57,6 +57,27 @@ test("an enforced but unverified sandbox does not enable unattended execution", 
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("trusted executable bindings resolve logical commands without exposing executable paths to model input", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-runner-trusted-executable-"));
+  const run = createCommandRunner({
+    workspace: root,
+    timeoutMs: 10_000,
+    sandboxAdapter: verifiedTestSandbox,
+    trustedExecutablePaths: { "bridge-node": process.execPath },
+  });
+  const result = await run({
+    argv: ["bridge-node", "-e", "process.stdout.write('trusted-binding')"],
+    requestApproval: () => true,
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "trusted-binding");
+  assert.equal(result.resolvedArgv[0], process.execPath);
+  assert.deepEqual(result.approvalRequest.argv, ["bridge-node", "-e", "process.stdout.write('trusted-binding')"]);
+  assert.equal(result.approvalRequest.resolvedArgv[0], process.execPath);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("allowed command executes without approval when a verified sandbox is supplied", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-runner-"));
   fs.writeFileSync(

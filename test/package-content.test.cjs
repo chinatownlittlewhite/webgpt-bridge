@@ -14,6 +14,14 @@ test("desktop host enables the dedicated network-tool sandbox", () => {
   assert.match(mainSource, /LPC_ENABLE_NETWORK_TOOLS:\s*"true"/);
 });
 
+test("desktop host re-resolves GitHub CLI for every agent start and passes a trusted binding", () => {
+  const mainSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
+  assert.match(mainSource, /resolveDesktopGitHubCli/);
+  assert.match(mainSource, /LPC_GITHUB_CLI_PATH:\s*githubCliPath/);
+  assert.match(mainSource, /trustedExecutables:\s*githubCliPath\s*\?\s*\{\s*gh:\s*githubCliPath\s*\}/);
+  assert.match(mainSource, /additionalPaths:[\s\S]*path\.dirname\(githubCliPath\)/);
+});
+
 test("desktop UI exposes four permission levels without a development Agent mode", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "index.html"), "utf8");
   assert.match(html, />谨慎</);
@@ -50,6 +58,20 @@ test("desktop release workflow delegates platform preparation to the dist script
   assert.match(workflow, /macOS universal[\s\S]*npm run dist:mac/);
   assert.match(workflow, /Windows x64[\s\S]*npm run dist:win/);
   assert.doesNotMatch(workflow, /prepare:tunnel-client:/);
+});
+
+test("Windows CI runs native Agent acceptance as a hard gate before desktop packaging", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "build-desktop.yml"), "utf8");
+  const windows = workflow.slice(workflow.indexOf("  windows:"));
+  const dotnetSetup = windows.indexOf("actions/setup-dotnet@v4");
+  const dependencyInstall = windows.indexOf("npm --prefix agent-runtime ci");
+  const acceptance = windows.indexOf("npm --prefix agent-runtime run acceptance");
+  const packaging = windows.indexOf("npm run dist:win");
+  assert.ok(dotnetSetup >= 0, "Windows build host must install a .NET 8 SDK for self-contained helper publishing");
+  assert.match(windows, /dotnet-version:\s*["']?8\.0\.x["']?/);
+  assert.ok(dependencyInstall > dotnetSetup, "agent-runtime dependency installation must run after build-host SDK setup");
+  assert.ok(acceptance > dependencyInstall, "Windows native acceptance must run after agent-runtime dependencies are installed");
+  assert.ok(packaging > acceptance, "Windows packaging must not run until native acceptance passes");
 });
 
 test("platform dist scripts enforce desktop tests and native Agent acceptance before packaging", () => {

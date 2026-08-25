@@ -37,13 +37,54 @@ test("networked tools fail closed before spawning when no dedicated network sand
   const dependency = createDependencySyncTool({ workspace: process.cwd() });
   const github = createGitHubTool({ workspace: process.cwd() });
 
+  const expectedDiagnostic = {
+    status: "disabled",
+    usable: false,
+    enabled: false,
+    platform: process.platform,
+    allowNetwork: true,
+    reason: "dedicated network sandbox is disabled",
+    recoverable: true,
+  };
   assert.deepEqual(await dependency.invoke({ cwd: "." }), {
     status: "network_unavailable",
-    error: "dedicated network sandbox is unavailable",
+    error: "dedicated network sandbox is unavailable: disabled",
+    diagnostic: expectedDiagnostic,
   });
   assert.deepEqual(await github.invoke({ action: "ci_status", cwd: "." }), {
     status: "network_unavailable",
-    error: "dedicated network sandbox is unavailable",
+    error: "dedicated network sandbox is unavailable: disabled",
+    diagnostic: expectedDiagnostic,
+  });
+});
+
+test("GitHub tool reports actionable CLI missing and broken states before network execution", async () => {
+  const missingState = {
+    status: "missing",
+    resolvedPath: null,
+    version: null,
+    reason: "GitHub CLI was not found",
+    remediation: "Install GitHub CLI, then restart WebGPT Bridge.",
+  };
+  const missing = createGitHubTool({ workspace: process.cwd(), githubCliState: missingState });
+  assert.deepEqual(await missing.invoke({ action: "ci_status", cwd: "." }), {
+    status: "github_cli_missing",
+    error: "GitHub CLI is unavailable: GitHub CLI was not found",
+    githubCli: missingState,
+  });
+
+  const brokenState = {
+    status: "broken",
+    resolvedPath: "C:\\Program Files\\GitHub CLI\\gh.exe",
+    version: null,
+    reason: "GitHub CLI version probe failed: exit 1",
+    remediation: "Repair GitHub CLI, then restart WebGPT Bridge.",
+  };
+  const broken = createGitHubTool({ workspace: process.cwd(), githubCliState: brokenState });
+  assert.deepEqual(await broken.invoke({ action: "ci_status", cwd: "." }), {
+    status: "github_cli_broken",
+    error: "GitHub CLI is unavailable: GitHub CLI version probe failed: exit 1",
+    githubCli: brokenState,
   });
 });
 

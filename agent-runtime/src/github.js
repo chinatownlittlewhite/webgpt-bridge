@@ -39,8 +39,15 @@ export function buildGitHubArgv(input = {}) {
   }
 }
 
-export function createGitHubRunner({ workspace, sandboxAdapter, platform = process.platform, auditLogger, timeoutMs = 120_000 } = {}) {
-  const run = createCommandRunner({ workspace, sandboxAdapter, platform, auditLogger, timeoutMs });
+export function createGitHubRunner({ workspace, sandboxAdapter, platform = process.platform, auditLogger, timeoutMs = 120_000, githubCliPath } = {}) {
+  const run = createCommandRunner({
+    workspace,
+    sandboxAdapter,
+    platform,
+    auditLogger,
+    timeoutMs,
+    trustedExecutablePaths: githubCliPath ? { gh: githubCliPath } : {},
+  });
   return async function runGitHub(input = {}, trustedContext = {}) {
     return await run({
       argv: buildGitHubArgv(input),

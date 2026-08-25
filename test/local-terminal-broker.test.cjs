@@ -50,6 +50,21 @@ test("auto-runs only host-safe read operations while keeping arbitrary host exec
   assert.equal(calls[0].options.cwd, "/project");
 });
 
+test("trusted executable bindings rewrite only the spawn argv while policy sees the logical command", async () => {
+  const { createLocalTerminalBroker } = require("../src/local-terminal-broker.cjs");
+  const calls = [];
+  const trustedGh = process.platform === "win32" ? "C:\\Program Files\\GitHub CLI\\gh.exe" : "/opt/homebrew/bin/gh";
+  const broker = createLocalTerminalBroker({
+    approvalMode: "auto",
+    classifyCommand: classifier,
+    trustedExecutables: { gh: trustedGh },
+    spawnCommand: async (argv, options) => { calls.push({ argv, options }); return { code: 0, stdout: "ok", stderr: "" }; },
+  });
+  await broker.run({ argv: ["gh", "run", "list"], cwd: "/project" });
+  assert.deepEqual(calls[0].argv, [trustedGh, "run", "list"]);
+  assert.equal(calls[0].options.cwd, "/project");
+});
+
 test("full control bypasses native confirmation and command blocking", async () => {
   const { createLocalTerminalBroker } = require("../src/local-terminal-broker.cjs");
   let confirmations = 0;

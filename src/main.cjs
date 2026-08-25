@@ -13,6 +13,7 @@ const { createApprovalSession } = require("./approval-session.cjs");
 const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
 const { createLocalFileBroker } = require("./local-file-broker.cjs");
 const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
+const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { buildTrustedCommandPath } = require("./host-path.cjs");
 const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
 
@@ -375,7 +376,7 @@ function attachLocalBrokerConnection(socket) {
   });
 }
 
-async function startLocalBroker(settings, runtime) {
+async function startLocalBroker(settings, runtime, { githubCliPath = "" } = {}) {
   await stopLocalBroker();
   localApprovalMode = normalizeApprovalMode(settings.approvalMode);
   const policyOptions = { appDataRoots: [app.getPath("userData")] };
@@ -383,7 +384,13 @@ async function startLocalBroker(settings, runtime) {
   const actionPolicy = (action) => classifyLocalAction({ ...action, approvalMode: settings.approvalMode });
   const policyModule = await import(pathToFileURL(path.join(runtime.runtimePath, "dist", "policy.js")).href);
   localFileBroker = createLocalFileBroker({ workspaceRoot: settings.workspacePath, policy: pathPolicy, actionPolicy, confirm: confirmLocalOperation, audit: (entry) => appendLog("local-broker", `${entry.action}：${entry.result}`) });
-  localTerminalBroker = createLocalTerminalBroker({ approvalMode: settings.approvalMode, classifyCommand: policyModule.classifyCommand, confirm: confirmLocalOperation, pathPolicy });
+  localTerminalBroker = createLocalTerminalBroker({
+    approvalMode: settings.approvalMode,
+    classifyCommand: policyModule.classifyCommand,
+    confirm: confirmLocalOperation,
+    pathPolicy,
+    trustedExecutables: githubCliPath ? { gh: githubCliPath } : {},
+  });
   localBrokerSocket = localBrokerSocketPath();
   if (process.platform !== "win32") await fsp.rm(localBrokerSocket, { force: true }).catch(() => {});
   localBrokerServer = net.createServer(attachLocalBrokerConnection);
@@ -473,13 +480,24 @@ async function startAll() {
   await stopAll();
   logLines = [];
   emit("logs", logLines);
-  await startLocalBroker(settings, runtime);
+  const appToolsBin = path.join(app.getPath("userData"), "tools", "bin");
+  const githubCliPath = resolveDesktopGitHubCli({ appToolsBin });
+  appendLog(
+    "host",
+    githubCliPath
+      ? `GitHub CLI：${githubCliPath}`
+      : "未检测到 GitHub CLI；GitHub 工具会返回可修复诊断，其他本地工具不受影响。",
+  );
+  await startLocalBroker(settings, runtime, { githubCliPath });
 
   const baseEnv = {
     ...process.env,
     PATH: buildTrustedCommandPath({
       nodePath: node,
-      additionalPaths: [path.join(app.getPath("userData"), "tools", "bin")],
+      additionalPaths: [
+        appToolsBin,
+        ...(githubCliPath ? [path.dirname(githubCliPath)] : []),
+      ],
     }),
     LPC_WORKSPACE: runtime.workspacePath,
     LPC_HOST: MCP_HOST,
@@ -487,6 +505,7 @@ async function startAll() {
     LPC_VERIFY_SANDBOX: "true",
     LPC_ENABLE_NETWORK_TOOLS: "true",
     LPC_LOCAL_BROKER_SOCKET: localBrokerSocket,
+    LPC_GITHUB_CLI_PATH: githubCliPath,
   };
   serverProcess = spawnLogged(node, [path.join(runtime.runtimePath, "dist", "server.js")], { env: baseEnv, cwd: runtime.runtimePath }, "agent");
   await waitForHealth();

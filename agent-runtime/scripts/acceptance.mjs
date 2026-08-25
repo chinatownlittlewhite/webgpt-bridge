@@ -256,6 +256,14 @@ assert.equal(packageJson.version, VERSION);
 if (process.platform === "win32" && !skipNative) {
   stage("build Windows native sandbox helper");
   runHost(["npm", "run", "build:native"]);
+  const nativeOutput = path.join(root, "native", "windows-sandbox", "bin", "release");
+  for (const requiredFile of ["lpc-windows-sandbox.exe", "hostfxr.dll", "hostpolicy.dll"]) {
+    assert.equal(
+      fs.existsSync(path.join(nativeOutput, requiredFile)),
+      true,
+      `self-contained Windows sandbox publish must include ${requiredFile}`,
+    );
+  }
 }
 
 stage("unit/integration tests");
@@ -290,6 +298,7 @@ try {
     host: "127.0.0.1",
     port: 0,
     verifySandbox: !skipNative,
+    enableNetworkTools: process.platform === "win32",
     installSignalHandlers: false,
   });
   if (!skipNative) {
@@ -300,6 +309,34 @@ try {
       `native sandbox probe must pass: ${JSON.stringify(server.runtime.normalSandbox.verification)}`,
     );
     assert.equal(server.runtime.normalSandbox.summary.autoRunSafe, true, "verified sandbox must be promoted");
+    if (process.platform === "win32") {
+      assert.equal(
+        server.runtime.networkSandboxState.status,
+        "ready",
+        `dedicated network sandbox must be ready: ${JSON.stringify(server.runtime.networkSandboxState)}`,
+      );
+      assert.equal(server.runtime.networkSandbox?.discovery.available, true, "dedicated network sandbox backend must be available");
+      assert.equal(
+        server.runtime.networkSandbox?.verification?.passed,
+        true,
+        `dedicated network sandbox probe must pass: ${JSON.stringify(server.runtime.networkSandbox?.verification)}`,
+      );
+      assert.equal(server.runtime.networkSandbox?.summary.autoRunSafe, true, "dedicated network sandbox must be promoted after verification");
+      const dependencyTool = server.runtime.tools.find((tool) => tool.name === "dependency_sync");
+      assert.ok(dependencyTool, "dependency_sync tool must exist");
+      const dependencyProbe = await dependencyTool.invoke({ cwd: ".", allowScripts: false });
+      assert.notEqual(
+        dependencyProbe.status,
+        "network_unavailable",
+        `dependency_sync must enter the dedicated network policy path: ${JSON.stringify(dependencyProbe)}`,
+      );
+      assert.equal(dependencyProbe.status, "approval_required", "dependency_sync smoke must stop at approval without mutating dependencies");
+      assert.equal(
+        dependencyProbe.sandbox?.networkIsolation,
+        "internet-client-capability",
+        `dependency_sync must be bound to the dedicated network sandbox: ${JSON.stringify(dependencyProbe.sandbox)}`,
+      );
+    }
     stage("native Node/npm/Git/process/worktree compatibility");
     await verifyNativeDeveloperWorkflow(server.runtime);
   }
@@ -339,7 +376,21 @@ try {
   assert.deepEqual([...caps.tools].sort(), EXPECTED_TOOLS);
   assert.equal(caps.mcp.protocolRevision, "2026-07-28");
   assert.equal(caps.guarantees.modelCannotSelfApprove, true);
-  if (!skipNative) assert.equal(caps.sandbox.autoRunSafe, true);
+  if (!skipNative) {
+    assert.equal(caps.sandbox.autoRunSafe, true);
+    assert.equal(caps.releaseAcceptance.currentNativeSandboxVerified, true);
+  }
+  if (process.platform === "win32" && !skipNative) {
+    assert.equal(caps.networkSandbox.status, "ready");
+    assert.equal(caps.networkSandbox.usableForStructuredNetworkTools, true);
+    assert.ok(["ready", "missing", "broken"].includes(caps.githubCli.status), `GitHub CLI capability must be actionable: ${JSON.stringify(caps.githubCli)}`);
+    if (caps.githubCli.status === "ready") {
+      assert.equal(typeof caps.githubCli.resolvedPath, "string");
+      assert.ok(caps.githubCli.resolvedPath.length > 0);
+      assert.equal(typeof caps.githubCli.version, "string");
+      assert.ok(caps.githubCli.version.length > 0);
+    }
+  }
 
   stage("HTTP health endpoint");
   const health = await fetch(`http://127.0.0.1:${server.port}/healthz`);
@@ -387,6 +438,7 @@ try {
     host: "127.0.0.1",
     port: 0,
     verifySandbox: !skipNative,
+    enableNetworkTools: process.platform === "win32",
     installSignalHandlers: false,
   });
   clientBundle = await connect(`http://127.0.0.1:${server.port}/mcp`);
