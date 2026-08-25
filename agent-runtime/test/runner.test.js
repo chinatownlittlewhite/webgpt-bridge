@@ -78,6 +78,55 @@ test("trusted executable bindings resolve logical commands without exposing exec
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("runner stages host-derived runtimes before approval and sandbox wrapping", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-runner-runtime-stage-"));
+  try {
+    const stagedReadPath = path.join(root, ".webgpt-bridge", "runtime-test");
+    fs.mkdirSync(stagedReadPath, { recursive: true });
+    let stageCall = null;
+    let approvalSawStage = false;
+    let sandboxReadPaths = [];
+    const sandbox = Object.freeze({
+      ...verifiedTestSandbox,
+      name: "runtime-stage-spy",
+      wrapArgv({ argv, extraReadPaths }) {
+        sandboxReadPaths = [...extraReadPaths];
+        return [...argv];
+      },
+    });
+    const run = createCommandRunner({
+      workspace: root,
+      timeoutMs: 10_000,
+      sandboxAdapter: sandbox,
+      trustedExecutablePaths: { "bridge-node": process.execPath },
+      platformRuntimeStager(command, context) {
+        stageCall = { command, context };
+        return Object.freeze({
+          ...command,
+          trustedReadPaths: Object.freeze([...(command.trustedReadPaths ?? []), stagedReadPath]),
+        });
+      },
+    });
+    const result = await run({
+      argv: ["bridge-node", "-e", "process.stdout.write('runtime-staged')"],
+      requestApproval() {
+        approvalSawStage = stageCall !== null;
+        return true;
+      },
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.stdout, "runtime-staged");
+    assert.ok(stageCall, "host-derived runtime stager must run for resolved commands");
+    assert.equal(stageCall.context.workspace, fs.realpathSync(root));
+    assert.equal(stageCall.context.platform, process.platform);
+    assert.equal(approvalSawStage, true, "runtime staging must happen before approval binding");
+    assert.ok(sandboxReadPaths.includes(path.resolve(stagedReadPath)), "staged runtime read path must reach the sandbox wrapper");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("allowed command executes without approval when a verified sandbox is supplied", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-runner-"));
   fs.writeFileSync(
