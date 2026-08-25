@@ -286,12 +286,17 @@ async function confirmHostCommandApproval(params) {
     argv: request.argv,
     cwd: request.cwd,
     policy: { ...request.policy, reason: authorization.reason || request.policy?.reason },
+    rememberKey: authorization.rememberKey,
   });
   appendLog("local-broker", `Agent 命令审批：${approved ? "已批准" : "已取消"}`);
   return { approved };
 }
 
 async function confirmLocalOperation(request) {
+  if (localApprovalMode === "full_control") {
+    appendLog("local-broker", "完全控制模式：自动批准本机权限请求");
+    return true;
+  }
   const prompt = approvalPrompt(request, localApprovalMode);
   if (approvalSession.isRemembered(prompt)) {
     appendLog("local-broker", `已按本次连接记忆自动批准：${prompt.message}`);
@@ -306,12 +311,11 @@ async function confirmLocalOperation(request) {
     title: "WebGPT Bridge · 权限请求",
     message: prompt.message,
     detail: prompt.detail,
-    ...(prompt.rememberKey ? { checkboxLabel: "本次连接记住此类权限", checkboxChecked: false } : {}),
   };
   const owner = dialogOwner();
   const response = owner ? await dialog.showMessageBox(owner, options) : await dialog.showMessageBox(options);
   const approved = response.response === 1;
-  approvalSession.record(prompt, { approved, remember: response.checkboxChecked === true });
+  approvalSession.record(prompt, { approved });
   return approved;
 }
 
@@ -375,7 +379,7 @@ async function startLocalBroker(settings, runtime) {
   await stopLocalBroker();
   localApprovalMode = normalizeApprovalMode(settings.approvalMode);
   const policyOptions = { appDataRoots: [app.getPath("userData")] };
-  const pathPolicy = (target, options) => classifyLocalPath(target, { ...policyOptions, ...options });
+  const pathPolicy = (target, options) => classifyLocalPath(target, { ...policyOptions, ...options, approvalMode: settings.approvalMode });
   const actionPolicy = (action) => classifyLocalAction({ ...action, approvalMode: settings.approvalMode });
   const policyModule = await import(pathToFileURL(path.join(runtime.runtimePath, "dist", "policy.js")).href);
   localFileBroker = createLocalFileBroker({ workspaceRoot: settings.workspacePath, policy: pathPolicy, actionPolicy, confirm: confirmLocalOperation, audit: (entry) => appendLog("local-broker", `${entry.action}：${entry.result}`) });

@@ -14,11 +14,14 @@ test("desktop host enables the dedicated network-tool sandbox", () => {
   assert.match(mainSource, /LPC_ENABLE_NETWORK_TOOLS:\s*"true"/);
 });
 
-test("desktop UI exposes three permission levels without a development Agent mode", () => {
+test("desktop UI exposes four permission levels without a development Agent mode", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "index.html"), "utf8");
   assert.match(html, />谨慎</);
   assert.match(html, />工作区自动（推荐）</);
   assert.match(html, />高自治</);
+  assert.match(html, /value="full_control">完全控制（无确认）</);
+  assert.match(html, /同类权限.*本次连接.*自动记住/);
+  assert.match(html, /完全控制.*不会显示权限确认/);
   assert.doesNotMatch(html, /桌面开发版|developmentPath|Agent 模式/);
 });
 

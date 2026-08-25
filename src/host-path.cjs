@@ -12,7 +12,7 @@ function buildTrustedCommandPath({
   platform = process.platform,
   isDirectory = (candidate) => fs.statSync(candidate, { throwIfNoEntry: false })?.isDirectory() === true,
 } = {}) {
-  const delimiter = platform === "win32" ? ";" : path.delimiter;
+  const delimiter = platform === "win32" ? ";" : ":";
   const candidates = [
     path.isAbsolute(nodePath) ? path.dirname(nodePath) : "",
     ...additionalPaths,

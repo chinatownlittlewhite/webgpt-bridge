@@ -4,8 +4,8 @@ function createApprovalSession() {
     isRemembered(prompt) {
       return Boolean(prompt?.rememberKey && remembered.has(prompt.rememberKey));
     },
-    record(prompt, { approved = false, remember = false } = {}) {
-      if (approved && remember && prompt?.rememberKey) remembered.add(prompt.rememberKey);
+    record(prompt, { approved = false } = {}) {
+      if (approved && prompt?.rememberKey) remembered.add(prompt.rememberKey);
     },
     clear() {
       remembered.clear();

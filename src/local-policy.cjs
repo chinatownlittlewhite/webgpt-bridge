@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const APPROVAL_MODES = new Set(["cautious", "development", "auto"]);
+const APPROVAL_MODES = new Set(["cautious", "development", "auto", "full_control"]);
 const DESTRUCTIVE_ACTIONS = new Set(["delete", "move", "overwrite"]);
 const SENSITIVE_FILE_NAMES = new Set([
   ".env", ".npmrc", ".netrc", ".pypirc", ".pgpass", ".git-credentials",
@@ -78,20 +78,28 @@ function classifyLocalPath(inputPath, options = {}) {
   ].map((entry) => canonicalPath(entry, fsImpl));
   const systemRoots = (options.systemRoots || defaultSystemRoots(platform)).map((entry) => canonicalPath(entry, fsImpl));
 
+  const fullControl = normalizeApprovalMode(options.approvalMode) === "full_control";
   if (sensitiveRoots.some((root) => isWithin(target, root))) {
-    return { decision: "deny", reason: "该路径属于默认排除的敏感位置。", sensitive: true, path: target };
+    return fullControl
+      ? { decision: "allow", reason: "完全控制模式允许访问敏感位置。", sensitive: true, path: target }
+      : { decision: "deny", reason: "该路径属于默认排除的敏感位置。", sensitive: true, path: target };
   }
   if (systemRoots.some((root) => isWithin(target, root))) {
-    return { decision: "deny", reason: "系统路径不允许由本机代理访问。", sensitive: true, path: target };
+    return fullControl
+      ? { decision: "allow", reason: "完全控制模式允许访问系统路径。", sensitive: true, path: target }
+      : { decision: "deny", reason: "系统路径不允许由本机代理访问。", sensitive: true, path: target };
   }
   if (SENSITIVE_FILE_NAMES.has(path.basename(target).toLowerCase())) {
-    return { decision: "deny", reason: "该文件名通常包含凭据或密钥。", sensitive: true, path: target };
+    return fullControl
+      ? { decision: "allow", reason: "完全控制模式允许访问敏感文件。", sensitive: true, path: target }
+      : { decision: "deny", reason: "该文件名通常包含凭据或密钥。", sensitive: true, path: target };
   }
   return { decision: "allow", reason: "普通本机路径。", sensitive: false, path: target };
 }
 
 function classifyLocalAction({ kind, approvalMode, sensitive = false, network = false, withinWorkspace = false } = {}) {
   const mode = normalizeApprovalMode(approvalMode);
+  if (mode === "full_control") return { decision: "allow", reason: "完全控制模式不要求本机操作确认。" };
   if (sensitive) {
     if (kind === "read" || kind === "list") return { decision: "confirm", reason: "敏感位置仅可进行单次确认读取。" };
     return { decision: "deny", reason: "敏感位置不允许修改或执行。" };
@@ -104,9 +112,7 @@ function classifyLocalAction({ kind, approvalMode, sensitive = false, network = 
   }
   if (kind === "read" || kind === "list") return { decision: "allow", reason: "普通读取无需确认。" };
   if (kind === "update" || kind === "create") {
-    return mode === "cautious"
-      ? { decision: "confirm", reason: "只读/谨慎模式要求确认文件编辑。" }
-      : { decision: "allow", reason: "当前模式允许普通文件编辑。" };
+    return { decision: "allow", reason: "普通文件新建或更新无需确认。" };
   }
   return { decision: "confirm", reason: "未知操作需要确认。" };
 }
@@ -116,6 +122,12 @@ function hasExpandedSandboxAccess(sandboxAccess) {
     Array.isArray(sandboxAccess?.read) && sandboxAccess.read.length > 0 ||
     Array.isArray(sandboxAccess?.write) && sandboxAccess.write.length > 0
   );
+}
+
+function sandboxAccessPermissionKey(sandboxAccess = {}) {
+  const read = Array.isArray(sandboxAccess.read) ? [...sandboxAccess.read].sort().join(",") : "";
+  const write = Array.isArray(sandboxAccess.write) ? [...sandboxAccess.write].sort().join(",") : "";
+  return `host:sandbox-expansion:read:${read}|write:${write}`;
 }
 
 function isVerifiedSandboxRequest(request) {
@@ -202,13 +214,15 @@ function isHighAutonomyWorkspaceUtility(argv) {
 function classifyLocalTerminalApproval({ argv, classification, approvalMode } = {}) {
   const mode = normalizeApprovalMode(approvalMode);
   const command = path.basename(Array.isArray(argv) ? argv[0] || "" : "").toLowerCase();
+  if (mode === "full_control") return { decision: "allow", reason: "完全控制模式不要求本机终端确认。" };
   if (!classification || classification.decision === "deny") return { decision: "deny", reason: classification?.reason || "命令策略已拒绝该操作。" };
+  if (classification.rule === "runtime-execution" || isProjectPackageScript(argv)) return { decision: "allow", reason: "项目运行和项目脚本不再要求执行确认。" };
   if (["curl", "wget"].includes(command) || classification.rule === "network") return { decision: "confirm", reason: "本机终端网络命令需要确认。" };
   if (classification.decision === "allow") return { decision: "allow", reason: "命令分类器已允许该本机操作。" };
-  if (mode !== "cautious" && isGitHubRead(argv)) return { decision: "allow", reason: "只读 GitHub 查询可由 App-owned broker 自动执行。" };
-  if (mode !== "cautious" && isGitReadOnlyRemote(argv)) return { decision: "allow", reason: "只读或仅更新 Git 元数据的远端查询可自动执行。" };
-  if (mode !== "cautious" && isSafeDependencySync(argv)) return { decision: "allow", reason: "禁用安装脚本的依赖同步可自动执行。" };
-  if (mode !== "cautious" && isSafeWorkspaceUtility(argv)) return { decision: "allow", reason: "当前模式允许低风险工作区工具直接运行。" };
+  if (isGitHubRead(argv)) return { decision: "allow", reason: "只读 GitHub 查询可由 App-owned broker 自动执行。" };
+  if (isGitReadOnlyRemote(argv)) return { decision: "allow", reason: "只读或仅更新 Git 元数据的远端查询可自动执行。" };
+  if (isSafeDependencySync(argv)) return { decision: "allow", reason: "禁用安装脚本的依赖同步可自动执行。" };
+  if (isSafeWorkspaceUtility(argv)) return { decision: "allow", reason: "低风险工作区工具无需确认。" };
   return { decision: "confirm", reason: "宿主终端命令未在低风险自动批准范围内。" };
 }
 
@@ -218,15 +232,20 @@ function classifyHostCommandApproval(request, approvalMode) {
   const command = path.basename(argv[0] || "").toLowerCase();
   const rule = request?.policy?.rule || "default-ask";
 
+  if (mode === "full_control") return { decision: "allow", reason: "完全控制模式自动批准所有 Host 请求。" };
   if (request?.policy?.decision === "deny") return { decision: "deny", reason: "命令策略已拒绝该操作。" };
-  if (mode === "cautious") return { decision: "confirm", reason: "只读/谨慎模式要求确认命令执行。" };
-  if (!isVerifiedSandboxRequest(request)) return { decision: "confirm", reason: "只有已验证的系统沙箱命令可以自动审批。" };
-  if (hasExpandedSandboxAccess(request?.sandboxAccess)) return { decision: "confirm", reason: "扩大沙箱访问范围需要确认。" };
+  if (!isVerifiedSandboxRequest(request)) return { decision: "confirm", reason: "只有已验证的系统沙箱命令可以自动审批。", rememberKey: `host:unverified-execution:${command || rule}` };
+  if (hasExpandedSandboxAccess(request?.sandboxAccess)) return { decision: "confirm", reason: "扩大沙箱访问范围需要确认。", rememberKey: sandboxAccessPermissionKey(request.sandboxAccess) };
+  if (rule === "runtime-execution" || isProjectPackageScript(argv)) return { decision: "allow", reason: "受验证沙箱内的项目运行不再要求执行确认。" };
+  if (request?.policy?.decision === "allow") return { decision: "allow", reason: "命令分类器已确认该操作为低风险。" };
+  if (isGitTrustedSync(argv)) return { decision: "allow", reason: "已验证沙箱内的受控 Git 同步自动批准。" };
+  if (isGitHubRead(argv)) return { decision: "allow", reason: "已验证网络沙箱内的只读 GitHub 操作自动批准。" };
+  if (isSafeDependencySync(argv)) return { decision: "allow", reason: "禁用安装脚本的依赖同步自动批准。" };
+  if (isSafeWorkspaceUtility(argv)) return { decision: "allow", reason: "已验证沙箱内的常规工作区工具自动批准。" };
+  if (mode === "cautious") return { decision: "confirm", reason: "谨慎模式只确认具有明显副作用或跨边界的权限。" };
   if (["curl", "wget"].includes(command) || isGitPush(argv) || isGitRiskyRemoteOperation(argv) || isGitHubExternalWrite(argv)) {
     return { decision: "confirm", reason: "自由网络访问或远端写入需要确认。" };
   }
-  if (isGitTrustedSync(argv)) return { decision: "allow", reason: "已验证沙箱内的受控 Git 同步自动批准。" };
-  if (isGitHubRead(argv)) return { decision: "allow", reason: "已验证网络沙箱内的只读 GitHub 操作自动批准。" };
   if (rule === "package-manager") {
     return isSafeDependencySync(argv) || isProjectPackageScript(argv)
       ? { decision: "allow", reason: "已验证沙箱内的项目脚本或禁用安装脚本的依赖同步自动批准。" }
@@ -243,7 +262,6 @@ function classifyHostCommandApproval(request, approvalMode) {
     }
     return { decision: "confirm", reason: "Docker 或权限类命令仍需要确认。" };
   }
-  if (isSafeWorkspaceUtility(argv)) return { decision: "allow", reason: "已验证沙箱内的常规工作区工具自动批准。" };
   if (mode !== "cautious" && isHighAutonomyWorkspaceUtility(argv)) {
     return { decision: "allow", reason: "已验证沙箱内的签名/验证工具自动批准。" };
   }

@@ -47,7 +47,7 @@ test("safe dependency sync is summarized as a project permission", () => {
   assert.equal(prompt.rememberKey, "terminal:dependency-sync");
 });
 
-test("arbitrary network access stays one-shot and never becomes remembered", () => {
+test("network permission is remembered per external host for the current connection", () => {
   const { approvalPrompt } = api();
   const prompt = approvalPrompt({
     kind: "terminal-command",
@@ -58,10 +58,10 @@ test("arbitrary network access stays one-shot and never becomes remembered", () 
   assert.equal(prompt.message, "允许访问外部网络？");
   assert.equal(prompt.detail, "目标：example.com\n范围：外部网络");
   assert.doesNotMatch(prompt.detail, /命令：|原因：|network access|\/project/);
-  assert.equal(prompt.rememberKey, null);
+  assert.equal(prompt.rememberKey, "terminal:network:example.com");
 });
 
-test("destructive file prompts outside the workspace stay one-shot", () => {
+test("destructive file prompts outside the workspace share a connection permission class", () => {
   const { approvalPrompt } = api();
   const request = {
     kind: "local-file-batch",
@@ -76,15 +76,26 @@ test("destructive file prompts outside the workspace stay one-shot", () => {
   assert.equal(prompt.message, "允许删除或移动项目文件？");
   assert.equal(prompt.detail, "操作：删除 1 · 移动 1\n范围：工作区外");
   assert.equal(prompt.detail.split("\n").length, 2);
-  assert.equal(prompt.rememberKey, null);
+  assert.equal(prompt.rememberKey, "files:destructive:outside-workspace");
 });
 
-test("sensitive access is concise and can never be remembered", () => {
+test("host-provided permission classes override command-derived memory keys", () => {
+  const { approvalPrompt } = api();
+  const prompt = approvalPrompt({
+    kind: "terminal-command",
+    argv: ["node", "script.mjs"],
+    policy: { rule: "runtime-execution" },
+    rememberKey: "host:sandbox-expansion:read:/outside",
+  }, "development");
+  assert.equal(prompt.rememberKey, "host:sandbox-expansion:read:/outside");
+});
+
+test("sensitive access is concise and remembered by sensitive root", () => {
   const { approvalPrompt } = api();
   const prompt = approvalPrompt({ kind: "sensitive-access", operation: "read", path: "/Users/me/.ssh/config" }, "auto");
   assert.equal(prompt.message, "允许读取敏感位置？");
   assert.equal(prompt.detail, "位置：.ssh/config\n范围：仅本次访问");
   assert.doesNotMatch(prompt.detail, /原因：|私人数据|\/Users\/me/);
   assert.equal(prompt.detail.split("\n").length, 2);
-  assert.equal(prompt.rememberKey, null);
+  assert.equal(prompt.rememberKey, "sensitive:read:.ssh");
 });

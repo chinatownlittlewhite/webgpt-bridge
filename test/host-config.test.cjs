@@ -37,6 +37,7 @@ test("normalization keeps older bundled settings compatible", () => {
 test("normalization persists only known local approval modes", () => {
   const { normalizeSettings } = api();
   assert.equal(normalizeSettings({ approvalMode: "auto" }).approvalMode, "auto");
+  assert.equal(normalizeSettings({ approvalMode: "full_control" }).approvalMode, "full_control");
   assert.equal(normalizeSettings({ approvalMode: "development" }).approvalMode, "development");
   assert.equal(normalizeSettings({ approvalMode: "anything-else" }).approvalMode, "development");
 });

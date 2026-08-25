@@ -23,12 +23,12 @@ function stage(name) {
   console.error(`\n[acceptance] ${name}`);
 }
 
-function runHost(argv, { cwd = root } = {}) {
+function runHost(argv, { cwd = root, env = {} } = {}) {
   const resolved = resolvePlatformArgv(argv, { env: process.env, platform: process.platform });
   if (!resolved.resolved) throw new Error(`host command not found: ${argv[0]}`);
   const result = spawnSync(resolved.argv[0], resolved.argv.slice(1), {
     cwd,
-    env: process.env,
+    env: { ...process.env, ...env },
     stdio: "inherit",
     shell: false,
     windowsHide: true,
@@ -171,7 +171,7 @@ if (process.platform === "win32" && !skipNative) {
 }
 
 stage("unit/integration tests");
-runHost(["npm", "test"]);
+runHost(["npm", "test"], { env: { LPC_DISABLE_AUDIT: "true" } });
 
 stage("lint");
 runHost(["npm", "run", "lint"]);

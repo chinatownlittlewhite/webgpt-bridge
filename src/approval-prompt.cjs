@@ -71,15 +71,17 @@ function terminalPresentation(request, mode) {
     message = "允许访问外部网络？";
     operation = `目标：${networkTarget(argv)}`;
     scope = "外部网络";
+    rememberKey = `terminal:network:${networkTarget(argv)}`;
   } else if (rule === "git-mutation") {
     if (isGitRemote(argv)) {
       message = "允许修改远端 Git 仓库？";
       operation = "操作：Git 远端操作";
       scope = "远端仓库";
+      rememberKey = "terminal:git-remote";
     } else {
       message = "允许修改当前项目的 Git 状态？";
       operation = "操作：本地 Git 变更";
-      if (mode !== "cautious") rememberKey = "terminal:git-local";
+      rememberKey = "terminal:git-local";
     }
   } else if (rule === "package-manager") {
     if (argv[1] === "run") {
@@ -88,10 +90,11 @@ function terminalPresentation(request, mode) {
     } else if (isSafeDependencySync(argv)) {
       message = "允许更新当前项目依赖？";
       operation = "操作：更新依赖（安装脚本已禁用）";
-      if (mode !== "cautious") rememberKey = "terminal:dependency-sync";
+      rememberKey = "terminal:dependency-sync";
     } else {
       message = "允许修改当前项目依赖？";
       operation = "操作：运行包管理器";
+      rememberKey = "terminal:dependency-install";
     }
   } else if (rule === "runtime-execution") {
     message = "允许执行当前项目代码？";
@@ -99,12 +102,20 @@ function terminalPresentation(request, mode) {
   } else if (rule === "sensitive-command") {
     message = "允许执行高风险项目操作？";
     operation = "操作：高风险工作区变更";
+    rememberKey = ["chmod", "chown"].includes(command) ? "terminal:file-permissions" : command === "docker" ? "terminal:docker" : `terminal:risky:${command || "operation"}`;
+  } else if (command === "gh" && ["pr", "issue"].includes(argv[1]) && argv[2] === "create") {
+    message = "允许修改 GitHub 远端？";
+    operation = "操作：GitHub 外部写入";
+    scope = "GitHub 远端";
+    rememberKey = "terminal:github-write";
+  } else {
+    rememberKey = `terminal:command:${command || "unknown"}`;
   }
 
   return {
     message,
     detail: `${operation}\n范围：${scope}`,
-    rememberKey,
+    rememberKey: request.rememberKey || rememberKey,
   };
 }
 
@@ -122,15 +133,16 @@ function fileBatchPresentation(request, mode) {
   return {
     message: destructive ? "允许删除或移动项目文件？" : "允许修改当前项目文件？",
     detail: `操作：${summary || "文件更新"}\n范围：${scope}`,
-    rememberKey: request.rememberable !== false && mode !== "cautious" && destructive ? "files:destructive" : null,
+    rememberKey: destructive ? `files:destructive:${request.scope === "outside-workspace" ? "outside-workspace" : "workspace"}` : "files:write",
   };
 }
 
 function sensitivePresentation(request) {
+  const sensitiveRoot = shortSensitivePath(request.path).split("/")[0] || "sensitive";
   return {
     message: request.operation === "list" ? "允许查看敏感目录？" : "允许读取敏感位置？",
     detail: `位置：${shortSensitivePath(request.path)}\n范围：仅本次访问`,
-    rememberKey: null,
+    rememberKey: `sensitive:${request.operation === "list" ? "list" : "read"}:${sensitiveRoot}`,
   };
 }
 

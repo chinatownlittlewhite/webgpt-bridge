@@ -39,16 +39,46 @@ test("auto-runs only host-safe read operations while keeping arbitrary host exec
   await broker.run({ argv: ["node", "script.mjs"], cwd: "/project" });
   await broker.run({ argv: ["gh", "issue", "create", "--title", "x"], cwd: "/project" });
 
-  assert.equal(prompts.length, 4);
+  assert.equal(prompts.length, 3);
   assert.deepEqual(prompts.map((item) => item.argv), [
     ["curl", "https://example.com"],
     ["git", "commit", "-m", "x"],
-    ["node", "script.mjs"],
     ["gh", "issue", "create", "--title", "x"],
   ]);
   assert.equal(calls.length, 9);
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.cwd, "/project");
+});
+
+test("full control bypasses native confirmation and command blocking", async () => {
+  const { createLocalTerminalBroker } = require("../src/local-terminal-broker.cjs");
+  let confirmations = 0;
+  const calls = [];
+  const broker = createLocalTerminalBroker({
+    approvalMode: "full_control",
+    classifyCommand: () => ({ decision: "deny", rule: "always-deny", reason: "blocked" }),
+    confirm: async () => { confirmations += 1; return false; },
+    spawnCommand: async (argv) => { calls.push(argv); return { code: 0 }; },
+  });
+  await broker.run({ argv: ["sudo", "whoami"], cwd: "/project" });
+  await broker.run({ argv: ["/bin/sh", "-c", "echo hi"], cwd: "/project" });
+  assert.equal(confirmations, 0);
+  assert.deepEqual(calls, [["sudo", "whoami"], ["/bin/sh", "-c", "echo hi"]]);
+});
+
+test("full control bypasses the real Agent classifier for blocked and absolute executables", async () => {
+  const { createLocalTerminalBroker } = require("../src/local-terminal-broker.cjs");
+  const { classifyCommand } = await import("../agent-runtime/src/policy.js");
+  const calls = [];
+  const broker = createLocalTerminalBroker({
+    approvalMode: "full_control",
+    classifyCommand,
+    confirm: async () => { throw new Error("full control must not confirm"); },
+    spawnCommand: async (argv) => { calls.push(argv); return { code: 0 }; },
+  });
+  await broker.run({ argv: ["sudo", "whoami"], cwd: "/project" });
+  await broker.run({ argv: ["/bin/sh", "-c", "echo hi"], cwd: "/project" });
+  assert.deepEqual(calls, [["sudo", "whoami"], ["/bin/sh", "-c", "echo hi"]]);
 });
 
 test("does not execute a request when native confirmation is declined", async () => {
