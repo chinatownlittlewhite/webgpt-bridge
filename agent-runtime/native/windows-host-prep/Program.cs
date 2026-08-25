@@ -14,7 +14,11 @@ internal static class Program
     private const uint GenericWrite = 0x40000000;
     private const uint ReadControl = 0x00020000;
     private const uint WriteDac = 0x00040000;
+    private const uint WriteOwner = 0x00080000;
     private const uint DaclSecurityInformation = 0x00000004;
+    private const uint LabelSecurityInformation = 0x00000010;
+    private const uint SddlRevision1 = 1;
+    private const string LowIntegrityLabelSddl = "S:(ML;;NW;;;LW)";
     private const uint SeKernelObject = 6;
     private const uint FileShareRead = 0x00000001;
     private const uint FileShareWrite = 0x00000002;
@@ -31,6 +35,20 @@ internal static class Program
         {
             Console.Error.WriteLine("usage: lpc-windows-host-prep --check --json | --apply | --remove");
             return 2;
+        }
+        if ((operation is "apply" or "remove") && !IsAdministrator())
+        {
+            Console.Error.WriteLine(JsonSerializer.Serialize(new
+            {
+                status = "elevation_required",
+                operation,
+                capabilityName = CapabilityName,
+                target = TargetName,
+                elevated = false,
+                integrityLevel = GetIntegrityLevel(),
+                remediation = "Run this host-preparation mutation from the elevated installer, repair flow, or SYSTEM startup task.",
+            }));
+            return 65;
         }
 
         try
@@ -87,25 +105,29 @@ internal static class Program
 
     private static object CheckPreparation()
     {
-        using var preparation = OpenPreparation(writeDacl: false);
+        using var preparation = OpenPreparation(writeDacl: false, writeLabel: false);
         var dacl = ReadDacl(preparation.Handle);
         var present = HasOwnedAce(dacl, preparation.CapabilitySid);
+        var lowIntegrity = HasLowIntegrityLabel(preparation.Handle);
         return new
         {
-            status = present ? "ready" : "capability_ace_missing",
+            status = present && lowIntegrity
+                ? "ready"
+                : !present ? "capability_ace_missing" : "integrity_label_missing",
             capabilityName = CapabilityName,
             capabilitySid = preparation.CapabilitySid.Value,
             target = TargetName,
             accessMask = $"0x{unchecked((uint)NullDeviceAccessMask):X8}",
+            lowIntegrityLabel = lowIntegrity,
             elevated = IsAdministrator(),
             integrityLevel = GetIntegrityLevel(),
-            remediation = present ? null : "Run WebGPT Bridge installer repair as administrator to restore Windows host preparation.",
+            remediation = present && lowIntegrity ? null : "Run WebGPT Bridge installer repair as administrator to restore Windows host preparation.",
         };
     }
 
     private static object ApplyPreparation()
     {
-        using var preparation = OpenPreparation(writeDacl: true);
+        using var preparation = OpenPreparation(writeDacl: true, writeLabel: true);
         var dacl = ReadDacl(preparation.Handle);
         if (!HasOwnedAce(dacl, preparation.CapabilitySid))
         {
@@ -119,12 +141,16 @@ internal static class Program
                 null));
             WriteDacl(preparation.Handle, updated);
         }
+        if (!HasLowIntegrityLabel(preparation.Handle))
+        {
+            EnsureLowIntegrityLabel(preparation.Handle);
+        }
         return CheckPreparation();
     }
 
     private static object RemovePreparation()
     {
-        using var preparation = OpenPreparation(writeDacl: true);
+        using var preparation = OpenPreparation(writeDacl: true, writeLabel: false);
         var dacl = ReadDacl(preparation.Handle);
         if (HasOwnedAce(dacl, preparation.CapabilitySid))
         {
@@ -144,9 +170,11 @@ internal static class Program
         };
     }
 
-    private static PreparationHandle OpenPreparation(bool writeDacl)
+    private static PreparationHandle OpenPreparation(bool writeDacl, bool writeLabel)
     {
-        var desiredAccess = ReadControl | (writeDacl ? WriteDac : 0);
+        var desiredAccess = ReadControl
+            | (writeDacl ? WriteDac : 0)
+            | (writeLabel ? WriteOwner : 0);
         var handle = Native.CreateFileW(
             "NUL",
             desiredAccess,
@@ -217,6 +245,88 @@ internal static class Program
             var bytes = new byte[sizeInfo.AclBytesInUse];
             Marshal.Copy(dacl, bytes, 0, bytes.Length);
             return new RawAcl(bytes, 0);
+        }
+        finally
+        {
+            if (securityDescriptor != IntPtr.Zero) Native.LocalFree(securityDescriptor);
+        }
+    }
+
+    private static bool HasLowIntegrityLabel(IntPtr handle)
+    {
+        IntPtr securityDescriptor = IntPtr.Zero;
+        IntPtr sddl = IntPtr.Zero;
+        var result = Native.GetSecurityInfoWithSacl(
+            handle,
+            SeKernelObject,
+            LabelSecurityInformation,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            out _,
+            out _,
+            out securityDescriptor);
+        if (result != 0)
+        {
+            throw new Win32Exception(unchecked((int)result), "GetSecurityInfo(LABEL_SECURITY_INFORMATION) failed");
+        }
+        try
+        {
+            if (!Native.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                    securityDescriptor,
+                    SddlRevision1,
+                    LabelSecurityInformation,
+                    out sddl,
+                    out _))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "ConvertSecurityDescriptorToStringSecurityDescriptorW failed");
+            }
+            var text = Marshal.PtrToStringUni(sddl) ?? string.Empty;
+            return text.Contains("(ML;;NW;;;LW)", StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (sddl != IntPtr.Zero) Native.LocalFree(sddl);
+            if (securityDescriptor != IntPtr.Zero) Native.LocalFree(securityDescriptor);
+        }
+    }
+
+    private static void EnsureLowIntegrityLabel(IntPtr handle)
+    {
+        IntPtr securityDescriptor = IntPtr.Zero;
+        try
+        {
+            if (!Native.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    LowIntegrityLabelSddl,
+                    SddlRevision1,
+                    out securityDescriptor,
+                    out _))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "ConvertStringSecurityDescriptorToSecurityDescriptorW failed");
+            }
+            if (!Native.GetSecurityDescriptorSacl(
+                    securityDescriptor,
+                    out var saclPresent,
+                    out var sacl,
+                    out _))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "GetSecurityDescriptorSacl failed");
+            }
+            if (!saclPresent || sacl == IntPtr.Zero)
+            {
+                throw new InvalidOperationException("low-integrity SDDL did not produce a mandatory label ACL");
+            }
+            var result = Native.SetSecurityInfo(
+                handle,
+                SeKernelObject,
+                LabelSecurityInformation,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                sacl);
+            if (result != 0)
+            {
+                throw new Win32Exception(unchecked((int)result), "SetSecurityInfo(LABEL_SECURITY_INFORMATION) failed");
+            }
         }
         finally
         {
@@ -431,6 +541,17 @@ internal static class Program
             IntPtr sacl,
             out IntPtr securityDescriptor);
 
+        [DllImport("advapi32.dll", EntryPoint = "GetSecurityInfo", SetLastError = true)]
+        internal static extern uint GetSecurityInfoWithSacl(
+            IntPtr handle,
+            uint objectType,
+            uint securityInfo,
+            IntPtr owner,
+            IntPtr group,
+            out IntPtr dacl,
+            out IntPtr sacl,
+            out IntPtr securityDescriptor);
+
         [DllImport("advapi32.dll", SetLastError = true)]
         internal static extern uint SetSecurityInfo(
             IntPtr handle,
@@ -440,6 +561,31 @@ internal static class Program
             IntPtr group,
             IntPtr dacl,
             IntPtr sacl);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            IntPtr securityDescriptor,
+            uint requestedStringSdRevision,
+            uint securityInformation,
+            out IntPtr stringSecurityDescriptor,
+            out uint stringSecurityDescriptorLength);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            string stringSecurityDescriptor,
+            uint stringSdRevision,
+            out IntPtr securityDescriptor,
+            out uint securityDescriptorSize);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool GetSecurityDescriptorSacl(
+            IntPtr securityDescriptor,
+            [MarshalAs(UnmanagedType.Bool)] out bool saclPresent,
+            out IntPtr sacl,
+            [MarshalAs(UnmanagedType.Bool)] out bool saclDefaulted);
 
         [DllImport("advapi32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]

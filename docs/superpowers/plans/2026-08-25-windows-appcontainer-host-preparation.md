@@ -109,7 +109,10 @@ assert.match(source, /DeriveCapabilitySidsFromName/);
 assert.match(source, /GetSecurityInfo/);
 assert.match(source, /SetSecurityInfo/);
 assert.match(source, /SeKernelObject/);
+assert.match(source, /LabelSecurityInformation/);
+assert.match(source, /S:\(ML;;NW;;;LW\)/);
 assert.doesNotMatch(source, /SetNamedSecurityInfoW/);
+assert.doesNotMatch(source, /SaclSecurityInformation/);
 assert.doesNotMatch(source, /Process\.Start|CreateProcess/);
 ```
 
@@ -131,7 +134,11 @@ void ApplyPreparation();
 void RemovePreparation();
 ```
 
-Open `NUL` with a handle, call `GetSecurityInfo(handle, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, ...)`, derive the product capability SID, inspect ACEs, and use Windows ACL APIs to merge/remove the exact product ACE. Preserve unrelated ACEs. Requested rights must be only the read/write rights empirically needed for opening and using the null device; do not grant `WRITE_DAC`, `WRITE_OWNER`, delete, process, file-tree, or network rights.
+Open `NUL` with a handle, call `GetSecurityInfo(handle, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, ...)`, derive the product capability SID, inspect ACEs, and use Windows ACL APIs to merge/remove the exact product ACE. Preserve unrelated DACL ACEs. Requested capability rights must be only the read/write rights empirically needed for opening and using the null device; do not grant `WRITE_DAC`, `WRITE_OWNER`, delete, process, file-tree, or network rights.
+
+Also query `LABEL_SECURITY_INFORMATION`. AppContainer is Low IL, so `--check` is `ready` only when both the product capability ACE and the Low Integrity mandatory label are present. `--apply` sets exactly `S:(ML;;NW;;;LW)` through `LABEL_SECURITY_INFORMATION` when needed, without setting `SACL_SECURITY_INFORMATION` or replacing audit ACEs. The elevated host-prep handle may request `WRITE_OWNER` solely because Windows requires that standard right to set the mandatory label; that right is never granted to the product capability SID. `--remove` continues to delete only the exact product capability ACE.
+
+Keep `--check --json` standard-user readable. Before any mutation, explicitly require an administrator token; return exit code `65` with `status: "elevation_required"` when `--apply` or `--remove` is invoked without elevation. Do not add UAC/self-elevation logic to the helper because the installer and fixed SYSTEM startup task own elevation.
 
 Return structured Win32 diagnostics; never accept arbitrary target/SID/mask input.
 

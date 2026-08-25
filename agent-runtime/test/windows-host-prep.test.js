@@ -21,6 +21,10 @@ test("Windows host preparation has a fixed null-device-only command surface", ()
   assert.match(source, /GetSecurityInfo/);
   assert.match(source, /SetSecurityInfo/);
   assert.match(source, /SeKernelObject/);
+  assert.match(source, /LabelSecurityInformation/);
+  assert.match(source, /WriteOwner/);
+  assert.match(source, /S:\(ML;;NW;;;LW\)/);
+  assert.doesNotMatch(source, /SaclSecurityInformation/);
   assert.match(source, /TargetName = "NUL"/);
   assert.match(source, /CreateFileW\(\s*"NUL"/);
   assert.doesNotMatch(source, /SetNamedSecurityInfoW/);
@@ -29,6 +33,22 @@ test("Windows host preparation has a fixed null-device-only command surface", ()
   assert.match(source, /args\.Length == 1 && args\[0\] == "--apply"/);
   assert.match(source, /args\.Length == 1 && args\[0\] == "--remove"/);
   assert.doesNotMatch(source, /CapabilityName\s*=\s*args|TargetName\s*=\s*args/);
+});
+
+test("Windows host preparation requires the low-integrity NUL label as well as the product capability ACE", () => {
+  const source = fs.readFileSync(hostPrepSource, "utf8");
+  assert.match(source, /HasLowIntegrityLabel/);
+  assert.match(source, /present\s*&&\s*lowIntegrity/);
+  assert.match(source, /EnsureLowIntegrityLabel/);
+  assert.match(source, /LABEL_SECURITY_INFORMATION|LabelSecurityInformation/);
+});
+
+test("Windows host preparation mutations explicitly require an administrator token", () => {
+  const source = fs.readFileSync(hostPrepSource, "utf8");
+  assert.match(source, /operation is "apply" or "remove"/);
+  assert.match(source, /!IsAdministrator\(\)/);
+  assert.match(source, /elevation_required/);
+  assert.match(source, /return 65/);
 });
 
 test("Windows native build publishes sandbox and host preparation as self-contained win-x64 payloads", () => {

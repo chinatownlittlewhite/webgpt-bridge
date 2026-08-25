@@ -52,9 +52,11 @@ Add a separate Windows native component under `agent-runtime/native/windows-host
 
 The host-prep executable has a deliberately narrow command surface:
 
-- `--apply`: ensure the required product-capability ACE exists on the null device;
+- `--apply`: ensure the required product-capability ACE and integrity label exist on the null device;
 - `--remove`: remove only the exact product-capability ACE owned by WebGPT Bridge;
 - `--check --json`: report non-mutating preparation status and diagnostics.
+
+`--check --json` must remain usable from a standard-user token. `--apply` and `--remove` explicitly reject non-administrator tokens with a bounded `elevation_required` diagnostic instead of relying on a later access-denied failure. The desktop/Agent runtime never invokes mutation modes.
 
 It must not launch arbitrary commands, accept arbitrary object names, accept arbitrary SIDs, edit file ACLs, access the network, or expose a model-facing interface.
 
@@ -64,9 +66,11 @@ The elevated component opens the Windows `NUL` device by handle and uses handle-
 
 `--apply` reads the current DACL, derives the fixed product capability SID, and merges one allow ACE that grants only the read/write access needed to open and use the null device. It does not grant `WRITE_DAC`, `WRITE_OWNER`, delete rights, process rights, file-system traversal rights, or network rights to the capability.
 
-The operation preserves all pre-existing ACEs. Repeated `--apply` calls are idempotent and must not duplicate the product ACE.
+Because AppContainer processes run at Low Integrity Level, DACL authorization alone is insufficient for a writable `NUL` device if the object is unlabeled or has a higher mandatory integrity label. Host preparation therefore also verifies the null device's mandatory label and, when needed, sets exactly the Low Integrity / `NO_WRITE_UP` label `S:(ML;;NW;;;LW)` through `LABEL_SECURITY_INFORMATION`. It does not set `SACL_SECURITY_INFORMATION`, does not replace audit ACEs, and does not require a general security-audit privilege for this label-only update.
 
-`--remove` removes only an ACE whose SID, access mask, inheritance flags, and object target exactly match the product-owned null-device grant. It must not restore a previously captured whole DACL, because that could overwrite unrelated security changes made after installation.
+The operation preserves all pre-existing DACL ACEs. Repeated `--apply` calls are idempotent and must not duplicate the product ACE or rewrite an already-correct integrity label.
+
+`--remove` removes only an ACE whose SID, access mask, inheritance flags, and object target exactly match the product-owned null-device grant. It must not restore a previously captured whole DACL, because that could overwrite unrelated security changes made after installation. The Low Integrity mandatory label is not treated as a product-owned ACE and is not reverted during uninstall; the Windows null-device security descriptor is reset by the OS at boot, while removing the product capability ACE immediately revokes WebGPT Bridge AppContainer access.
 
 ### Diagnostics
 
@@ -79,9 +83,10 @@ The host-prep component records locally protected diagnostics containing:
 - requested security-information flags and access mask;
 - Win32 error code;
 - caller elevation/integrity information;
-- before/after DACL evidence sufficient for repair analysis.
+- before/after DACL evidence sufficient for repair analysis;
+- mandatory-integrity-label readiness without exposing unrelated SACL/audit contents.
 
-Raw DACL details remain in local diagnostics and are not returned through model-facing tools. Public capability output exposes only bounded status, error code, and remediation text.
+Raw DACL/SACL details remain in local diagnostics and are not returned through model-facing tools. Public capability output exposes only bounded status, error code, integrity-label readiness, and remediation text.
 
 ## Installation and boot lifecycle
 
@@ -127,6 +132,7 @@ Windows native verification gains an explicit null-device probe before release p
 - `not_provisioned`;
 - `task_missing`;
 - `capability_ace_missing`;
+- `integrity_label_missing`;
 - `probe_failed`;
 - `unsupported`.
 
