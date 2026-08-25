@@ -1,0 +1,116 @@
+name: Release desktop apps
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm --prefix agent-runtime ci --ignore-scripts
+      - run: npm run release:verify-tag
+      - run: npm run verify:desktop
+      - run: npm --prefix agent-runtime test
+      - run: npm --prefix agent-runtime run lint
+      - run: npm --prefix agent-runtime run contract
+
+  draft:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create or reuse only an unpublished exact draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json isDraft > /tmp/release.json 2>/dev/null; then
+            node -e 'const fs=require("node:fs"); const v=JSON.parse(fs.readFileSync("/tmp/release.json","utf8")); if(v.isDraft!==true) process.exit(1)'
+            echo "Reusing existing unpublished draft $GITHUB_REF_NAME"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "$GITHUB_REF_NAME"
+          fi
+
+  windows:
+    needs: [verify, draft]
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: npm ci
+      - run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-windows
+          path: release/*
+
+  macos:
+    needs: [verify, draft]
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run dist:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-macos
+          path: release/*
+
+  publish:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-release-windows
+          path: release-win
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-release-macos
+          path: release-mac
+      - run: node scripts/validate-release-assets.cjs --version "${GITHUB_REF_NAME#v}" --windows release-win --mac release-mac
+      - run: node scripts/write-release-checksums.cjs release-win release-mac --out SHA256SUMS
+      - name: Upload exact validated assets to draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" release-win/* release-mac/* SHA256SUMS
+      - name: Publish stable release atomically after all gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=false --latest
