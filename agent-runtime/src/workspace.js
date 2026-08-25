@@ -72,6 +72,7 @@ function assertPlainFile(file, label) {
 }
 
 function validateManagedWorktree(root, key, name) {
+  const canonicalRoot = fs.realpathSync(root);
   const stateRoot = path.join(root, INTERNAL_STATE_DIR);
   const worktreesRoot = path.join(stateRoot, "worktrees");
   const keyedRoot = path.join(worktreesRoot, key);
@@ -106,7 +107,7 @@ function validateManagedWorktree(root, key, name) {
     const commonCandidate = path.resolve(linkedGitDir, commondirText);
     assertPlainDirectory(commonCandidate, "common Git directory");
     const commonGitDir = fs.realpathSync(commonCandidate);
-    if (!isInside(root, commonGitDir)) {
+    if (!isInside(canonicalRoot, commonGitDir)) {
       throw new Error("managed worktree metadata is invalid: common Git directory escapes workspace");
     }
 

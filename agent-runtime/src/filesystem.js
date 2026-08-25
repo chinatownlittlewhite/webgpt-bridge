@@ -111,9 +111,9 @@ function writeDurableTemp(target, raw, mode = 0o666) {
 
 function copyDurable(source, destination, mode) {
   fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
-  try { fs.chmodSync(destination, mode); } catch {}
-  const fd = fs.openSync(destination, "r");
+  const fd = fs.openSync(destination, "r+");
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try { fs.chmodSync(destination, mode); } catch {}
 }
 
 function assertBaseline(change) {

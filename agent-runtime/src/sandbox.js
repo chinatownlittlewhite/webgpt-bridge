@@ -18,7 +18,7 @@ function quoteSeatbelt(value) {
 }
 
 function subpathRule(operation, paths) {
-  const unique = [...new Set(paths.map((entry) => path.resolve(entry)))];
+  const unique = [...new Set(paths.map((entry) => path.posix.resolve(entry)))];
   if (unique.length === 0) return "";
   return `(allow ${operation} ${unique.map((entry) => `(subpath ${quoteSeatbelt(entry)})`).join(" ")})`;
 }
@@ -49,13 +49,13 @@ export function createMacOSSandboxExecAdapter({
   allowNetwork = false,
   extraReadPaths = [],
 } = {}) {
-  if (typeof sandboxExecPath !== "string" || !path.isAbsolute(sandboxExecPath)) {
+  if (typeof sandboxExecPath !== "string" || !path.posix.isAbsolute(sandboxExecPath)) {
     throw new TypeError("sandboxExecPath must be an absolute path supplied by the trusted host");
   }
   if (!Array.isArray(extraReadPaths) || extraReadPaths.some((entry) => typeof entry !== "string")) {
     throw new TypeError("extraReadPaths must be an array of path strings");
   }
-  const normalizedExtraReadPaths = [...new Set(extraReadPaths.map((entry) => path.resolve(entry)))].sort();
+  const normalizedExtraReadPaths = [...new Set(extraReadPaths.map((entry) => path.posix.resolve(entry)))].sort();
   const verificationId = fingerprint({
     name: "macos-sandbox-exec",
     sandboxExecPath,
@@ -74,8 +74,8 @@ export function createMacOSSandboxExecAdapter({
       networkIsolation: allowNetwork ? "host-network" : "deny",
     }),
     wrapArgv({ argv, workspace, extraReadPaths: dynamicReadPaths = [], extraWritePaths: dynamicWritePaths = [] }) {
-      const workspaceRoot = path.resolve(workspace);
-      const tempRoot = path.join(workspaceRoot, INTERNAL_STATE_DIR, "tmp");
+      const workspaceRoot = path.posix.resolve(workspace);
+      const tempRoot = path.posix.join(workspaceRoot, INTERNAL_STATE_DIR, "tmp");
       const systemReadRoots = [
         "/System",
         "/usr",
@@ -116,13 +116,13 @@ export function createBubblewrapAdapter({
   allowNetwork = false,
   extraReadPaths = [],
 } = {}) {
-  if (typeof bubblewrapPath !== "string" || !path.isAbsolute(bubblewrapPath)) {
+  if (typeof bubblewrapPath !== "string" || !path.posix.isAbsolute(bubblewrapPath)) {
     throw new TypeError("bubblewrapPath must be an absolute path supplied by the trusted host");
   }
   if (!Array.isArray(extraReadPaths) || extraReadPaths.some((entry) => typeof entry !== "string")) {
     throw new TypeError("extraReadPaths must be an array of path strings");
   }
-  const normalizedExtraReadPaths = [...new Set(extraReadPaths.map((entry) => path.resolve(entry)))].sort();
+  const normalizedExtraReadPaths = [...new Set(extraReadPaths.map((entry) => path.posix.resolve(entry)))].sort();
   const verificationId = fingerprint({
     name: "linux-bubblewrap",
     bubblewrapPath,
@@ -141,7 +141,7 @@ export function createBubblewrapAdapter({
       networkIsolation: allowNetwork ? "host-network" : "network-namespace",
     }),
     wrapArgv({ argv, cwd, workspace, extraReadPaths: dynamicReadPaths = [], extraWritePaths: dynamicWritePaths = [] }) {
-      const workspaceRoot = path.resolve(workspace);
+      const workspaceRoot = path.posix.resolve(workspace);
       const systemRoots = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/opt", "/nix/store"];
       const args = [
         bubblewrapPath,
@@ -156,10 +156,10 @@ export function createBubblewrapAdapter({
       if (!allowNetwork) args.push("--unshare-net");
       args.push("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
       for (const root of systemRoots) args.push("--ro-bind-try", root, root);
-      for (const root of [...normalizedExtraReadPaths, ...dynamicReadPaths]) args.push("--ro-bind-try", path.resolve(root), path.resolve(root));
-      for (const root of dynamicWritePaths) args.push("--bind-try", path.resolve(root), path.resolve(root));
+      for (const root of [...normalizedExtraReadPaths, ...dynamicReadPaths]) args.push("--ro-bind-try", path.posix.resolve(root), path.posix.resolve(root));
+      for (const root of dynamicWritePaths) args.push("--bind-try", path.posix.resolve(root), path.posix.resolve(root));
       args.push("--bind", workspaceRoot, workspaceRoot);
-      args.push("--chdir", path.resolve(cwd));
+      args.push("--chdir", path.posix.resolve(cwd));
       args.push("--", ...argv);
       return args;
     },
