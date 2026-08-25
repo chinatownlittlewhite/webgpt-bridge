@@ -1,7 +1,7 @@
 # Windows AppContainer host preparation design
 
 Date: 2026-08-25
-Status: approved design, pending written-spec review
+Status: approved design
 Branch: `windows-runtime-remediation`
 PR: #4
 
