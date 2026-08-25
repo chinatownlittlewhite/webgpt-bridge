@@ -58,16 +58,28 @@ function runProbe({ adapter, workspace, outsidePath, port, timeoutMs }) {
 import fs from "node:fs";
 import net from "node:net";
 const [insidePath, outsidePath, portText] = process.argv.slice(1);
-const result = { insideWrite: false, outsideReadBlocked: false, outsideWriteBlocked: false, loopbackAllowed: false, externalNetworkBlocked: false, nullDeviceReadWrite: process.platform !== "win32" };
+const result = { insideWrite: false, outsideReadBlocked: false, outsideWriteBlocked: false, loopbackAllowed: false, externalNetworkBlocked: false, nullDeviceReadWrite: process.platform !== "win32", nullDeviceFailure: null };
 try { fs.writeFileSync(insidePath, "inside", "utf8"); result.insideWrite = true; } catch {}
 if (process.platform === "win32") {
   let fd;
+  let nullDeviceStage = "open";
   try {
     fd = fs.openSync("NUL", "r+");
+    nullDeviceStage = "write";
     fs.writeSync(fd, Buffer.from("bridge-null-device-probe"));
+    nullDeviceStage = "read";
     fs.readSync(fd, Buffer.alloc(1), 0, 1, null);
     result.nullDeviceReadWrite = true;
-  } catch {}
+  } catch (error) {
+    result.nullDeviceFailure = {
+      stage: nullDeviceStage,
+      code: error?.code ?? null,
+      errno: error?.errno ?? null,
+      syscall: error?.syscall ?? null,
+      path: error?.path ?? null,
+      message: typeof error?.message === "string" ? error.message.slice(0, 500) : null,
+    };
+  }
   finally { if (fd !== undefined) try { fs.closeSync(fd); } catch {} }
 }
 try { fs.readFileSync(outsidePath, "utf8"); } catch { result.outsideReadBlocked = true; }
@@ -247,6 +259,9 @@ export async function verifySandboxAdapter({
       requireNetworkBlocked,
       requireLoopback,
       requireNullDevice,
+      nullDeviceFailure: requireNullDevice && !evaluation.checks.nullDeviceReadWrite
+        ? probe.result.nullDeviceFailure ?? null
+        : null,
       stderr: probe.stderr,
     };
   } finally {
