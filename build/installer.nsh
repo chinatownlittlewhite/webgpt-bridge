@@ -1,5 +1,6 @@
 !define WEBGPT_BRIDGE_HOST_PREP_TASK "WebGPT Bridge Host Preparation"
 !define WEBGPT_BRIDGE_HOST_PREP_RELATIVE "resources\app.asar.unpacked\agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe"
+!define WEBGPT_BRIDGE_HOST_PREP_TASK_XML "resources\windows-host-prep-task.xml"
 
 ; electron-builder's per-machine init accepts /D= before customInit runs.
 ; Re-pin the installation root so the SYSTEM task can never target a user-writable override.
@@ -18,7 +19,7 @@
 
 !macro customInstall
   DetailPrint "Registering ${WEBGPT_BRIDGE_HOST_PREP_TASK}..."
-  nsExec::ExecToStack /OEM '"$SYSDIR\schtasks.exe" /Create /TN "${WEBGPT_BRIDGE_HOST_PREP_TASK}" /TR "$\"$INSTDIR\${WEBGPT_BRIDGE_HOST_PREP_RELATIVE}$\" --apply" /SC ONSTART /RU SYSTEM /RL HIGHEST /F'
+  nsExec::ExecToStack /OEM '"$SYSDIR\schtasks.exe" /Create /TN "${WEBGPT_BRIDGE_HOST_PREP_TASK}" /XML "$INSTDIR\${WEBGPT_BRIDGE_HOST_PREP_TASK_XML}" /F'
   Pop $1
   Pop $2
   ${If} $1 != 0

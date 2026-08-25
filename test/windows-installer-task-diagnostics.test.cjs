@@ -12,8 +12,9 @@ test("Windows installer preserves scheduled-task registration diagnostics", () =
   assert.ok(customInstallStart >= 0 && customInstallEnd > customInstallStart);
   const customInstall = installer.slice(customInstallStart, customInstallEnd);
 
-  assert.match(customInstall, /nsExec::ExecToStack[\s\S]*schtasks\.exe[\s\S]*\/Create/);
+  assert.match(customInstall, /nsExec::ExecToStack[\s\S]*schtasks\.exe[\s\S]*\/Create[\s\S]*\/XML/);
   assert.match(customInstall, /Pop\s+\$1[\s\S]*Pop\s+\$2/);
   assert.match(customInstall, /Unable to register WebGPT Bridge Windows host preparation task \(exit \$1\): \$2/);
+  assert.doesNotMatch(customInstall, /\/TR\s/);
   assert.doesNotMatch(customInstall, /ExecWait[\s\S]*schtasks\.exe[\s\S]*\/Create/);
 });
