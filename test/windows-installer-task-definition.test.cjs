@@ -13,6 +13,7 @@ test("Windows installer registers a fixed XML task definition without /TR quote 
   const installer = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf8");
   const builder = fs.readFileSync(path.join(root, "build", "electron-builder-options.cjs"), "utf8");
 
+  assert.doesNotMatch(xml, /<\?xml[^?]*\bencoding\s*=/i, "schtasks /XML must auto-detect the packaged XML bytes instead of switching encodings");
   assert.match(xml, /<BootTrigger>[\s\S]*<Enabled>true<\/Enabled>[\s\S]*<\/BootTrigger>/);
   assert.match(xml, /<UserId>S-1-5-18<\/UserId>/);
   assert.match(xml, /<RunLevel>HighestAvailable<\/RunLevel>/);
