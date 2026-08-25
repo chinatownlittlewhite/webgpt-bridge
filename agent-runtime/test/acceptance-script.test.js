@@ -37,6 +37,13 @@ test("Windows acceptance verifies self-contained native runtime payload before s
   assert.match(source, /lpc-windows-sandbox\.exe/);
 });
 
+test("Windows prebuilt acceptance skips compilation without skipping native verification", () => {
+  assert.match(source, /const prebuiltNative = process\.argv\.includes\("--prebuilt-native"\)/);
+  assert.match(source, /process\.platform === "win32" && !skipNative && !prebuiltNative/);
+  assert.match(source, /process\.platform === "win32" && !skipNative[\s\S]*self-contained Windows sandbox publish must include/);
+  assert.doesNotMatch(source, /prebuiltNative[\s\S]{0,120}verifySandbox:\s*false/);
+});
+
 test("Windows acceptance exercises shared executables through AppContainer without ACL rewriting", () => {
   assert.match(source, /verifyWindowsExternalExecutableCompatibility/);
   assert.match(source, /cmd\.exe/);

@@ -48,6 +48,7 @@ test("Windows formal release uses OIDC and never falls back to unsigned output",
   assert.match(windows, /Status[^\n]*Valid/);
   assert.match(windows, /WEBGPT_WINDOWS_PUBLISHER/);
   assert.match(windows, /windows-installer-smoke\.ps1/);
+  assert.match(windows, /-ArgumentList\s+@\("--prefix",\s*"agent-runtime",\s*"run",\s*"acceptance",\s*"--",\s*"--prebuilt-native"\)/);
   assert.doesNotMatch(windows, /AZURE_CLIENT_SECRET/);
   assert.doesNotMatch(windows, /unsigned fallback|continue-on-error:\s*true/i);
 });

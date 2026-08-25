@@ -80,13 +80,13 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "failed to grant the standard user workspace access" }
 
             $npm = (Get-Command npm.cmd).Source
-            $acceptanceCommand = "npm --prefix agent-runtime run acceptance"
+            $acceptanceCommand = "npm --prefix agent-runtime run acceptance -- --prebuilt-native"
             Write-Host "Running as ${qualified}: $acceptanceCommand"
             $stdout = Join-Path $env:RUNNER_TEMP "webgpt-standard-user-acceptance.stdout.log"
             $stderr = Join-Path $env:RUNNER_TEMP "webgpt-standard-user-acceptance.stderr.log"
             $credential = [System.Management.Automation.PSCredential]::new($qualified, $securePassword)
             $process = Start-Process -FilePath $npm `
-              -ArgumentList @("--prefix", "agent-runtime", "run", "acceptance") `
+              -ArgumentList @("--prefix", "agent-runtime", "run", "acceptance", "--", "--prebuilt-native") `
               -WorkingDirectory $env:GITHUB_WORKSPACE `
               -Credential $credential `
               -LoadUserProfile `

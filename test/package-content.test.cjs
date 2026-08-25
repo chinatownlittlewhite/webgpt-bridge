@@ -224,6 +224,7 @@ test("Windows CI provisions host preparation and runs acceptance as an ephemeral
   assert.match(windows, /New-LocalUser/);
   assert.match(windows, /Get-LocalGroupMember[^\n]*Administrators/);
   assert.match(windows, /Start-Process[\s\S]*-Credential/);
+  assert.match(windows, /-ArgumentList\s+@\("--prefix",\s*"agent-runtime",\s*"run",\s*"acceptance",\s*"--",\s*"--prebuilt-native"\)/);
   assert.match(windows, /Write-Host\s+"Running as \$\{qualified\}: \$acceptanceCommand"/);
   assert.doesNotMatch(windows, /Write-Host\s+"Running as \$qualified:/);
   assert.match(windows, /Remove-LocalUser/);

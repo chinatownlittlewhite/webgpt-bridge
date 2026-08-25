@@ -136,7 +136,7 @@ jobs:
             $stderr = Join-Path $env:RUNNER_TEMP "webgpt-release-standard-user.stderr.log"
             $credential = [System.Management.Automation.PSCredential]::new($qualified, $securePassword)
             $process = Start-Process -FilePath $npm `
-              -ArgumentList @("--prefix", "agent-runtime", "run", "acceptance") `
+              -ArgumentList @("--prefix", "agent-runtime", "run", "acceptance", "--", "--prebuilt-native") `
               -WorkingDirectory $env:GITHUB_WORKSPACE `
               -Credential $credential `
               -LoadUserProfile `

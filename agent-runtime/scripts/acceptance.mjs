@@ -19,6 +19,7 @@ const EXPECTED_TOOLS = [
 ].sort();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skipNative = process.argv.includes("--skip-native");
+const prebuiltNative = process.argv.includes("--prebuilt-native");
 
 function stage(name) {
   console.error(`\n[acceptance] ${name}`);
@@ -312,9 +313,12 @@ async function verifyNativeDeveloperWorkflow(runtime) {
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 assert.equal(packageJson.version, VERSION);
 
-if (process.platform === "win32" && !skipNative) {
+if (process.platform === "win32" && !skipNative && !prebuiltNative) {
   stage("build Windows native sandbox helper");
   runHost(["npm", "run", "build:native"]);
+}
+if (process.platform === "win32" && !skipNative) {
+  stage("verify Windows native sandbox helper payload");
   const nativeOutput = path.join(root, "native", "windows-sandbox", "bin", "release");
   for (const requiredFile of ["lpc-windows-sandbox.exe", "hostfxr.dll", "hostpolicy.dll"]) {
     assert.equal(
