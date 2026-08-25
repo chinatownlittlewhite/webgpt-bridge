@@ -386,6 +386,7 @@ jobs:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
           FEED="http://127.0.0.1:18181/"
           SENTINEL="$RUNNER_TEMP/webgpt-update-e2e.json"
           READY="$RUNNER_TEMP/webgpt-update-e2e.ready.json"
