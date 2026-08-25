@@ -16,6 +16,8 @@ const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { buildTrustedCommandPath } = require("./host-path.cjs");
 const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { createUpdateService } = require("./update-service.cjs");
+const { autoUpdater } = require("electron-updater");
 
 // Keep v0.1 settings and encrypted runtime keys when the product name changes
 // from Local Agent Host to WebGPT Bridge.
@@ -38,6 +40,7 @@ let localApprovalMode = "development";
 const approvalSession = createApprovalSession();
 let logLines = [];
 let isQuitting = false;
+let updateService;
 
 function configPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -147,7 +150,7 @@ function appendLog(source, data) {
 }
 
 function processIsLive(child) {
-  return Boolean(child && child.exitCode === null && !child.killed);
+  return Boolean(child && child.exitCode === null);
 }
 
 function commandExists(candidate) {
@@ -452,13 +455,43 @@ function createTray() {
   updateTray();
 }
 
+function waitForChildExit(child, timeoutMs = 5000) {
+  if (!processIsLive(child)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.removeListener("exit", onExit);
+      child.removeListener("error", onError);
+    };
+    const onExit = () => { cleanup(); resolve(); };
+    const onError = (error) => { cleanup(); reject(error); };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`进程在 ${timeoutMs}ms 内未退出。`));
+    }, timeoutMs);
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
+
 async function stopChild(child, name) {
   if (!processIsLive(child)) return;
   appendLog("host", `正在停止 ${name}…`);
   if (process.platform === "win32" && child.pid) {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-  } else {
+    const result = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+    if (result.status !== 0 && processIsLive(child)) throw new Error(`${name} 无法停止。`);
+    return;
+  }
+  try {
+    const gracefulExit = waitForChildExit(child, 5000);
     child.kill("SIGTERM");
+    await gracefulExit;
+  } catch {
+    if (processIsLive(child)) {
+      const forcedExit = waitForChildExit(child, 2000);
+      child.kill("SIGKILL");
+      await forcedExit;
+    }
   }
 }
 
@@ -554,6 +587,18 @@ function createWindow() {
 
 app.whenReady().then(() => {
   if (process.platform === "darwin" && app.dock) app.dock.setIcon(dockIcon());
+  updateService = createUpdateService({
+    updater: autoUpdater,
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    stopRuntime: stopAll,
+    setQuitting: (value) => { isQuitting = Boolean(value); },
+    emitState: (state) => {
+      windowRef?.webContents?.send("update:state", state);
+      updateTray();
+    },
+    log: (line) => appendLog("update", line),
+  });
   // The host has no browser-facing permissions. Tunnel traffic is handled by
   // the separate client process, not by renderer pages.
   const { session } = require("electron");
@@ -573,9 +618,18 @@ app.whenReady().then(() => {
   ipcMain.handle("host:status", getStatus);
   ipcMain.handle("host:logs", () => logLines);
   ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
+  ipcMain.handle("update:get-state", () => updateService.getState());
+  ipcMain.handle("update:check", () => updateService.checkForUpdates());
+  ipcMain.handle("update:download", () => updateService.downloadUpdate());
+  ipcMain.handle("update:install", () => updateService.installUpdateAndRestart());
   createTray();
   createWindow();
+  updateService.start();
   app.on("activate", showWindow);
 });
 
-app.on("before-quit", () => { isQuitting = true; void stopAll(); });
+app.on("before-quit", () => {
+  isQuitting = true;
+  updateService?.dispose();
+  void stopAll();
+});
