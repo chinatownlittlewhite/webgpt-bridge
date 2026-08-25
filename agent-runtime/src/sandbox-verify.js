@@ -104,11 +104,42 @@ process.stdout.write(JSON.stringify(result));
   });
 }
 
+export function evaluateSandboxProbeChecks({
+  probeResult,
+  loopbackConnected,
+  requireNetworkBlocked = true,
+  requireLoopback = true,
+} = {}) {
+  if (!probeResult || typeof probeResult !== "object") throw new TypeError("probeResult must be an object");
+  if (typeof loopbackConnected !== "boolean") throw new TypeError("loopbackConnected must be a boolean");
+  if (typeof requireNetworkBlocked !== "boolean") throw new TypeError("requireNetworkBlocked must be a boolean");
+  if (typeof requireLoopback !== "boolean") throw new TypeError("requireLoopback must be a boolean");
+
+  const observedNetworkBlocked = probeResult.externalNetworkBlocked === true;
+  const observedLoopbackAllowed = probeResult.loopbackAllowed === true && loopbackConnected;
+  const loopbackPolicySatisfied = requireLoopback ? observedLoopbackAllowed : true;
+  const checks = {
+    insideWrite: probeResult.insideWrite === true,
+    outsideReadBlocked: probeResult.outsideReadBlocked === true,
+    outsideWriteBlocked: probeResult.outsideWriteBlocked === true,
+    networkPolicySatisfied: requireNetworkBlocked
+      ? loopbackPolicySatisfied && observedNetworkBlocked
+      : true,
+  };
+  return {
+    checks,
+    passed: Object.values(checks).every(Boolean),
+    observedNetworkBlocked,
+    observedLoopbackAllowed,
+  };
+}
+
 export async function verifySandboxAdapter({
   adapter,
   workspace,
   timeoutMs = 5_000,
   requireNetworkBlocked = true,
+  requireLoopback = true,
 } = {}) {
   const normalized = normalizeSandboxAdapter(adapter);
   if (!normalized.enforced) {
@@ -124,6 +155,9 @@ export async function verifySandboxAdapter({
   }
   if (typeof requireNetworkBlocked !== "boolean") {
     throw new TypeError("requireNetworkBlocked must be a boolean");
+  }
+  if (typeof requireLoopback !== "boolean") {
+    throw new TypeError("requireLoopback must be a boolean");
   }
 
   const root = resolveWorkspace(workspace);
@@ -155,23 +189,21 @@ export async function verifySandboxAdapter({
       };
     }
 
-    const observedNetworkBlocked = probe.result.externalNetworkBlocked === true;
-    const checks = {
-      insideWrite: probe.result.insideWrite === true,
-      outsideReadBlocked: probe.result.outsideReadBlocked === true,
-      outsideWriteBlocked: probe.result.outsideWriteBlocked === true,
-      networkPolicySatisfied: requireNetworkBlocked
-        ? probe.result.loopbackAllowed === true && loopbackConnected && observedNetworkBlocked
-        : true,
-    };
-    const passed = Object.values(checks).every(Boolean);
-    return {
-      passed,
-      adapter: normalized,
-      reason: passed ? "all sandbox checks passed" : "one or more sandbox checks failed",
-      checks,
-      observedNetworkBlocked,
+    const evaluation = evaluateSandboxProbeChecks({
+      probeResult: probe.result,
+      loopbackConnected,
       requireNetworkBlocked,
+      requireLoopback,
+    });
+    return {
+      passed: evaluation.passed,
+      adapter: normalized,
+      reason: evaluation.passed ? "all sandbox checks passed" : "one or more sandbox checks failed",
+      checks: evaluation.checks,
+      observedNetworkBlocked: evaluation.observedNetworkBlocked,
+      observedLoopbackAllowed: evaluation.observedLoopbackAllowed,
+      requireNetworkBlocked,
+      requireLoopback,
       stderr: probe.stderr,
     };
   } finally {

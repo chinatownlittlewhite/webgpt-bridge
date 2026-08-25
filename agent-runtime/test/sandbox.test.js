@@ -14,9 +14,11 @@ import {
   wrapWithSandbox,
 } from "../src/sandbox.js";
 import {
+  evaluateSandboxProbeChecks,
   promoteVerifiedSandboxAdapter,
   verifySandboxAdapter,
 } from "../src/sandbox-verify.js";
+import { nativeSandboxVerificationRequirements } from "../src/native-sandbox.js";
 
 test("default sandbox adapter is explicitly unsafe for unattended execution", () => {
   const adapter = createNoSandboxAdapter();
@@ -125,6 +127,48 @@ test("macOS verified Seatbelt permits localhost while blocking external network"
   }
   assert.equal(report.passed, true, JSON.stringify(report));
   assert.equal(report.checks.networkPolicySatisfied, true);
+});
+
+test("Windows no-network verification may block loopback while still requiring external isolation", () => {
+  const probeResult = {
+    insideWrite: true,
+    outsideReadBlocked: true,
+    outsideWriteBlocked: true,
+    loopbackAllowed: false,
+    externalNetworkBlocked: true,
+  };
+  const windows = evaluateSandboxProbeChecks({
+    probeResult,
+    loopbackConnected: false,
+    requireNetworkBlocked: true,
+    requireLoopback: false,
+  });
+  assert.equal(windows.passed, true);
+  assert.equal(windows.checks.networkPolicySatisfied, true);
+
+  const loopbackRequired = evaluateSandboxProbeChecks({
+    probeResult,
+    loopbackConnected: false,
+    requireNetworkBlocked: true,
+    requireLoopback: true,
+  });
+  assert.equal(loopbackRequired.passed, false);
+  assert.equal(loopbackRequired.checks.networkPolicySatisfied, false);
+});
+
+test("native sandbox verification requirements preserve stricter Windows no-network semantics", () => {
+  assert.deepEqual(nativeSandboxVerificationRequirements({ platform: "win32", allowNetwork: false }), {
+    requireNetworkBlocked: true,
+    requireLoopback: false,
+  });
+  assert.deepEqual(nativeSandboxVerificationRequirements({ platform: "darwin", allowNetwork: false }), {
+    requireNetworkBlocked: true,
+    requireLoopback: true,
+  });
+  assert.deepEqual(nativeSandboxVerificationRequirements({ platform: "win32", allowNetwork: true }), {
+    requireNetworkBlocked: false,
+    requireLoopback: false,
+  });
 });
 
 test("Windows AppContainer adapter passes only trusted helper arguments and parent pid", () => {

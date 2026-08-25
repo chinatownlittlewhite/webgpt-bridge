@@ -75,6 +75,16 @@ export function discoverNativeSandboxAdapter({
   };
 }
 
+export function nativeSandboxVerificationRequirements({ platform = process.platform, allowNetwork = false } = {}) {
+  return {
+    requireNetworkBlocked: allowNetwork !== true,
+    // Windows AppContainer without a machine-level loopback exemption is intentionally stricter:
+    // localhost is blocked together with external network access. Do not weaken host network
+    // isolation or mutate global CheckNetIsolation settings merely to satisfy the verifier.
+    requireLoopback: platform !== "win32",
+  };
+}
+
 export async function prepareNativeSandbox({
   workspace,
   platform = process.platform,
@@ -96,7 +106,7 @@ export async function prepareNativeSandbox({
   const verification = await verifySandboxAdapter({
     adapter: discovered.adapter,
     workspace,
-    requireNetworkBlocked: allowNetwork !== true,
+    ...nativeSandboxVerificationRequirements({ platform, allowNetwork }),
   });
   const adapter = verification.passed
     ? promoteVerifiedSandboxAdapter(discovered.adapter, verification)

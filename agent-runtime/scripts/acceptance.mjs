@@ -206,7 +206,11 @@ try {
   });
   if (!skipNative) {
     assert.equal(server.runtime.normalSandbox.discovery.available, true, "native sandbox backend must be available");
-    assert.equal(server.runtime.normalSandbox.verification?.passed, true, "native sandbox probe must pass");
+    assert.equal(
+      server.runtime.normalSandbox.verification?.passed,
+      true,
+      `native sandbox probe must pass: ${JSON.stringify(server.runtime.normalSandbox.verification)}`,
+    );
     assert.equal(server.runtime.normalSandbox.summary.autoRunSafe, true, "verified sandbox must be promoted");
     stage("native Node/npm/Git/process/worktree compatibility");
     await verifyNativeDeveloperWorkflow(server.runtime);
