@@ -82,6 +82,10 @@ export function nativeSandboxVerificationRequirements({ platform = process.platf
     // localhost is blocked together with external network access. Do not weaken host network
     // isolation or mutate global CheckNetIsolation settings merely to satisfy the verifier.
     requireLoopback: platform !== "win32",
+    // Windows profile creation and ACL initialization are substantially heavier than Seatbelt/bwrap.
+    // Keep verification bounded, but give the real AppContainer probe the same human-scale budget
+    // as the native developer smoke instead of failing a secure first launch at the 5s default.
+    timeoutMs: platform === "win32" ? 30_000 : 5_000,
   };
 }
 
