@@ -15,6 +15,7 @@ import {
   wrapWithSandbox,
 } from "../src/sandbox.js";
 import {
+  createSandboxProbeEnvironment,
   evaluateSandboxProbeChecks,
   promoteVerifiedSandboxAdapter,
   verifySandboxAdapter,
@@ -128,6 +129,30 @@ test("macOS verified Seatbelt permits localhost while blocking external network"
   }
   assert.equal(report.passed, true, JSON.stringify(report));
   assert.equal(report.checks.networkPolicySatisfied, true);
+});
+
+test("Windows sandbox probe supplies a workspace-local LOCALAPPDATA required by AppContainer", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "webgpt-win-probe-env-"));
+  try {
+    const env = createSandboxProbeEnvironment(workspace, {
+      platform: "win32",
+      sourceEnv: {
+        PATH: "C:\\tools",
+        SystemRoot: "C:\\Windows",
+        LOCALAPPDATA: "C:\\host-private\\Local",
+      },
+    });
+    assert.equal(env.PATH, "C:\\tools");
+    assert.equal(env.SystemRoot, "C:\\Windows");
+    assert.notEqual(env.LOCALAPPDATA, "C:\\host-private\\Local");
+    assert.ok(env.LOCALAPPDATA.startsWith(workspace));
+    assert.ok(env.APPDATA.startsWith(workspace));
+    assert.ok(env.USERPROFILE.startsWith(workspace));
+    assert.equal(fs.statSync(env.LOCALAPPDATA).isDirectory(), true);
+    assert.equal(fs.statSync(env.APPDATA).isDirectory(), true);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test("Windows no-network verification may block loopback while still requiring external isolation", () => {

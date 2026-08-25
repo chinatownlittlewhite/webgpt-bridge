@@ -18,6 +18,41 @@ function listenLoopback() {
   });
 }
 
+export function createSandboxProbeEnvironment(
+  workspace,
+  { platform = process.platform, sourceEnv = process.env } = {},
+) {
+  const temp = createWorkspaceTemp(workspace);
+  const env = {
+    PATH: sourceEnv.PATH ?? "",
+    LANG: sourceEnv.LANG ?? "C.UTF-8",
+    HOME: workspace,
+    TMPDIR: temp,
+    TEMP: temp,
+    TMP: temp,
+  };
+  if (platform !== "win32") return env;
+
+  // AppContainer process creation resolves profile storage through LOCALAPPDATA.
+  // Keep that required host variable inside the workspace rather than exposing
+  // the user's real profile directories to the sandboxed child.
+  const profile = path.join(temp, "windows-profile");
+  const appDataRoot = path.join(profile, "AppData");
+  const appData = path.join(appDataRoot, "Roaming");
+  const localAppData = path.join(appDataRoot, "Local");
+  fs.mkdirSync(appData, { recursive: true });
+  fs.mkdirSync(localAppData, { recursive: true });
+  return {
+    ...env,
+    SystemRoot: sourceEnv.SystemRoot ?? sourceEnv.WINDIR ?? "C:\\Windows",
+    WINDIR: sourceEnv.WINDIR ?? sourceEnv.SystemRoot ?? "C:\\Windows",
+    PATHEXT: sourceEnv.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+    USERPROFILE: profile,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+  };
+}
+
 function runProbe({ adapter, workspace, outsidePath, port, timeoutMs }) {
   const script = `
 import fs from "node:fs";
@@ -61,19 +96,7 @@ process.stdout.write(JSON.stringify(result));
       cwd: workspace,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        PATH: process.env.PATH ?? "",
-        LANG: process.env.LANG ?? "C.UTF-8",
-        HOME: workspace,
-        TMPDIR: createWorkspaceTemp(workspace),
-        TEMP: createWorkspaceTemp(workspace),
-        TMP: createWorkspaceTemp(workspace),
-        ...(process.platform === "win32" ? {
-          SystemRoot: process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows",
-          WINDIR: process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",
-          PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
-        } : {}),
-      },
+      env: createSandboxProbeEnvironment(workspace),
     });
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString("utf8");
