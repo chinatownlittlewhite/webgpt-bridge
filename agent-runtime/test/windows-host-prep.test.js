@@ -23,7 +23,8 @@ test("Windows host preparation has a fixed null-device-only command surface", ()
   assert.match(source, /SetKernelObjectSecurity/);
   assert.match(source, /FileGenericRead\s*=\s*0x00120089/);
   assert.match(source, /FileGenericWrite\s*=\s*0x00120116/);
-  assert.match(source, /NullDeviceAccessMask\s*=\s*unchecked\(\(int\)\(FileGenericRead\s*\|\s*FileGenericWrite\)\)/);
+  assert.match(source, /FileGenericExecute\s*=\s*0x001200A0/);
+  assert.match(source, /NullDeviceAccessMask\s*=\s*unchecked\(\(int\)\(FileGenericRead\s*\|\s*FileGenericWrite\s*\|\s*FileGenericExecute\)\)/);
   assert.doesNotMatch(source, /NullDeviceAccessMask\s*=\s*unchecked\(\(int\)\(GenericRead\s*\|\s*GenericWrite\)\)/);
   assert.match(source, /SeKernelObject/);
   assert.match(source, /LabelSecurityInformation/);
