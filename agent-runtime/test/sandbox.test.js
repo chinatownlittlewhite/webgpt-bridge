@@ -242,7 +242,7 @@ test("Windows helper grants runtime ACLs through Win32 APIs without spawning ica
   assert.match(source, /Native\.GetNamedSecurityInfoW/);
   assert.match(source, /Native\.SetEntriesInAclW/);
   assert.match(source, /Native\.SetNamedSecurityInfoW/);
-  assert.match(source, /if \(profile\.Created\)\s*\{\s*GrantAcl\(workspace, appContainerSid, modify: true\);\s*\}/s);
+  assert.match(source, /if \(profile\.Created\)\s*\{[\s\S]*?GrantAcl\(workspace, appContainerSid, modify: true\);[\s\S]*?\}/);
   assert.doesNotMatch(source, /icacls\.exe/);
   assert.doesNotMatch(source, /Process\.Start\(psi\)/);
   const traversalStart = source.indexOf("private static void GrantTraversalAcl");
@@ -258,6 +258,15 @@ test("native sandbox verification uses a small workspace-local probe directory",
   assert.match(source, /const probeWorkspace = fs\.mkdtempSync\(path\.join\(createWorkspaceTemp\(root\), "sandbox-probe-"\)\);/);
   assert.match(source, /workspace: probeWorkspace/);
   assert.match(source, /fs\.rmSync\(probeWorkspace, \{ recursive: true, force: true \}\);/);
+});
+
+test("Windows native sandbox verification enables bounded helper stage diagnostics", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const verifier = fs.readFileSync(path.join(here, "..", "src", "sandbox-verify.js"), "utf8");
+  const helper = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
+  assert.match(verifier, /LPC_SANDBOX_DIAGNOSTICS: "1"/);
+  assert.match(helper, /LPC_SANDBOX_DIAGNOSTICS/);
+  assert.match(helper, /sandbox-stage:/);
 });
 
 test("Windows AppContainer adapter passes only trusted helper arguments and parent pid", () => {

@@ -42,10 +42,19 @@ internal static class Program
     private const int StdErrorHandle = -12;
     private const string InternetClientCapabilitySid = "S-1-15-3-1";
 
+    private static void Trace(string stage)
+    {
+        if (Environment.GetEnvironmentVariable("LPC_SANDBOX_DIAGNOSTICS") == "1")
+        {
+            Console.Error.WriteLine($"sandbox-stage:{stage}");
+        }
+    }
+
     public static int Main(string[] args)
     {
         try
         {
+            Trace("start");
             var options = Options.Parse(args);
             var workspace = Path.GetFullPath(options.Workspace);
             var cwd = Path.GetFullPath(options.Cwd);
@@ -62,22 +71,30 @@ internal static class Program
 
             var profileName = BuildProfileName(options.ProfilePrefix, workspace);
             var profile = EnsureAppContainerProfile(profileName);
+            Trace("profile-ready");
             var appContainerSid = profile.Sid;
             try
             {
                 if (profile.Created)
                 {
+                    Trace("workspace-acl-start");
                     GrantAcl(workspace, appContainerSid, modify: true);
+                    Trace("workspace-acl-done");
                 }
+                Trace("executable-traversal-start");
                 GrantTraversalAcl(Path.GetDirectoryName(executable)!, appContainerSid);
+                Trace("executable-traversal-done");
                 GrantAcl(executable, appContainerSid, modify: false);
+                Trace("executable-acl-done");
                 foreach (var readPath in options.ReadPaths)
                 {
                     var resolved = Path.GetFullPath(readPath);
                     if (Directory.Exists(resolved) || File.Exists(resolved))
                     {
+                        Trace("read-acl-start");
                         GrantTraversalAcl(resolved, appContainerSid);
                         GrantAcl(resolved, appContainerSid, modify: false);
+                        Trace("read-acl-done");
                     }
                 }
                 foreach (var writePath in options.WritePaths)
@@ -89,6 +106,7 @@ internal static class Program
                     }
                 }
 
+                Trace("launch-start");
                 return LaunchInAppContainer(
                     appContainerSid,
                     executable,
@@ -306,6 +324,7 @@ internal static class Program
             }
 
             var commandLine = new StringBuilder(BuildWindowsCommandLine(command));
+            Trace("create-process-start");
             // lpEnvironment is NULL, so CreateProcessW inherits the caller's environment.
             // Do not set CREATE_UNICODE_ENVIRONMENT unless we actually supply a Unicode environment block.
             var flags = ExtendedStartupInfoPresent | CreateSuspended;
@@ -326,6 +345,7 @@ internal static class Program
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcessW failed");
             }
+            Trace("create-process-done");
 
             try
             {
@@ -351,6 +371,8 @@ internal static class Program
                     {
                         throw new Win32Exception(Marshal.GetLastWin32Error(), "ResumeThread failed");
                     }
+                    Trace("child-resumed");
+                    Trace("wait-start");
 
                     var wait = Native.WaitForMultipleObjects(
                         2,
@@ -358,6 +380,7 @@ internal static class Program
                         false,
                         Infinite
                     );
+                    Trace($"wait-done-{wait}");
                     if (wait == WaitObject0 + 1)
                     {
                         Native.TerminateJobObject(job, 137);

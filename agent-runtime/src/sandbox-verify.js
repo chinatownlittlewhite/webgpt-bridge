@@ -47,6 +47,7 @@ export function createSandboxProbeEnvironment(
     SystemRoot: sourceEnv.SystemRoot ?? sourceEnv.WINDIR ?? "C:\\Windows",
     WINDIR: sourceEnv.WINDIR ?? sourceEnv.SystemRoot ?? "C:\\Windows",
     PATHEXT: sourceEnv.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+    LPC_SANDBOX_DIAGNOSTICS: "1",
     USERPROFILE: profile,
     APPDATA: appData,
     LOCALAPPDATA: localAppData,
