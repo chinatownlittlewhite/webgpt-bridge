@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createApprovalRequest, requestHostApproval } from "./approval.js";
 import { discoverManagedWorktreeGitAccess } from "./git-metadata.js";
-import { normalizedPlatform, resolvePlatformArgv } from "./platform.js";
+import { normalizedPlatform, resolvePlatformArgv, stageWindowsNodeCliRuntime } from "./platform.js";
 import { classifyCommand } from "./policy.js";
 import { killProcessTree, wrapWithParentGuard } from "./process-tree.js";
 import { normalizeSandboxAdapter, sandboxSummary, wrapWithSandbox } from "./sandbox.js";
@@ -170,12 +170,16 @@ export function createCommandRunner({
   platform = process.platform,
   auditLogger,
   trustedExecutablePaths = {},
+  platformRuntimeStager = stageWindowsNodeCliRuntime,
 } = {}) {
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > DEFAULT_TIMEOUT_MS) {
     throw new RangeError(`timeoutMs must be between 1 and ${DEFAULT_TIMEOUT_MS}`);
   }
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new RangeError("maxOutputBytes must be a positive integer");
+  }
+  if (typeof platformRuntimeStager !== "function") {
+    throw new TypeError("platformRuntimeStager must be a trusted host function");
   }
   const sandbox = normalizeSandboxAdapter(sandboxAdapter);
   const trustedExecutables = normalizeTrustedExecutablePaths(trustedExecutablePaths, platform);
@@ -227,6 +231,16 @@ export function createCommandRunner({
       const error = `executable '${argv[0]}' was not found on the trusted PATH`;
       audit(auditLogger, { type: "command_not_found", argv, cwd: normalizedCwd, platform, error });
       return { status: "spawn_error", policy, sandbox: sandboxInfo, error };
+    }
+    try {
+      platformCommand = platformRuntimeStager(platformCommand, {
+        workspace: resolvedCwd,
+        platform,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      audit(auditLogger, { type: "command_platform_error", argv, cwd: normalizedCwd, platform, error: message });
+      return { status: "platform_error", policy, sandbox: sandboxInfo, error: message };
     }
 
     let approvalRequest = null;
