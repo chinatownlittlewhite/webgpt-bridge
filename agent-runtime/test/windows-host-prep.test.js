@@ -52,6 +52,22 @@ test("Windows NUL preparation adds only the regular-AppContainer package compati
   assert.match(source, /new CommonAce\([\s\S]*preparation\.AppContainerSid/);
 });
 
+test("Windows NUL preparation removes both product-owned compatibility grants", () => {
+  const source = fs.readFileSync(hostPrepSource, "utf8");
+  assert.match(
+    source,
+    /RemovePreparation\(\)[\s\S]*HasOwnedAce\(dacl, preparation\.CapabilitySid\)\s*\|\|\s*HasOwnedAce\(dacl, preparation\.AppContainerSid\)/,
+  );
+  assert.match(
+    source,
+    /RemovePreparation\(\)[\s\S]*CloneAcl\([\s\S]*skipOwnedAce:\s*true[\s\S]*preparation\.CapabilitySid[\s\S]*preparation\.AppContainerSid/,
+  );
+  assert.match(
+    source,
+    /status\s*=\s*HasOwnedAce\(remaining, preparation\.CapabilitySid\)\s*\|\|\s*HasOwnedAce\(remaining, preparation\.AppContainerSid\)/,
+  );
+});
+
 test("Windows host preparation requires the low-integrity NUL label as well as the product capability ACE", () => {
   const source = fs.readFileSync(hostPrepSource, "utf8");
   assert.match(source, /HasLowIntegrityLabel/);
