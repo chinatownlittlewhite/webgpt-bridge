@@ -13,6 +13,7 @@ if (Test-Path $InstallRoot) { throw "pre-existing WebGPT Bridge Program Files in
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw "pre-existing SYSTEM host-preparation task would invalidate installer smoke" }
 
 $installedPrep = Join-Path $InstallRoot "resources\app.asar.unpacked\agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe"
+$installedTaskXml = Join-Path $InstallRoot "resources\windows-host-prep-task.xml"
 
 try {
   & $SourcePrep --remove
@@ -23,7 +24,24 @@ try {
   if ($preInstall.status -ne "capability_ace_missing") { throw "pre-install host preparation must be capability_ace_missing: $preInstallJson" }
 
   $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S") -Wait -PassThru
-  if ($install.ExitCode -ne 0) { throw "silent NSIS installation failed with exit $($install.ExitCode)" }
+  if ($install.ExitCode -ne 0) {
+    $taskDiagnosticExit = -1
+    $taskDiagnostic = "installed task XML was not found"
+    if (Test-Path $installedTaskXml -PathType Leaf) {
+      $savedErrorActionPreference = $ErrorActionPreference
+      try {
+        $ErrorActionPreference = "Continue"
+        $taskDiagnosticOutput = & "$env:SystemRoot\System32\schtasks.exe" /Create /TN $taskName /XML $installedTaskXml /F 2>&1 | Out-String
+        $taskDiagnosticExit = $LASTEXITCODE
+      }
+      finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+      }
+      $taskDiagnostic = ([string]$taskDiagnosticOutput).Trim()
+      if ($taskDiagnostic.Length -gt 4096) { $taskDiagnostic = $taskDiagnostic.Substring(0, 4096) }
+    }
+    throw "silent NSIS installation failed with exit $($install.ExitCode); task registration diagnostic exit $taskDiagnosticExit`: $taskDiagnostic"
+  }
   if (-not (Test-Path $installedPrep -PathType Leaf)) { throw "installed host-prep helper was not found under Program Files" }
 
   $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
