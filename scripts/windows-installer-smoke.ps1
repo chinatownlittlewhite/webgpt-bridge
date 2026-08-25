@@ -44,6 +44,16 @@ try {
   $installed = $installedJson | ConvertFrom-Json
   if ($installed.status -ne "ready") { throw "installed host preparation is not ready: $installedJson" }
 
+  $repair = Start-Process -FilePath $installer.FullName -ArgumentList @("/S") -Wait -PassThru
+  if ($repair.ExitCode -ne 0) { throw "silent NSIS repair installation failed with exit $($repair.ExitCode)" }
+  if (-not (Test-Path $installedPrep -PathType Leaf)) { throw "installed host-prep helper was not restored by repair" }
+  $repairTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  if (-not $repairTask) { throw "SYSTEM host-preparation task was not restored by repair" }
+  $repairedJson = & $installedPrep --check --json
+  if ($LASTEXITCODE -ne 0) { throw "post-repair host-prep check failed with exit $LASTEXITCODE" }
+  $repaired = $repairedJson | ConvertFrom-Json
+  if ($repaired.status -ne "ready") { throw "post-repair host preparation is not ready: $repairedJson" }
+
   $uninstaller = Get-ChildItem -Path $InstallRoot -Filter "Uninstall*.exe" -File | Select-Object -First 1
   if (-not $uninstaller) { throw "installed NSIS uninstaller was not found" }
   $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList @("/S") -Wait -PassThru
