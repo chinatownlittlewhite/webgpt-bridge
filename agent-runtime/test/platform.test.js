@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isNestedWindowsAppContainer } from "../scripts/run-tests.mjs";
 import * as platformModule from "../src/platform.js";
 import {
   normalizedPlatform,
@@ -95,7 +96,11 @@ test("Windows Node CLI shim preserves lexical module paths without host-root ACL
   }
 });
 
-test("Windows sandbox stages and refreshes npm package runtime inside the host-private workspace namespace", () => {
+test("Windows sandbox stages and refreshes npm package runtime inside the host-private workspace namespace", (t) => {
+  if (isNestedWindowsAppContainer()) {
+    t.skip("host-only npm staging runs before the command enters AppContainer");
+    return;
+  }
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-win-npm-stage-"));
   try {
     const hostRoot = path.join(fixture, "host");
