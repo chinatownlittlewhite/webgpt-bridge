@@ -124,20 +124,27 @@ test("Windows sandbox stages and refreshes npm package runtime inside the host-p
     });
     const result = materialize(command, { workspace, platform: "win32" });
 
+    const stagedNode = result.argv[0];
     const stagedCli = result.argv[3];
     const canonicalWorkspace = fs.realpathSync(workspace);
+    const relativeNode = path.relative(canonicalWorkspace, stagedNode);
     const relativeCli = path.relative(canonicalWorkspace, stagedCli);
+    assert.equal(relativeNode.startsWith("..") || path.isAbsolute(relativeNode), false, "staged Node must remain inside the canonical sandbox workspace");
     assert.equal(relativeCli.startsWith("..") || path.isAbsolute(relativeCli), false, "staged npm CLI must remain inside the canonical sandbox workspace");
+    assert.match(relativeNode, /^\.webgpt-bridge[\\/]runtime[\\/]npm[\\/]/);
     assert.match(relativeCli, /^\.webgpt-bridge[\\/]runtime[\\/]npm[\\/]/);
     const stagedPackageRoot = path.dirname(path.dirname(stagedCli));
     const stagedMarker = path.join(stagedPackageRoot, "lib", "marker.js");
     assert.equal(fs.readFileSync(stagedMarker, "utf8"), "module.exports = 'staged';\n");
-    assert.equal(result.argv[0], nodePath, "external Node executable stays host-resolved rather than being copied");
+    assert.notEqual(stagedNode, nodePath, "external Node executable must be staged before entering AppContainer");
     assert.equal(result.trustedReadPaths.includes(packageRoot), false, "external npm package root must no longer be an AppContainer read grant");
+    assert.equal(result.trustedReadPaths.includes(path.dirname(nodePath)), false, "external Node directory must no longer be an AppContainer read grant");
     assert.ok(result.trustedReadPaths.includes(stagedPackageRoot), "staged npm package root must be the runtime read grant");
+    assert.ok(result.trustedPathEntries.includes(path.dirname(stagedNode)), "staged Node directory must be available for npm child scripts");
 
     fs.writeFileSync(stagedMarker, "module.exports = 'poisoned';\n", "utf8");
     const refreshed = materialize(command, { workspace, platform: "win32" });
+    assert.equal(refreshed.argv[0], stagedNode, "approval-bound resolved argv must use a stable staged Node path");
     assert.equal(refreshed.argv[3], stagedCli, "approval-bound resolved argv must use a stable staged npm CLI path");
     assert.equal(fs.readFileSync(stagedMarker, "utf8"), "module.exports = 'staged';\n", "each invocation must refresh staged npm files from the trusted host runtime");
   } finally {
