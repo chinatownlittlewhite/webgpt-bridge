@@ -13,6 +13,22 @@ function isInside(parent, child) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+function sameExistingPath(left, right) {
+  const leftStat = fs.statSync(left);
+  const rightStat = fs.statSync(right);
+  return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+}
+
+function isExistingPathInside(parent, child) {
+  let current = child;
+  while (true) {
+    if (sameExistingPath(parent, current)) return true;
+    const next = path.dirname(current);
+    if (next === current) return false;
+    current = next;
+  }
+}
+
 function assertRelativeProjectPath(requestedPath) {
   if (typeof requestedPath !== "string" || requestedPath.length === 0) {
     throw new TypeError("path must be a non-empty string");
@@ -107,12 +123,12 @@ function validateManagedWorktree(root, key, name) {
     const commonCandidate = path.resolve(linkedGitDir, commondirText);
     assertPlainDirectory(commonCandidate, "common Git directory");
     const commonGitDir = fs.realpathSync(commonCandidate);
-    if (!isInside(canonicalRoot, commonGitDir)) {
+    if (!isExistingPathInside(canonicalRoot, commonGitDir)) {
       throw new Error("managed worktree metadata is invalid: common Git directory escapes workspace");
     }
 
     const expectedWorktreesRoot = path.join(commonGitDir, "worktrees");
-    if (!isInside(expectedWorktreesRoot, linkedGitDir) || linkedGitDir === expectedWorktreesRoot) {
+    if (!isExistingPathInside(expectedWorktreesRoot, linkedGitDir) || sameExistingPath(linkedGitDir, expectedWorktreesRoot)) {
       throw new Error("managed worktree metadata is invalid: linked gitdir is outside common worktrees metadata");
     }
     return worktreeRoot;
@@ -165,7 +181,7 @@ function validateManagedWorktreeWorkspaceRoot(root) {
     }
     const hostWorkspace = parts.slice(0, markerIndex).join(path.sep) || path.parse(root).root;
     const worktreeRoot = validateManagedWorktree(hostWorkspace, parts[markerIndex + 2], parts[markerIndex + 3]);
-    if (fs.realpathSync(worktreeRoot) !== root) {
+    if (!sameExistingPath(worktreeRoot, root)) {
       throw new Error("managed worktree metadata is invalid");
     }
     return true;
