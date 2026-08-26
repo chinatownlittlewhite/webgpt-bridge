@@ -22,8 +22,8 @@ jobs:
         with:
           name: webgpt-bridge-macos-universal
           path: |
-            release/WebGPT Bridge-*-mac-universal.dmg
-            release/WebGPT Bridge-*-mac-universal.zip
+            release/WebGPT-Bridge-*-mac-universal.dmg
+            release/WebGPT-Bridge-*-mac-universal.zip
             release/*.blockmap
             release/latest-mac.yml
 
@@ -128,7 +128,7 @@ jobs:
         with:
           name: webgpt-bridge-windows-x64
           path: |
-            release/WebGPT Bridge-*-win-x64.exe
+            release/WebGPT-Bridge-*-win-x64.exe
             release/*.blockmap
             release/latest.yml
       - name: Cleanup Windows host preparation
