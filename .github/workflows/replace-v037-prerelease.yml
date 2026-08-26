@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   replace:
-    if: github.event.head_commit.message == 'release: replace v0.3.7 prerelease'
+    if: github.event.head_commit.message == 'release: retry v0.3.7 prerelease replacement'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,14 +31,7 @@ jobs:
           set -euo pipefail
 
           if gh release view v0.3.7 --json isDraft,isPrerelease > "$RUNNER_TEMP/v037-release.json" 2>/dev/null; then
-            node - "$RUNNER_TEMP/v037-release.json" <<'NODE'
-          const fs = require("node:fs");
-          const release = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          if (release.isDraft || release.isPrerelease !== true) {
-            console.error("refusing to replace v0.3.7 because the existing release is not the expected published prerelease");
-            process.exit(1);
-          }
-          NODE
+            node -e 'const fs=require("node:fs"); const release=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (release.isDraft || release.isPrerelease !== true) { console.error("refusing to replace v0.3.7 because the existing release is not the expected published prerelease"); process.exit(1); }' "$RUNNER_TEMP/v037-release.json"
             gh release delete v0.3.7 --yes
           else
             echo "v0.3.7 release is already absent; continuing idempotently"
