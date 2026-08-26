@@ -1,0 +1,47 @@
+name: Cleanup non-main branches
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.event.head_commit.message == 'cleanup non-main branches'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete every branch except main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          default_branch="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch')"
+          if [ "$default_branch" != "main" ]; then
+            echo "refusing cleanup because default branch is $default_branch, not main" >&2
+            exit 1
+          fi
+
+          mapfile -t branches < <(gh api --paginate "repos/$GITHUB_REPOSITORY/branches?per_page=100" --jq '.[].name')
+          printf 'Branches before cleanup:\n'
+          printf '  %s\n' "${branches[@]}"
+
+          for branch in "${branches[@]}"; do
+            if [ "$branch" = "main" ]; then
+              continue
+            fi
+            echo "Deleting branch: $branch"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch"
+          done
+
+          mapfile -t remaining < <(gh api --paginate "repos/$GITHUB_REPOSITORY/branches?per_page=100" --jq '.[].name')
+          if [ "${#remaining[@]}" -ne 1 ] || [ "${remaining[0]}" != "main" ]; then
+            echo "branch cleanup incomplete" >&2
+            printf 'Remaining: %s\n' "${remaining[*]}" >&2
+            exit 1
+          fi
+          echo "Only main remains."
