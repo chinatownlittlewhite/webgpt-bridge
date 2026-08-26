@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   replace:
-    if: github.event.head_commit.message == 'release: retry v0.3.7 prerelease replacement'
+    if: github.event.head_commit.message == 'retry v0.3.7 prerelease replacement'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
