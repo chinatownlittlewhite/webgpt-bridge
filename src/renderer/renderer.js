@@ -65,10 +65,24 @@ function renderUpdate(state) {
 
   const button = byId("updateAction");
   button.disabled = state.status === "checking" || state.status === "downloading" || state.status === "installing";
-  if (state.canInstall) button.textContent = "更新并重新启动";
-  else if (state.canDownload) button.textContent = `下载 v${state.availableVersion}`;
-  else if (state.status === "error") button.textContent = "重试";
-  else button.textContent = "检查更新";
+  if ((state.status === "available" || state.status === "downloaded") && state.availableVersion) {
+    button.textContent = `在 GitHub 下载 v${state.availableVersion}`;
+  } else if (state.status === "up_to_date") {
+    button.textContent = "再次检查";
+  } else if (state.status === "error") {
+    button.textContent = "重试";
+  } else {
+    button.textContent = "检查更新";
+  }
+}
+
+function openAvailableRelease() {
+  const version = String(updateState?.availableVersion || "").trim();
+  if (!version) return false;
+  const base = String(byId("updateAction").dataset.releaseBase || "");
+  if (!base) return false;
+  window.open(`${base}${encodeURIComponent(version)}`, "_blank", "noopener,noreferrer");
+  return true;
 }
 
 async function save() {
@@ -93,9 +107,11 @@ byId("stop").addEventListener("click", async () => { await api.stop(); renderSta
 byId("openChatGPT").addEventListener("click", () => api.openChatGPT());
 byId("updateAction").addEventListener("click", async () => {
   try {
-    if (updateState?.canInstall) await api.installUpdateAndRestart();
-    else if (updateState?.canDownload) await api.downloadUpdate();
-    else await api.checkForUpdates();
+    if (updateState?.status === "available" || updateState?.status === "downloaded") {
+      if (!openAvailableRelease()) throw new Error("release unavailable");
+    } else {
+      await api.checkForUpdates();
+    }
   } catch {
     message("更新操作失败，请重试。", true);
   }
