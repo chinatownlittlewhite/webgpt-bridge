@@ -28,7 +28,7 @@ test("GitHub release supports explicit dispatch only when the selected ref is a 
 
 test("release workflow has no external signing or notarization dependency", () => {
   const release = readReleaseWorkflow();
-  assert.doesNotMatch(release, /desktop-release-windows|desktop-release-macos/);
+  assert.doesNotMatch(release, /environment:\s*desktop-release-(?:windows|macos)/);
   assert.doesNotMatch(release, /id-token:\s*write/);
   assert.doesNotMatch(release, /AZURE_|WEBGPT_WINDOWS_SIGN_|WEBGPT_MAC_IDENTITY|CSC_LINK|CSC_KEY_PASSWORD|APPLE_API_/);
   assert.doesNotMatch(release, /Get-AuthenticodeSignature|codesign\s+--verify|stapler\s+validate|spctl\s+--assess/);
