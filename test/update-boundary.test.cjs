@@ -53,15 +53,16 @@ test("update state subscription is removable", () => {
   assert.match(preload, /ipcRenderer\.removeListener\("update:state",\s*listener\)/);
 });
 
-test("renderer exposes one bounded update panel and state-dependent action", () => {
+test("renderer exposes one bounded update panel and a fixed GitHub release action", () => {
   for (const id of ["updateCurrentVersion", "updateHeadline", "updateNotes", "updateProgress", "updateProgressBar", "updateMeta", "updateAction"]) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
   }
   assert.match(renderer, /api\.getUpdateState\(\)/);
   assert.match(renderer, /api\.onUpdateState/);
   assert.match(renderer, /api\.checkForUpdates\(\)/);
-  assert.match(renderer, /api\.downloadUpdate\(\)/);
-  assert.match(renderer, /api\.installUpdateAndRestart\(\)/);
+  assert.match(html, /data-release-base="https:\/\/github\.com\/chinatownlittlewhite\/webgpt-bridge\/releases\/tag\/v"/);
+  assert.match(renderer, /window\.open\(/);
+  assert.match(renderer, /encodeURIComponent\(version\)/);
   assert.match(renderer, /updateNotes[^\n]*\.textContent|byId\(["']updateNotes["']\)\.textContent/);
   assert.doesNotMatch(renderer, /updateNotes[^\n]*\.innerHTML|byId\(["']updateNotes["']\)\.innerHTML/);
   assert.doesNotMatch(renderer, /fetch\(|XMLHttpRequest|setFeedURL|github\.com\/.*releases/i);
