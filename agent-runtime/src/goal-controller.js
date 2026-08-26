@@ -4,7 +4,7 @@ import { createMemoryGoalSessionStore } from "./goal-store.js";
 
 const RECOVERABLE_STATUSES = new Set(["active", "blocked_approval"]);
 const MARKER_KIND = "goal_tool";
-const INTERRUPTED_FEEDBACK = "a previous Goal mutation was interrupted before durable completion; the session failed closed to prevent replaying an uncertain tool effect";
+const INTERRUPTED_FEEDBACK = "a previous Goal operation was interrupted before durable completion; the session failed closed to prevent replaying an uncertain effect";
 
 function hashInput(value) {
   try {
@@ -70,9 +70,7 @@ function createObservedStore(store, state) {
       try {
         return store.save(session);
       } catch (error) {
-        if (session?.id && state.intentSessions.has(session.id)) {
-          state.saveFailures.add(session.id);
-        }
+        if (session?.id) state.saveFailures.add(session.id);
         throw error;
       }
     },
@@ -146,6 +144,24 @@ function persistenceErrorResult(controller, sessionId, reason) {
   });
 }
 
+function beginTrackedOperation(state, sessionId) {
+  state.preflightFailures.delete(sessionId);
+  state.saveFailures.delete(sessionId);
+}
+
+function finishTrackedOperation(state, store, sessionId) {
+  const preflightFailed = state.preflightFailures.delete(sessionId);
+  const saveFailed = state.saveFailures.delete(sessionId);
+  const durableUncertain = saveFailed && durableStateStillUncertain(store, sessionId);
+  state.intentSessions.delete(sessionId);
+  return { preflightFailed, saveFailed, durableUncertain };
+}
+
+function failClosedPersistence(controller, state, sessionId, reason, failClosed = true) {
+  if (failClosed) state.failedClosedSessions.set(sessionId, reason);
+  return persistenceErrorResult(controller, sessionId, reason);
+}
+
 export function createGoalController(options = {}) {
   const store = options.sessionStore ?? createMemoryGoalSessionStore();
   const state = {
@@ -181,35 +197,36 @@ export function createGoalController(options = {}) {
     });
   }
 
+  function persistenceFailure(sessionId, tracking, operation) {
+    if (tracking.preflightFailed) {
+      const reason = `${operation} could not durably persist its mutation intent before the protected effect started`;
+      return failClosedPersistence({ status }, state, sessionId, reason);
+    }
+    if (tracking.saveFailed) {
+      const reason = tracking.durableUncertain
+        ? `${operation} completed an effect but its resulting state could not be durably persisted; the session failed closed to prevent automatic replay`
+        : `${operation} state could not be durably persisted; the session failed closed instead of reporting an uncommitted result`;
+      return failClosedPersistence({ status }, state, sessionId, reason);
+    }
+    return null;
+  }
+
   async function step(input, trustedContext = {}) {
     const sessionId = input?.sessionId;
     if (typeof sessionId === "string" && state.failedClosedSessions.has(sessionId)) {
       return alreadyFailed(sessionId);
     }
-    if (typeof sessionId === "string") {
-      state.preflightFailures.delete(sessionId);
-      state.saveFailures.delete(sessionId);
-    }
+    if (typeof sessionId === "string") beginTrackedOperation(state, sessionId);
 
     const result = await core.step(input, trustedContext);
     if (typeof sessionId !== "string") return result;
 
-    const preflightFailed = state.preflightFailures.delete(sessionId);
-    const saveFailed = state.saveFailures.delete(sessionId);
-    const durableUncertain = saveFailed && durableStateStillUncertain(store, sessionId);
-    state.intentSessions.delete(sessionId);
-
-    if (preflightFailed) {
-      const reason = "Goal mutation intent could not be durably persisted; no tool effect was started";
-      state.failedClosedSessions.set(sessionId, reason);
-      return persistenceErrorResult({ status }, sessionId, reason);
-    }
-    if (durableUncertain) {
-      const reason = "Goal tool effect completed but its resulting state could not be durably persisted; the session failed closed to prevent automatic replay";
-      state.failedClosedSessions.set(sessionId, reason);
-      return persistenceErrorResult({ status }, sessionId, reason);
-    }
-    return result;
+    const failure = persistenceFailure(
+      sessionId,
+      finishTrackedOperation(state, store, sessionId),
+      "Goal step",
+    );
+    return failure ?? result;
   }
 
   async function finish(input, trustedContext = {}) {
@@ -217,14 +234,40 @@ export function createGoalController(options = {}) {
     if (typeof sessionId === "string" && state.failedClosedSessions.has(sessionId)) {
       return alreadyFailed(sessionId);
     }
-    return core.finish(input, trustedContext);
+    if (typeof sessionId === "string") beginTrackedOperation(state, sessionId);
+
+    const result = await core.finish(input, trustedContext);
+    if (typeof sessionId !== "string") return result;
+
+    const failure = persistenceFailure(
+      sessionId,
+      finishTrackedOperation(state, store, sessionId),
+      "Goal finish",
+    );
+    return failure ?? result;
   }
 
   async function cancel(sessionId) {
-    const result = await core.cancel(sessionId);
-    if (typeof sessionId === "string" && !durableStateStillUncertain(store, sessionId)) {
-      state.failedClosedSessions.delete(sessionId);
+    if (typeof sessionId !== "string") return core.cancel(sessionId);
+    const current = core.status(sessionId);
+    if (!RECOVERABLE_STATUSES.has(current.status)) return core.cancel(sessionId);
+
+    beginTrackedOperation(state, sessionId);
+    if (!persistMutationIntent(store, state, sessionId, "goal_cancel", {})) {
+      finishTrackedOperation(state, store, sessionId);
+      const reason = "Goal cancel could not durably persist its cancellation intent before process cleanup started";
+      return failClosedPersistence({ status }, state, sessionId, reason, false);
     }
+
+    const result = await core.cancel(sessionId);
+    const tracking = finishTrackedOperation(state, store, sessionId);
+    if (tracking.saveFailed) {
+      const reason = tracking.durableUncertain
+        ? "Goal cancel performed cleanup but its terminal state could not be durably persisted; the session failed closed to prevent replaying uncertain cleanup"
+        : "Goal cancel terminal state could not be durably persisted; cancellation was not reported as committed";
+      return failClosedPersistence({ status }, state, sessionId, reason);
+    }
+    state.failedClosedSessions.delete(sessionId);
     return result;
   }
 
