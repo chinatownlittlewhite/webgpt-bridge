@@ -19,9 +19,9 @@ function basenames(dir) {
 
 function validateReleaseAssets({ version, windowsDir, macDir }) {
   if (!version || !windowsDir || !macDir) throw new Error("--version, --windows, and --mac are required");
-  const winInstaller = `WebGPT Bridge-${version}-win-x64.exe`;
-  const macDmg = `WebGPT Bridge-${version}-mac-universal.dmg`;
-  const macZip = `WebGPT Bridge-${version}-mac-universal.zip`;
+  const winInstaller = `WebGPT-Bridge-${version}-win-x64.exe`;
+  const macDmg = `WebGPT-Bridge-${version}-mac-universal.dmg`;
+  const macZip = `WebGPT-Bridge-${version}-mac-universal.zip`;
   requireFile(windowsDir, winInstaller);
   requireFile(macDir, macDmg);
   requireFile(macDir, macZip);
