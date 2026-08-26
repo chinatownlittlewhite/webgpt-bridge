@@ -151,3 +151,113 @@ test("restored Goal sessions hand bounded project instructions back to the orche
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test("Goal sessions allow only one non-cancel mutation while a tool action is in flight", async () => {
+  let markStarted;
+  let releaseInvoke;
+  let calls = 0;
+  const startedInvoke = new Promise((resolve) => { markStarted = resolve; });
+  const release = new Promise((resolve) => { releaseInvoke = resolve; });
+  const serializedTool = {
+    name: "serialized_tool",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id"],
+      properties: { id: { type: "integer" } },
+    },
+    async invoke() {
+      calls += 1;
+      if (calls === 1) {
+        markStarted();
+        await release;
+      }
+      return { status: "completed" };
+    },
+  };
+  const controller = createGoalController({ tools: [serializedTool], verificationTasks: [] });
+  const goal = controller.start({ goal: "Serialize Goal mutations" });
+  const firstStep = controller.step({ sessionId: goal.sessionId, tool: "serialized_tool", input: { id: 1 } });
+  await startedInvoke;
+
+  try {
+    const secondStep = await controller.step({ sessionId: goal.sessionId, tool: "serialized_tool", input: { id: 2 } });
+    assert.equal(secondStep.status, "operation_in_progress");
+    assert.equal(secondStep.mustContinue, false);
+    assert.equal(calls, 1, "overlapping goal_step must not invoke a second tool");
+
+    const overlappingFinish = await controller.finish({ sessionId: goal.sessionId, summary: "too early" });
+    assert.equal(overlappingFinish.status, "operation_in_progress");
+    assert.equal(overlappingFinish.mustContinue, false);
+  } finally {
+    releaseInvoke();
+    await firstStep;
+  }
+
+  const completed = await controller.finish({ sessionId: goal.sessionId, summary: "serialized action completed" });
+  assert.equal(completed.status, "completed");
+});
+
+test("external orchestrator preserves goal_mode start failures instead of degrading them to not_found", async () => {
+  const workspace = makeWorkspace("wgb-orchestrator-capacity-");
+  try {
+    const tools = createCoreTools({
+      workspace,
+      goalVerificationTasks: [],
+      goalMaxSessions: 1,
+    });
+    const occupied = toolByName(tools, "goal_mode").invoke({ goal: "Occupy the only Goal slot" });
+    assert.equal(occupied.status, "active");
+
+    const run = createExternalGoalOrchestrator({ tools, maxModelTurns: 2 });
+    let modelCalls = 0;
+    const result = await run({ goal: "This Goal cannot start" }, {
+      modelStep: async () => {
+        modelCalls += 1;
+        return { type: "finish", summary: "should never be called" };
+      },
+    });
+
+    assert.equal(result.status, "capacity_reached");
+    assert.equal(result.mustContinue, false);
+    assert.equal(result.orchestratorTurns, 0);
+    assert.equal(modelCalls, 0);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("external orchestrator audits a bounded terminal outcome", async () => {
+  const workspace = makeWorkspace("wgb-orchestrator-audit-");
+  try {
+    const events = [];
+    const auditLogger = { record(event) { events.push(event); } };
+    const tools = createCoreTools({ workspace, goalVerificationTasks: [] });
+    const run = createExternalGoalOrchestrator({ tools, auditLogger, maxModelTurns: 2 });
+    const result = await run({ goal: "Finish with an auditable outcome" }, {
+      modelStep: async () => ({ type: "finish", summary: "done" }),
+    });
+
+    assert.equal(result.status, "completed");
+    const terminal = events.findLast((event) => event.type === "orchestrator_result");
+    assert.ok(terminal, "expected a terminal orchestrator_result audit event");
+    assert.equal(terminal.sessionId, result.sessionId);
+    assert.equal(terminal.status, "completed");
+    assert.equal(terminal.orchestratorTurns, 1);
+    assert.equal(Object.hasOwn(terminal, "summary"), false, "terminal audit should not copy model summary content");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("capabilities advertise single-writer Goal mutation and terminal-outcome audit guarantees", () => {
+  const workspace = makeWorkspace("wgb-orchestrator-capabilities-");
+  try {
+    const capabilities = toolByName(createCoreTools({ workspace }), "get_capabilities").invoke({});
+    assert.equal(capabilities.goalMode.singleWriterMutations, true);
+    assert.equal(capabilities.audit.orchestratorTerminalOutcomes, true);
+    assert.equal(capabilities.guarantees.goalSessionMutationsSingleWriter, true);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
