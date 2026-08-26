@@ -13,7 +13,7 @@ function createBuilderConfig(env = process.env) {
   const config = {
     appId: "com.localagenthost.desktop",
     productName: "WebGPT Bridge",
-    artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
+    artifactName: "WebGPT-Bridge-${version}-${os}-${arch}.${ext}",
     asar: true,
     asarUnpack: ["agent-runtime/**/*"],
     npmRebuild: false,
