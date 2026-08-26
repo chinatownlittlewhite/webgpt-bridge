@@ -53,7 +53,7 @@ test("E2E config generator refuses non-loopback feeds", () => {
   }), /127\.0\.0\.1/);
 });
 
-test("E2E control uses packaged metadata and the same explicit updater methods", () => {
+test("E2E control remains test-only and uses explicit updater methods", () => {
   const control = fs.readFileSync(path.join(root, "src", "update-e2e-control.cjs"), "utf8");
   assert.match(control, /WEBGPT_UPDATE_E2E_BUILD/);
   assert.match(control, /WEBGPT_UPDATE_E2E_EXPECTED_VERSION/);
@@ -76,18 +76,12 @@ test("E2E assertion server is loopback-only and rejects nested or traversal path
   assert.match(script, /Accept-Ranges/);
 });
 
-test("formal platform jobs gate artifact upload on signed packaged updater E2E", () => {
+test("formal GitHub release does not depend on packaged in-app updater E2E", () => {
   const release = fs.readFileSync(path.join(root, ".github", "workflows", "release-desktop.yml"), "utf8");
-  const windows = release.slice(release.indexOf("  windows:"), release.indexOf("  macos:"));
-  const mac = release.slice(release.indexOf("  macos:"), release.indexOf("  publish:"));
-  for (const section of [windows, mac]) {
-    const e2e = section.indexOf("update-e2e-feed.cjs");
-    const assertion = section.indexOf("update-e2e-assert.cjs", e2e);
-    const upload = section.indexOf("actions/upload-artifact@v4");
-    assert.ok(e2e >= 0 && assertion > e2e && upload > assertion, "packaged updater E2E must finish before artifact upload");
-    assert.match(section, /90\.0\.0/);
-    assert.match(section, /90\.0\.1/);
-  }
+  assert.doesNotMatch(release, /update-e2e-feed\.cjs|update-e2e-assert\.cjs/);
+  assert.doesNotMatch(release, /90\.0\.0|90\.0\.1/);
+  assert.match(release, /npm run dist:win/);
+  assert.match(release, /npm run dist:mac/);
 });
 
 test("release publication uploads only validated top-level files", () => {
