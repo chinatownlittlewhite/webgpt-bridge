@@ -344,7 +344,9 @@ Production runtime enables file-backed Goal persistence by default under:
 .webgpt-bridge/goals
 ```
 
-Persisted JSON is treated as untrusted input and is revalidated on load. Path scope, budgets, history bounds, timestamps, and status are normalized again.
+Persisted JSON is treated as untrusted input and is revalidated on load. Path scope, budgets, history bounds, timestamps, and status are normalized again. Bounded project instructions are reloaded from the validated Goal cwd on restore rather than trusted from persisted JSON, and `goal_status` hands that context back to external orchestrators.
+
+Cancellation remains terminal even when an in-flight Goal tool or completion verifier resolves later. Trusted completion-verifier errors fail closed as bounded `continue_required` diagnostics instead of escaping the Goal boundary.
 
 The final acceptance harness explicitly starts a Goal, restarts the built MCP server, and verifies that the same session can be recovered and completed.
 

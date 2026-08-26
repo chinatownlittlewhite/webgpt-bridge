@@ -108,8 +108,25 @@ function sessionView(session, includeHistory = false) {
     verified: session.verified,
     budget: budget(session),
     lastFeedback: session.lastFeedback,
-    ...(includeHistory ? { history: session.history.slice(-20) } : {}),
+    ...(includeHistory ? {
+        history: session.history.slice(-20),
+        historyOmitted: Math.max(0, session.history.length - 20),
+        projectContext: session.projectContext ?? null,
+      } : {}),
   });
+}
+
+function terminalSessionResult(session) {
+  return { status: "already_terminal", mustContinue: false, session: sessionView(session) };
+}
+
+function loadGoalProjectContext(workspace, cwd) {
+  if (!workspace) return null;
+  try {
+    return loadProjectContext({ workspace, cwd, maxTotalBytes: 48_000 });
+  } catch {
+    return null;
+  }
 }
 
 function stopForBudget(session) {
@@ -266,6 +283,7 @@ function hydrateStoredSession(raw, workspace) {
       id: raw.id,
       ...config,
       cwd,
+      projectContext: loadGoalProjectContext(workspace, cwd),
       status: raw.status,
       verified: raw.verified === true,
       createdAt: boundedStoredTimestamp(raw.createdAt, now),
@@ -335,7 +353,9 @@ export function createGoalController({
 
   function persistSession(session) {
     try {
-      store.save(session);
+      const storedSession = { ...session };
+      delete storedSession.projectContext;
+      store.save(storedSession);
       return true;
     } catch {
       return false;
@@ -387,18 +407,12 @@ export function createGoalController({
     const scopedConfig = workspace
       ? { ...config, cwd: validateGoalCwd(workspace, config.cwd) }
       : config;
-    let projectContext = null;
-    if (workspace) {
-      try {
-        projectContext = loadProjectContext({ workspace, cwd: scopedConfig.cwd, maxTotalBytes: 48_000 });
-      } catch {
-        projectContext = null;
-      }
-    }
+    const projectContext = loadGoalProjectContext(workspace, scopedConfig.cwd);
     const now = Date.now();
     const session = {
       id: randomUUID(),
       ...scopedConfig,
+      projectContext,
       status: "active",
       verified: false,
       createdAt: now,
@@ -522,6 +536,8 @@ export function createGoalController({
       }
       addEvent(session, { type: "tool_result", tool, result: compactToolResult(result) });
 
+      if (TERMINAL.has(session.status)) return terminalSessionResult(session);
+
       if (approvalBlock(result)) {
         session.status = "blocked_approval";
         session.pendingApprovalHash = actionHash;
@@ -569,6 +585,9 @@ export function createGoalController({
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         session.activeElapsedMs += Date.now() - started;
+        if (TERMINAL.has(session.status)) {
+          return { passed: false, terminal: terminalSessionResult(session), checks };
+        }
         if (/no safe '.+' task was found/.test(message)) {
           checks.push({ task, status: "not_available", exitCode: null });
           continue;
@@ -576,6 +595,9 @@ export function createGoalController({
         return { passed: false, verified: true, checks, feedback: `${task} verification failed to run: ${message}` };
       }
       session.activeElapsedMs += Date.now() - started;
+      if (TERMINAL.has(session.status)) {
+        return { passed: false, terminal: terminalSessionResult(session), checks };
+      }
       if (approvalBlock(result)) return { passed: false, blocked: true, checks, result };
       const passed = result.status === "completed" && result.exitCode === 0;
       checks.push(verificationCheck(task, result, !passed));
@@ -676,17 +698,37 @@ export function createGoalController({
       let custom = null;
       if (typeof verifier === "function") {
         const started = Date.now();
-        const raw = await verifier({
-          goal: session.goal,
-          cwd: session.cwd,
-          acceptanceCriteria: session.acceptanceCriteria,
-          criteriaEvidence: acceptance.evidence,
-          summary: summary.trim(),
-          evidence: evidence.slice(0, 50),
-          checks: checks.checks,
-          history: session.history.slice(-40),
-        });
-        session.activeElapsedMs += Date.now() - started;
+        let raw;
+        try {
+          raw = await verifier({
+            goal: session.goal,
+            cwd: session.cwd,
+            acceptanceCriteria: session.acceptanceCriteria,
+            criteriaEvidence: acceptance.evidence,
+            summary: summary.trim(),
+            evidence: evidence.slice(0, 50),
+            checks: checks.checks,
+            history: session.history.slice(-40),
+          });
+        } catch (error) {
+          if (TERMINAL.has(session.status)) return terminalSessionResult(session);
+          const message = error instanceof Error ? error.message : String(error);
+          session.status = "active";
+          session.lastFeedback = `completion verifier failed to run: ${message}`;
+          addEvent(session, { type: "verification_feedback", feedback: session.lastFeedback });
+          return {
+            status: "continue_required",
+            mustContinue: true,
+            sessionId,
+            feedback: session.lastFeedback,
+            verification: { ...checks, custom: null },
+            budget: budget(session),
+          };
+        } finally {
+          session.activeElapsedMs += Date.now() - started;
+          session.updatedAt = Date.now();
+        }
+        if (TERMINAL.has(session.status)) return terminalSessionResult(session);
         custom = typeof raw === "boolean" ? { completed: raw } : raw;
         if (!custom || custom.completed !== true) {
           session.status = "active";

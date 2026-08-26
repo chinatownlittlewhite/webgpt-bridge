@@ -110,7 +110,7 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
         return { status: "blocked_user_input", mustContinue: false, sessionId: currentSessionId, reason: decision.reason, orchestratorTurns: turn };
       }
       if (decision.type === "cancel") {
-        return { ...goalCancel.invoke({ sessionId: currentSessionId }), orchestratorTurns: turn };
+        return { ...(await goalCancel.invoke({ sessionId: currentSessionId })), orchestratorTurns: turn };
       }
 
       const trustedContext = {
