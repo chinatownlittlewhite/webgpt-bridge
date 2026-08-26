@@ -1,0 +1,113 @@
+name: Publish repaired v0.3.7 assets
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-repair:
+    if: github.event.head_commit.message == 'publish repaired v0.3.7 assets'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+
+      - name: Verify source-only release workflow fix
+        shell: bash
+        env:
+          RELEASE_TAG_SHA: a20d9690b0c893137d68584b0661fc813e72513b
+          BUILT_SHA: 5a55a4a832269db2c3a6bf6caf3ecf9d76d4e1aa
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=50 origin "$BUILT_SHA" "$RELEASE_TAG_SHA"
+          changed="$(git diff --name-only "$BUILT_SHA" "$RELEASE_TAG_SHA")"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -Ev '^(\.github/workflows/|test/release-workflow\.test\.cjs$)' | grep -q .; then
+            echo "refusing to reuse built artifacts because product/package files changed after the validated build" >&2
+            exit 1
+          fi
+          node -e 'const p=require("./package.json"); if(p.version!=="0.3.7") process.exit(1)'
+
+      - name: Retarget v0.3.7 to the release-workflow fix commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_SHA: a20d9690b0c893137d68584b0661fc813e72513b
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f v0.3.7 "$RELEASE_TAG_SHA"
+          git push --force origin refs/tags/v0.3.7
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.3.7" --jq '.object.sha')"
+          [ "$actual" = "$RELEASE_TAG_SHA" ]
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-release-windows
+          path: raw-win
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 32976865602
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-release-macos
+          path: raw-mac
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 32976865602
+
+      - name: Stage only distributable release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release-win release-mac
+
+          cp raw-win/WebGPT-Bridge-0.3.7-win-x64.exe release-win/
+          cp raw-win/latest.yml release-win/
+          for file in raw-win/WebGPT-Bridge-0.3.7-win-x64.exe.blockmap; do cp "$file" release-win/; done
+
+          cp raw-mac/WebGPT-Bridge-0.3.7-mac-universal.dmg release-mac/
+          cp raw-mac/WebGPT-Bridge-0.3.7-mac-universal.zip release-mac/
+          cp raw-mac/latest-mac.yml release-mac/
+          for file in raw-mac/WebGPT-Bridge-0.3.7-mac-universal.dmg.blockmap raw-mac/WebGPT-Bridge-0.3.7-mac-universal.zip.blockmap; do
+            [ -f "$file" ] && cp "$file" release-mac/
+          done
+
+          find release-win release-mac -maxdepth 1 -type f -printf '%p\n' | sort
+
+      - name: Validate assets and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/validate-release-assets.cjs --version 0.3.7 --windows release-win --mac release-mac
+          node scripts/write-release-checksums.cjs release-win release-mac --out SHA256SUMS
+
+      - name: Require the existing unpublished v0.3.7 draft to be empty
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view v0.3.7 --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets > "$RUNNER_TEMP/release.json"
+          node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(r.isDraft!==true || r.assets.length!==0){console.error("expected an empty unpublished v0.3.7 draft"); process.exit(1)}' "$RUNNER_TEMP/release.json"
+
+      - name: Upload validated assets and publish stable v0.3.7
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' ASSETS < <(find release-win release-mac -maxdepth 1 -type f -print0)
+          gh release upload v0.3.7 --repo "$GITHUB_REPOSITORY" "${ASSETS[@]}" SHA256SUMS
+          gh release edit v0.3.7 --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
