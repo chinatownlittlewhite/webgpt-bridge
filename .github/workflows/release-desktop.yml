@@ -148,7 +148,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-release-windows
-          path: release/*
+          path: |
+            release/WebGPT-Bridge-*-win-x64.exe
+            release/WebGPT-Bridge-*-win-x64.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
       - name: Cleanup Windows host preparation
         if: always()
         shell: pwsh
@@ -216,7 +220,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-release-macos
-          path: release/*
+          path: |
+            release/WebGPT-Bridge-*-mac-universal.dmg
+            release/WebGPT-Bridge-*-mac-universal.dmg.blockmap
+            release/WebGPT-Bridge-*-mac-universal.zip
+            release/WebGPT-Bridge-*-mac-universal.zip.blockmap
+            release/latest-mac.yml
+          if-no-files-found: error
 
   publish:
     needs: [windows, macos]
