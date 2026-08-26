@@ -14,6 +14,7 @@ import {
   readWorkspaceFile,
   searchWorkspaceText,
 } from "./inspection.js";
+import { sandboxPreparationDiagnostic, WINDOWS_NULL_DEVICE_CAPABILITY_NAME } from "./native-sandbox.js";
 import { normalizedPlatform } from "./platform.js";
 import { createProcessManager } from "./process-manager.js";
 import { createProjectTaskRunner } from "./project-task.js";
@@ -24,6 +25,49 @@ import { INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
 function audit(logger, event) {
   try { logger?.record?.(event); } catch {}
+}
+
+function resolveWindowsHostPreparationState(windowsHostPreparationState, platform) {
+  if (windowsHostPreparationState && typeof windowsHostPreparationState === "object") return windowsHostPreparationState;
+  return Object.freeze({
+    status: platform === "win32" ? "unknown" : "unsupported",
+    usable: false,
+    capabilityName: WINDOWS_NULL_DEVICE_CAPABILITY_NAME,
+    reason: platform === "win32"
+      ? "Windows host preparation has not been probed by the runtime host"
+      : "Windows host preparation is not required on this platform",
+    remediation: null,
+  });
+}
+
+function resolveGitHubCliState(githubCliState) {
+  if (githubCliState && typeof githubCliState === "object") return githubCliState;
+  return Object.freeze({
+    status: "unknown",
+    resolvedPath: null,
+    version: null,
+    reason: "GitHub CLI has not been probed by the runtime host",
+    remediation: null,
+  });
+}
+
+function resolveNetworkSandboxState({ networkSandboxState, networkSandboxAdapter, platform = process.platform } = {}) {
+  if (networkSandboxState && typeof networkSandboxState === "object") return networkSandboxState;
+  if (networkSandboxAdapter) {
+    const sandbox = sandboxSummary(networkSandboxAdapter);
+    const usable = sandbox.autoRunSafe === true;
+    return Object.freeze({
+      status: usable ? "ready" : "unverified",
+      usable,
+      enabled: true,
+      platform,
+      allowNetwork: true,
+      reason: usable ? "dedicated network sandbox is verified" : "dedicated network sandbox is not verified",
+      recoverable: !usable,
+      sandbox,
+    });
+  }
+  return sandboxPreparationDiagnostic(null, { enabled: false, platform, allowNetwork: true });
 }
 
 const cwdSchema = { type: "string", minLength: 1, maxLength: 4_096, default: "." };
@@ -439,14 +483,19 @@ export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAd
   };
 }
 
-export function createDependencySyncTool({ workspace, networkSandboxAdapter, sandboxAdapter, platform = process.platform, auditLogger } = {}) {
+export function createDependencySyncTool({ workspace, networkSandboxAdapter, networkSandboxState, sandboxAdapter, platform = process.platform, auditLogger } = {}) {
   return {
     name: "dependency_sync",
     description: "Synchronize project dependencies using a structured package-manager command. Network access uses the dedicated network sandbox and always remains approval-controlled.",
     inputSchema: dependencySyncInputSchema,
     async invoke(input, trustedContext = {}) {
       if (!networkSandboxAdapter) {
-        return { status: "network_unavailable", error: "dedicated network sandbox is unavailable" };
+        const diagnostic = resolveNetworkSandboxState({ networkSandboxState, networkSandboxAdapter, platform });
+        return {
+          status: "network_unavailable",
+          error: `dedicated network sandbox is unavailable: ${diagnostic.status}`,
+          diagnostic,
+        };
       }
       const run = createDependencySyncRunner({ workspace, sandboxAdapter: networkSandboxAdapter, platform, auditLogger });
       return await run(input, trustedContext);
@@ -454,12 +503,20 @@ export function createDependencySyncTool({ workspace, networkSandboxAdapter, san
   };
 }
 
-export function createGitHubTool({ workspace, networkSandboxAdapter, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger } = {}) {
+export function createGitHubTool({ workspace, networkSandboxAdapter, networkSandboxState, githubCliState, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger } = {}) {
   return {
     name: "github",
     description: "Run a bounded GitHub CLI action for PRs, CI, or issues. When connected to the desktop App, authenticated actions run through its confirmed local broker so tokens remain in the OS keychain.",
     inputSchema: githubInputSchema,
     async invoke(input, trustedContext = {}) {
+      const githubCli = resolveGitHubCliState(githubCliState);
+      if (githubCli.status === "missing" || githubCli.status === "broken") {
+        return {
+          status: githubCli.status === "missing" ? "github_cli_missing" : "github_cli_broken",
+          error: `GitHub CLI is unavailable: ${githubCli.reason}`,
+          githubCli,
+        };
+      }
       if (typeof localBrokerSocket === "string" && localBrokerSocket) {
         const cwd = resolveModelWorkspaceCwd(workspace, input.cwd ?? ".", { platform }).cwd;
         const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000 })
@@ -479,9 +536,20 @@ export function createGitHubTool({ workspace, networkSandboxAdapter, sandboxAdap
         };
       }
       if (!networkSandboxAdapter) {
-        return { status: "network_unavailable", error: "dedicated network sandbox is unavailable" };
+        const diagnostic = resolveNetworkSandboxState({ networkSandboxState, networkSandboxAdapter, platform });
+        return {
+          status: "network_unavailable",
+          error: `dedicated network sandbox is unavailable: ${diagnostic.status}`,
+          diagnostic,
+        };
       }
-      const run = createGitHubRunner({ workspace, sandboxAdapter: networkSandboxAdapter, platform, auditLogger });
+      const run = createGitHubRunner({
+        workspace,
+        sandboxAdapter: networkSandboxAdapter,
+        platform,
+        auditLogger,
+        githubCliPath: githubCli.status === "ready" ? githubCli.resolvedPath : undefined,
+      });
       return await run(input, trustedContext);
     },
   };
@@ -554,7 +622,7 @@ export function createGoalStatusTool(goalController) {
 }
 
 export function createGoalCancelTool(goalController) {
-  return { name: "goal_cancel", description: "Cancel a non-terminal goal session.", inputSchema: goalSessionInputSchema, invoke: (input) => goalController.cancel(input.sessionId) };
+  return { name: "goal_cancel", description: "Cancel a non-terminal goal session and reclaim its owned running managed processes.", inputSchema: goalSessionInputSchema, invoke: (input) => goalController.cancel(input.sessionId) };
 }
 
 export function createReadFileTool({ workspace } = {}) {
@@ -641,6 +709,9 @@ const LOCAL_BROKER_TOOL_NAMES = Object.freeze([
 export function createCapabilitiesTool({
   sandboxAdapter,
   networkSandboxAdapter,
+  networkSandboxState,
+  githubCliState,
+  windowsHostPreparationState,
   workspace,
   goalSessionStore,
   goalPersistSessions = false,
@@ -654,16 +725,19 @@ export function createCapabilitiesTool({
     inputSchema: processListInputSchema,
     invoke() {
       const sandbox = sandboxSummary(sandboxAdapter);
-      const networkSandbox = networkSandboxAdapter ? sandboxSummary(networkSandboxAdapter) : null;
+      const networkSandbox = resolveNetworkSandboxState({ networkSandboxState, networkSandboxAdapter, platform });
       return {
         version: "0.9.0",
         releaseStage: "final-acceptance-candidate",
         platform: normalizedPlatform(platform),
         tools: [...V09_TOOLS, ...(typeof localBrokerSocket === "string" && localBrokerSocket ? LOCAL_BROKER_TOOL_NAMES : [])],
         sandbox,
-        networkSandbox: networkSandbox
-          ? { ...networkSandbox, usableForStructuredNetworkTools: networkSandbox.autoRunSafe === true }
-          : null,
+        networkSandbox: {
+          ...networkSandbox,
+          usableForStructuredNetworkTools: networkSandbox.usable === true,
+        },
+        githubCli: resolveGitHubCliState(githubCliState),
+        windowsHostPreparation: resolveWindowsHostPreparationState(windowsHostPreparationState, platform),
         nativePlatformSupport: {
           windows: "AppContainer compatibility backend + workspace/runtime ACL + Job Object + parent monitor; requires real Windows acceptance",
           macos: "Seatbelt policy + parent guard; requires real macOS acceptance",
@@ -684,7 +758,7 @@ export function createCapabilitiesTool({
         },
         processManager: { longRunning: true, pty: "optional-node-pty", processTreeKill: true },
         git: { structuredActions: true, worktrees: true },
-        audit: { enabled: auditLogger?.enabled === true, hashChained: auditLogger?.enabled === true },
+        audit: { enabled: auditLogger?.enabled === true, hashChained: auditLogger?.enabled === true, orchestratorTerminalOutcomes: true },
         mcp: { serverV2Available: true, protocolRevision: "2026-07-28", mrtrApprovalSupported: true },
         goalMode: {
           orchestration: "explicit-session-handle",
@@ -697,8 +771,10 @@ export function createCapabilitiesTool({
             : goalPersistSessions === true ? "persistent-file" : "in-memory-until-server-restart-or-ttl",
           repeatedActionDetection: true,
           boundedAgentHistory: true,
+          singleWriterMutations: true,
           trackedActionsUseGoalStep: true,
           goalCwdScoped: typeof workspace === "string" && workspace.length > 0,
+          cancelReclaimsOwnedProcesses: true,
           acceptanceCriteriaGate: true,
           externalOrchestratorCompatible: true,
         },
@@ -711,6 +787,8 @@ export function createCapabilitiesTool({
           hostApprovalIsBoundToExactAndResolvedRequest: true,
           unattendedExecutionRequiresVerifiedSandbox: true,
           goalModeCannotRunUnbounded: true,
+          goalSessionMutationsSingleWriter: true,
+          goalCancelReclaimsOwnedProcesses: true,
         },
       };
     },

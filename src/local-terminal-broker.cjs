@@ -46,8 +46,22 @@ function needsNativeConfirmation(argv, classification, approvalMode) {
   return classifyLocalTerminalApproval({ argv, classification, approvalMode }).decision !== "allow";
 }
 
-function createLocalTerminalBroker({ approvalMode = "cautious", classifyCommand, confirm = async () => false, spawnCommand = defaultSpawnCommand, pathPolicy } = {}) {
+function normalizeTrustedExecutables(bindings = {}) {
+  if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) throw new TypeError("trustedExecutables 必须是对象。");
+  const normalized = {};
+  for (const [name, executable] of Object.entries(bindings)) {
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(name)) throw new TypeError("受信任可执行名称格式无效。");
+    if (typeof executable !== "string" || !executable || executable.includes("\0") || !path.isAbsolute(executable)) {
+      throw new TypeError(`受信任可执行文件 ${name} 必须是绝对路径。`);
+    }
+    normalized[name.toLowerCase().replace(/\.(exe|cmd|bat|com)$/i, "")] = executable;
+  }
+  return Object.freeze(normalized);
+}
+
+function createLocalTerminalBroker({ approvalMode = "cautious", classifyCommand, confirm = async () => false, spawnCommand = defaultSpawnCommand, pathPolicy, trustedExecutables = {} } = {}) {
   if (typeof classifyCommand !== "function") throw new TypeError("本机终端代理需要现有 Agent 的命令分类器。");
+  const trusted = normalizeTrustedExecutables(trustedExecutables);
 
   async function run({ argv, cwd } = {}) {
     const mode = normalizeApprovalMode(approvalMode);
@@ -66,10 +80,13 @@ function createLocalTerminalBroker({ approvalMode = "cautious", classifyCommand,
     if (needsNativeConfirmation(argv, classification, mode) && !await confirm(request)) {
       throw new Error("用户取消了本机终端命令。 ");
     }
-    return spawnCommand([...argv], { cwd, shell: false, windowsHide: true });
+    const logicalCommand = path.basename(argv[0]).toLowerCase().replace(/\.(exe|cmd|bat|com)$/i, "");
+    const trustedExecutable = trusted[logicalCommand];
+    const spawnArgv = trustedExecutable ? [trustedExecutable, ...argv.slice(1)] : [...argv];
+    return spawnCommand(spawnArgv, { cwd, shell: false, windowsHide: true });
   }
 
   return { run };
 }
 
-module.exports = { assertArgv, createLocalTerminalBroker, defaultSpawnCommand, needsNativeConfirmation };
+module.exports = { assertArgv, createLocalTerminalBroker, defaultSpawnCommand, needsNativeConfirmation, normalizeTrustedExecutables };

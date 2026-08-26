@@ -31,6 +31,49 @@ test("Windows acceptance mirrors the desktop Git broker architecture", () => {
   assert.match(source, /await git\.invoke\(\{ action: "status", cwd: path\.relative\(root, repo\) \}\)/);
 });
 
+test("Windows acceptance verifies self-contained native runtime payload before sandbox checks", () => {
+  assert.match(source, /hostfxr\.dll/);
+  assert.match(source, /hostpolicy\.dll/);
+  assert.match(source, /lpc-windows-sandbox\.exe/);
+});
+
+test("Windows prebuilt acceptance skips compilation without skipping native verification", () => {
+  assert.match(source, /const prebuiltNative = process\.argv\.includes\("--prebuilt-native"\)/);
+  assert.match(source, /process\.platform === "win32" && !skipNative && !prebuiltNative/);
+  assert.match(source, /process\.platform === "win32" && !skipNative[\s\S]*self-contained Windows sandbox publish must include/);
+  assert.doesNotMatch(source, /prebuiltNative[\s\S]{0,120}verifySandbox:\s*false/);
+});
+
+test("Windows acceptance exercises shared executables through AppContainer without ACL rewriting", () => {
+  assert.match(source, /verifyWindowsExternalExecutableCompatibility/);
+  assert.match(source, /cmd\.exe/);
+  assert.match(source, /\["git", "--version"\]/);
+  assert.match(source, /\["dotnet", "--list-runtimes"\]/);
+  assert.match(source, /\["node", "--version"\]/);
+  assert.match(source, /\["gh", "--version"\]/);
+  assert.match(source, /wrapWithSandbox\(runtime\.normalSandbox\.adapter/);
+  assert.match(source, /dev\\\/null.*Permission denied/i);
+  assert.match(source, /windowsHostPreparationState\.status/);
+  assert.match(source, /Windows host preparation must be ready/);
+});
+
+test("Windows acceptance verifies the dedicated network sandbox and structured dependency path", () => {
+  assert.match(source, /enableNetworkTools:\s*process\.platform === "win32"/);
+  assert.match(source, /networkSandboxState\.status,\s*"ready"/);
+  assert.match(source, /networkSandbox\?\.verification\?\.passed/);
+  assert.match(source, /dependency_sync/);
+  assert.match(source, /network_unavailable/);
+  assert.match(source, /dependencyProbe\.sandbox\?\.capabilities\?\.networkIsolation/);
+  assert.doesNotMatch(source, /dependencyProbe\.sandbox\?\.networkIsolation/);
+  assert.match(source, /internet-client-capability/);
+});
+
+test("Windows acceptance checks capability reporting for native and GitHub readiness without requiring authentication", () => {
+  assert.match(source, /caps\.releaseAcceptance\.currentNativeSandboxVerified/);
+  assert.match(source, /caps\.networkSandbox\.status/);
+  assert.match(source, /caps\.githubCli\.status/);
+});
+
 test("Goal finish acceptance gives bounded long-running verification enough client budget", () => {
   const goalFinish = source.indexOf('name: "goal_finish"');
   assert.ok(goalFinish >= 0);

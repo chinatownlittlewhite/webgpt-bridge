@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isNestedWindowsAppContainer } from "../scripts/run-tests.mjs";
+import * as platformModule from "../src/platform.js";
 import {
   normalizedPlatform,
   platformSecurityNotes,
@@ -89,6 +91,67 @@ test("Windows Node CLI shim preserves lexical module paths without host-root ACL
     ]);
     assert.ok(result.trustedReadPaths.includes(path.win32.resolve(path.dirname(cli))));
     assert.equal(result.trustedReadPaths.includes(path.win32.resolve(path.dirname(fixture))), false);
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("Windows sandbox stages and refreshes npm package runtime inside the host-private workspace namespace", (t) => {
+  if (isNestedWindowsAppContainer()) {
+    t.skip("host-only npm staging runs before the command enters AppContainer");
+    return;
+  }
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-win-npm-stage-"));
+  try {
+    const hostRoot = path.join(fixture, "host");
+    const packageRoot = path.join(hostRoot, "node_modules", "npm");
+    const cli = path.join(packageRoot, "bin", "npm-cli.js");
+    const marker = path.join(packageRoot, "lib", "marker.js");
+    const nodePath = path.join(hostRoot, "node.exe");
+    const workspace = path.join(fixture, "workspace");
+    fs.mkdirSync(path.dirname(cli), { recursive: true });
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.writeFileSync(nodePath, "fixture", "utf8");
+    fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "npm", version: "99.0.0" }), "utf8");
+    fs.writeFileSync(cli, "require('../lib/marker.js');\n", "utf8");
+    fs.writeFileSync(marker, "module.exports = 'staged';\n", "utf8");
+
+    const materialize = platformModule.stageWindowsNodeCliRuntime;
+    assert.equal(typeof materialize, "function", "Windows sandbox must expose a host-only Node CLI runtime staging helper");
+    const command = Object.freeze({
+      platform: "windows",
+      logicalCommand: "npm",
+      argv: Object.freeze([nodePath, "--preserve-symlinks", "--preserve-symlinks-main", cli, "--version"]),
+      resolved: true,
+      usedTrustedShim: true,
+      trustedReadPaths: Object.freeze([path.dirname(nodePath), packageRoot]),
+    });
+    const result = materialize(command, { workspace, platform: "win32" });
+
+    const stagedNode = result.argv[0];
+    const stagedCli = result.argv[3];
+    const canonicalWorkspace = fs.realpathSync(workspace);
+    const relativeNode = path.relative(canonicalWorkspace, stagedNode);
+    const relativeCli = path.relative(canonicalWorkspace, stagedCli);
+    assert.equal(relativeNode.startsWith("..") || path.isAbsolute(relativeNode), false, "staged Node must remain inside the canonical sandbox workspace");
+    assert.equal(relativeCli.startsWith("..") || path.isAbsolute(relativeCli), false, "staged npm CLI must remain inside the canonical sandbox workspace");
+    assert.match(relativeNode, /^\.webgpt-bridge[\\/]runtime[\\/]npm[\\/]/);
+    assert.match(relativeCli, /^\.webgpt-bridge[\\/]runtime[\\/]npm[\\/]/);
+    const stagedPackageRoot = path.dirname(path.dirname(stagedCli));
+    const stagedMarker = path.join(stagedPackageRoot, "lib", "marker.js");
+    assert.equal(fs.readFileSync(stagedMarker, "utf8"), "module.exports = 'staged';\n");
+    assert.notEqual(stagedNode, nodePath, "external Node executable must be staged before entering AppContainer");
+    assert.equal(result.trustedReadPaths.includes(packageRoot), false, "external npm package root must no longer be an AppContainer read grant");
+    assert.equal(result.trustedReadPaths.includes(path.dirname(nodePath)), false, "external Node directory must no longer be an AppContainer read grant");
+    assert.ok(result.trustedReadPaths.includes(stagedPackageRoot), "staged npm package root must be the runtime read grant");
+    assert.ok(result.trustedPathEntries.includes(path.dirname(stagedNode)), "staged Node directory must be available for npm child scripts");
+
+    fs.writeFileSync(stagedMarker, "module.exports = 'poisoned';\n", "utf8");
+    const refreshed = materialize(command, { workspace, platform: "win32" });
+    assert.equal(refreshed.argv[0], stagedNode, "approval-bound resolved argv must use a stable staged Node path");
+    assert.equal(refreshed.argv[3], stagedCli, "approval-bound resolved argv must use a stable staged npm CLI path");
+    assert.equal(fs.readFileSync(stagedMarker, "utf8"), "module.exports = 'staged';\n", "each invocation must refresh staged npm files from the trusted host runtime");
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }

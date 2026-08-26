@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Text.Json;
 
 namespace LocalProjectCoding.WindowsSandbox;
 
@@ -39,6 +40,7 @@ internal static class Program
     private const int StdInputHandle = -10;
     private const int StdOutputHandle = -11;
     private const int StdErrorHandle = -12;
+    private const string ProductNullDeviceCapabilityName = "com.localagenthost.desktop.null-device";
     private const string InternetClientCapabilitySid = "S-1-15-3-1";
 
     public static int Main(string[] args)
@@ -66,24 +68,33 @@ internal static class Program
             {
                 if (profile.Created)
                 {
-                    GrantAcl(workspace, appContainerSid, modify: true);
+                    GrantWorkspaceAcl(workspace, workspace, appContainerSid, modify: true);
                 }
                 EnsureAppContainerTemp(profileName, workspace);
-                GrantAcl(executable, appContainerSid, modify: false);
+                // External executables (System32, Program Files, toolchain installs) must rely on
+                // their existing Windows AppContainer / ALL APPLICATION PACKAGES access. Never
+                // rewrite persistent ACLs on shared binaries merely to launch them in the sandbox.
                 foreach (var readPath in options.ReadPaths)
                 {
                     var resolved = Path.GetFullPath(readPath);
-                    if (Directory.Exists(resolved) || File.Exists(resolved))
+                    if (IsInside(workspace, resolved))
                     {
-                        GrantAcl(resolved, appContainerSid, modify: false);
+                        if (Directory.Exists(resolved) || File.Exists(resolved))
+                        {
+                            GrantWorkspaceAcl(workspace, resolved, appContainerSid, modify: false);
+                        }
                     }
                 }
                 foreach (var writePath in options.WritePaths)
                 {
                     var resolved = Path.GetFullPath(writePath);
+                    if (!IsInside(workspace, resolved))
+                    {
+                        throw new InvalidOperationException("write path escapes the configured workspace");
+                    }
                     if (Directory.Exists(resolved) || File.Exists(resolved))
                     {
-                        GrantAcl(resolved, appContainerSid, modify: true);
+                        GrantWorkspaceAcl(workspace, resolved, appContainerSid, modify: true);
                     }
                 }
 
@@ -100,6 +111,19 @@ internal static class Program
             {
                 Native.FreeSid(appContainerSid);
             }
+        }
+        catch (SandboxInitializationException initialization)
+        {
+            var diagnostic = JsonSerializer.Serialize(new
+            {
+                type = "sandbox_initialization_error",
+                api = initialization.Api,
+                target = initialization.Target,
+                win32 = initialization.NativeErrorCode,
+                securityInformation = initialization.SecurityInformation,
+            });
+            Console.Error.WriteLine($"lpc-windows-sandbox: {diagnostic}");
+            return 125;
         }
         catch (Win32Exception win32)
         {
@@ -168,6 +192,52 @@ internal static class Program
         return (sid, false);
     }
 
+    private sealed class SandboxInitializationException : Win32Exception
+    {
+        public string Api { get; }
+        public string Target { get; }
+        public string SecurityInformation { get; }
+
+        public SandboxInitializationException(string api, string target, uint error, string securityInformation)
+            : base(unchecked((int)error), $"{api} failed for '{target}'")
+        {
+            Api = api;
+            Target = target;
+            SecurityInformation = securityInformation;
+        }
+    }
+
+    private static void GrantWorkspaceAcl(string workspace, string target, IntPtr sid, bool modify)
+    {
+        var workspaceFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(workspace));
+        var targetFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(target));
+        if (!IsInside(workspaceFull, targetFull))
+        {
+            throw new InvalidOperationException("ACL target escapes the configured workspace");
+        }
+
+        if ((File.GetAttributes(workspaceFull) & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new InvalidOperationException("ACL target traverses a reparse point");
+        }
+
+        var relative = Path.GetRelativePath(workspaceFull, targetFull);
+        var current = workspaceFull;
+        foreach (var segment in relative.Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            if (!Directory.Exists(current) && !File.Exists(current)) break;
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException("ACL target traverses a reparse point");
+            }
+        }
+
+        GrantAcl(targetFull, sid, modify);
+    }
+
     private static void GrantAcl(string target, IntPtr sid, bool modify)
     {
         ApplyAcl(target, sid, modify, inherit: Directory.Exists(target));
@@ -192,7 +262,7 @@ internal static class Program
             );
             if (status != 0)
             {
-                throw new Win32Exception(unchecked((int)status), $"GetNamedSecurityInfoW failed for '{target}'");
+                throw new SandboxInitializationException("GetNamedSecurityInfoW", target, status, "DACL");
             }
 
             var access = new Native.ExplicitAccess
@@ -215,7 +285,7 @@ internal static class Program
             status = Native.SetEntriesInAclW(1, new[] { access }, oldDacl, out newDacl);
             if (status != 0)
             {
-                throw new Win32Exception(unchecked((int)status), $"SetEntriesInAclW failed for '{target}'");
+                throw new SandboxInitializationException("SetEntriesInAclW", target, status, "DACL");
             }
 
             status = Native.SetNamedSecurityInfoW(
@@ -229,7 +299,7 @@ internal static class Program
             );
             if (status != 0)
             {
-                throw new Win32Exception(unchecked((int)status), $"SetNamedSecurityInfoW failed for '{target}'");
+                throw new SandboxInitializationException("SetNamedSecurityInfoW", target, status, "DACL");
             }
         }
         finally
@@ -263,35 +333,52 @@ internal static class Program
             throw new Win32Exception(Marshal.GetLastWin32Error(), "InitializeProcThreadAttributeList failed");
         }
 
-        IntPtr capabilitySid = IntPtr.Zero;
+        var allocatedCapabilities = new List<(IntPtr Sid, bool LocalAllocated)>();
         IntPtr sidAndAttributes = IntPtr.Zero;
         IntPtr securityCapabilities = IntPtr.Zero;
         IntPtr job = IntPtr.Zero;
         try
         {
-            uint capabilityCount = 0;
+            var capabilities = new List<Native.SidAndAttributes>();
+            var productCapabilitySid = DeriveCapabilitySid(ProductNullDeviceCapabilityName);
+            allocatedCapabilities.Add((productCapabilitySid, true));
+            capabilities.Add(new Native.SidAndAttributes
+            {
+                Sid = productCapabilitySid,
+                Attributes = SeGroupEnabled,
+            });
+
             if (allowNetwork)
             {
-                capabilitySid = AllocateSid(InternetClientCapabilitySid);
-                var capability = new Native.SidAndAttributes
+                var internetClientSid = AllocateSid(InternetClientCapabilitySid);
+                allocatedCapabilities.Add((internetClientSid, false));
+                capabilities.Add(new Native.SidAndAttributes
                 {
-                    Sid = capabilitySid,
+                    Sid = internetClientSid,
                     Attributes = SeGroupEnabled,
-                };
-                sidAndAttributes = Marshal.AllocHGlobal(Marshal.SizeOf<Native.SidAndAttributes>());
-                Marshal.StructureToPtr(capability, sidAndAttributes, false);
-                capabilityCount = 1;
+                });
             }
 
-            var capabilities = new Native.SecurityCapabilities
+            var capabilitySize = Marshal.SizeOf<Native.SidAndAttributes>();
+            sidAndAttributes = Marshal.AllocHGlobal(capabilitySize * capabilities.Count);
+            for (var index = 0; index < capabilities.Count; index += 1)
+            {
+                Marshal.StructureToPtr(
+                    capabilities[index],
+                    IntPtr.Add(sidAndAttributes, index * capabilitySize),
+                    false
+                );
+            }
+
+            var securityCapabilityDescriptor = new Native.SecurityCapabilities
             {
                 AppContainerSid = appContainerSid,
                 Capabilities = sidAndAttributes,
-                CapabilityCount = capabilityCount,
+                CapabilityCount = (uint)capabilities.Count,
                 Reserved = 0,
             };
             securityCapabilities = Marshal.AllocHGlobal(Marshal.SizeOf<Native.SecurityCapabilities>());
-            Marshal.StructureToPtr(capabilities, securityCapabilities, false);
+            Marshal.StructureToPtr(securityCapabilityDescriptor, securityCapabilities, false);
 
             if (!Native.UpdateProcThreadAttribute(
                     startup.lpAttributeList,
@@ -395,7 +482,12 @@ internal static class Program
             if (job != IntPtr.Zero) Native.CloseHandle(job);
             if (securityCapabilities != IntPtr.Zero) Marshal.FreeHGlobal(securityCapabilities);
             if (sidAndAttributes != IntPtr.Zero) Marshal.FreeHGlobal(sidAndAttributes);
-            if (capabilitySid != IntPtr.Zero) Marshal.FreeHGlobal(capabilitySid);
+            foreach (var allocation in allocatedCapabilities)
+            {
+                if (allocation.Sid == IntPtr.Zero) continue;
+                if (allocation.LocalAllocated) Native.LocalFree(allocation.Sid);
+                else Marshal.FreeHGlobal(allocation.Sid);
+            }
             if (startup.lpAttributeList != IntPtr.Zero)
             {
                 Native.DeleteProcThreadAttributeList(startup.lpAttributeList);
@@ -487,6 +579,56 @@ internal static class Program
         finally
         {
             Marshal.FreeHGlobal(pointer);
+        }
+    }
+
+    private static IntPtr DeriveCapabilitySid(string capabilityName)
+    {
+        IntPtr groupSidArray = IntPtr.Zero;
+        IntPtr capabilitySidArray = IntPtr.Zero;
+        uint groupSidCount = 0;
+        uint capabilitySidCount = 0;
+        try
+        {
+            if (!Native.DeriveCapabilitySidsFromName(
+                    capabilityName,
+                    out groupSidArray,
+                    out groupSidCount,
+                    out capabilitySidArray,
+                    out capabilitySidCount))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), $"DeriveCapabilitySidsFromName failed for '{capabilityName}'");
+            }
+            if (capabilitySidCount != 1 || capabilitySidArray == IntPtr.Zero)
+            {
+                throw new InvalidOperationException($"expected exactly one capability SID for '{capabilityName}'");
+            }
+
+            var capabilitySid = Marshal.ReadIntPtr(capabilitySidArray);
+            Native.LocalFree(capabilitySidArray);
+            capabilitySidArray = IntPtr.Zero;
+            return capabilitySid;
+        }
+        finally
+        {
+            if (groupSidArray != IntPtr.Zero)
+            {
+                for (var index = 0; index < groupSidCount; index += 1)
+                {
+                    var groupSid = Marshal.ReadIntPtr(groupSidArray, index * IntPtr.Size);
+                    if (groupSid != IntPtr.Zero) Native.LocalFree(groupSid);
+                }
+                Native.LocalFree(groupSidArray);
+            }
+            if (capabilitySidArray != IntPtr.Zero)
+            {
+                for (var index = 0; index < capabilitySidCount; index += 1)
+                {
+                    var capabilitySid = Marshal.ReadIntPtr(capabilitySidArray, index * IntPtr.Size);
+                    if (capabilitySid != IntPtr.Zero) Native.LocalFree(capabilitySid);
+                }
+                Native.LocalFree(capabilitySidArray);
+            }
         }
     }
 
@@ -733,6 +875,15 @@ internal static class Program
 
         [DllImport("advapi32.dll")]
         internal static extern IntPtr FreeSid(IntPtr pSid);
+
+        [DllImport("kernelbase.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool DeriveCapabilitySidsFromName(
+            string capabilityName,
+            out IntPtr capabilityGroupSids,
+            out uint capabilityGroupSidCount,
+            out IntPtr capabilitySids,
+            out uint capabilitySidCount);
 
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
         internal static extern uint GetNamedSecurityInfoW(

@@ -15,6 +15,30 @@ function makeWorkspace() {
   return root;
 }
 
+function createControlledStore({ failOnSaves = [] } = {}) {
+  const values = new Map();
+  const failures = new Set(failOnSaves);
+  let saveCount = 0;
+  return {
+    kind: "controlled",
+    persistent: true,
+    loadAll() {
+      return [...values.values()].map((value) => structuredClone(value));
+    },
+    save(session) {
+      saveCount += 1;
+      if (failures.has(saveCount)) throw new Error(`controlled save failure ${saveCount}`);
+      values.set(session.id, structuredClone(session));
+    },
+    remove(sessionId) {
+      values.delete(sessionId);
+    },
+    get saveCount() {
+      return saveCount;
+    },
+  };
+}
+
 test("memory goal store snapshots values instead of exposing mutable references", () => {
   const store = createMemoryGoalSessionStore();
   const session = { id: "session_1", status: "active", nested: { value: 1 } };
@@ -159,4 +183,82 @@ test("persisted timestamps and history are bounded again during hydration", () =
   assert.equal(restored.history[0].truncated, true);
   assert.match(restored.history[0].sha256, /^[a-f0-9]{64}$/);
   fs.rmSync(workspace, { recursive: true, force: true });
+});
+
+test("restart fails closed when a side-effecting goal_step was in flight", async () => {
+  const store = createControlledStore();
+  let markStarted;
+  let releaseInvoke;
+  const startedInvoke = new Promise((resolve) => { markStarted = resolve; });
+  const release = new Promise((resolve) => { releaseInvoke = resolve; });
+  const slowTool = {
+    name: "slow_side_effect",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    async invoke() {
+      markStarted();
+      await release;
+      return { status: "completed" };
+    },
+  };
+  const first = createGoalController({ tools: [slowTool], sessionStore: store, verificationTasks: [] });
+  const started = first.start({ goal: "Do not replay an interrupted side effect" });
+  const stepPromise = first.step({ sessionId: started.sessionId, tool: "slow_side_effect", input: {} });
+  await startedInvoke;
+
+  try {
+    const restarted = createGoalController({ tools: [slowTool], sessionStore: store, verificationTasks: [] });
+    const recovered = restarted.status(started.sessionId);
+    assert.equal(recovered.status, "failed");
+    assert.match(recovered.lastFeedback, /interrupted.*mutation|mutation.*interrupted/i);
+  } finally {
+    releaseInvoke();
+    await stepPromise;
+  }
+});
+
+test("goal_step does not invoke a side effect when its mutation intent cannot be persisted", async () => {
+  const store = createControlledStore({ failOnSaves: [2] });
+  let calls = 0;
+  const tool = {
+    name: "side_effect",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    async invoke() {
+      calls += 1;
+      return { status: "completed" };
+    },
+  };
+  const controller = createGoalController({ tools: [tool], sessionStore: store, verificationTasks: [] });
+  const started = controller.start({ goal: "Persist before side effects" });
+
+  const result = await controller.step({ sessionId: started.sessionId, tool: "side_effect", input: {} });
+
+  assert.equal(result.status, "persistence_error");
+  assert.equal(result.mustContinue, false);
+  assert.equal(calls, 0);
+});
+
+test("goal_step fails closed when its side-effect result cannot be persisted", async () => {
+  const store = createControlledStore({ failOnSaves: [3] });
+  let calls = 0;
+  const tool = {
+    name: "side_effect",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    async invoke() {
+      calls += 1;
+      return { status: "completed" };
+    },
+  };
+  const first = createGoalController({ tools: [tool], sessionStore: store, verificationTasks: [] });
+  const started = first.start({ goal: "Fail closed after an uncommitted side effect" });
+
+  const result = await first.step({ sessionId: started.sessionId, tool: "side_effect", input: {} });
+  assert.equal(result.status, "persistence_error");
+  assert.equal(result.mustContinue, false);
+  assert.equal(calls, 1);
+
+  const restarted = createGoalController({ tools: [tool], sessionStore: store, verificationTasks: [] });
+  assert.equal(restarted.status(started.sessionId).status, "failed");
+  const replay = await restarted.step({ sessionId: started.sessionId, tool: "side_effect", input: {} });
+  assert.equal(replay.status, "already_terminal");
+  assert.equal(calls, 1, "restart must not replay an uncertain side effect");
 });

@@ -8,6 +8,7 @@ export {
 } from "./filesystem.js";
 export { discoverManagedWorktreeGitAccess } from "./git-metadata.js";
 export { buildGitArgv, createGitRunner } from "./git.js";
+export { resolveGitHubCli } from "./github-cli.js";
 export { buildGitHubArgv, createGitHubRunner } from "./github.js";
 export { createGoalController, goalControllerDefaults } from "./goal-controller.js";
 export {
@@ -39,6 +40,7 @@ export {
 export {
   discoverNativeSandboxAdapter,
   prepareNativeSandbox,
+  sandboxPreparationDiagnostic,
 } from "./native-sandbox.js";
 export { createMultiAgentCoordinator } from "./multi-agent.js";
 export { createExternalGoalOrchestrator } from "./orchestrator.js";

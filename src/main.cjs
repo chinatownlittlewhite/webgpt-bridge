@@ -13,8 +13,12 @@ const { createApprovalSession } = require("./approval-session.cjs");
 const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
 const { createLocalFileBroker } = require("./local-file-broker.cjs");
 const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
+const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { buildTrustedCommandPath } = require("./host-path.cjs");
 const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { createUpdateService } = require("./update-service.cjs");
+const { autoUpdater } = require("electron-updater");
+const packageMetadata = require("../package.json");
 
 // Keep v0.1 settings and encrypted runtime keys when the product name changes
 // from Local Agent Host to WebGPT Bridge.
@@ -37,6 +41,7 @@ let localApprovalMode = "development";
 const approvalSession = createApprovalSession();
 let logLines = [];
 let isQuitting = false;
+let updateService;
 
 function configPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -146,7 +151,7 @@ function appendLog(source, data) {
 }
 
 function processIsLive(child) {
-  return Boolean(child && child.exitCode === null && !child.killed);
+  return Boolean(child && child.exitCode === null);
 }
 
 function commandExists(candidate) {
@@ -375,7 +380,7 @@ function attachLocalBrokerConnection(socket) {
   });
 }
 
-async function startLocalBroker(settings, runtime) {
+async function startLocalBroker(settings, runtime, { githubCliPath = "" } = {}) {
   await stopLocalBroker();
   localApprovalMode = normalizeApprovalMode(settings.approvalMode);
   const policyOptions = { appDataRoots: [app.getPath("userData")] };
@@ -383,7 +388,13 @@ async function startLocalBroker(settings, runtime) {
   const actionPolicy = (action) => classifyLocalAction({ ...action, approvalMode: settings.approvalMode });
   const policyModule = await import(pathToFileURL(path.join(runtime.runtimePath, "dist", "policy.js")).href);
   localFileBroker = createLocalFileBroker({ workspaceRoot: settings.workspacePath, policy: pathPolicy, actionPolicy, confirm: confirmLocalOperation, audit: (entry) => appendLog("local-broker", `${entry.action}：${entry.result}`) });
-  localTerminalBroker = createLocalTerminalBroker({ approvalMode: settings.approvalMode, classifyCommand: policyModule.classifyCommand, confirm: confirmLocalOperation, pathPolicy });
+  localTerminalBroker = createLocalTerminalBroker({
+    approvalMode: settings.approvalMode,
+    classifyCommand: policyModule.classifyCommand,
+    confirm: confirmLocalOperation,
+    pathPolicy,
+    trustedExecutables: githubCliPath ? { gh: githubCliPath } : {},
+  });
   localBrokerSocket = localBrokerSocketPath();
   if (process.platform !== "win32") await fsp.rm(localBrokerSocket, { force: true }).catch(() => {});
   localBrokerServer = net.createServer(attachLocalBrokerConnection);
@@ -420,9 +431,16 @@ function updateTray() {
   if (!trayRef) return;
   const status = getStatus();
   const connected = status.tunnel;
+  const update = updateService?.getState();
+  const updateItem = update?.status === "downloaded"
+    ? { label: `更新已下载 · v${update.availableVersion}`, enabled: false }
+    : update?.status === "available"
+      ? { label: `发现更新 · v${update.availableVersion}`, enabled: false }
+      : null;
   trayRef.setToolTip(`WebGPT Bridge · ${connected ? "已连接" : "未连接"}`);
   trayRef.setContextMenu(Menu.buildFromTemplate([
     { label: connected ? "已连接到 ChatGPT" : "未连接", enabled: false },
+    ...(updateItem ? [updateItem] : []),
     { type: "separator" },
     { label: "显示控制器", click: showWindow },
     {
@@ -445,13 +463,43 @@ function createTray() {
   updateTray();
 }
 
+function waitForChildExit(child, timeoutMs = 5000) {
+  if (!processIsLive(child)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.removeListener("exit", onExit);
+      child.removeListener("error", onError);
+    };
+    const onExit = () => { cleanup(); resolve(); };
+    const onError = (error) => { cleanup(); reject(error); };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`进程在 ${timeoutMs}ms 内未退出。`));
+    }, timeoutMs);
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
+
 async function stopChild(child, name) {
   if (!processIsLive(child)) return;
   appendLog("host", `正在停止 ${name}…`);
   if (process.platform === "win32" && child.pid) {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-  } else {
+    const result = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+    if (result.status !== 0 && processIsLive(child)) throw new Error(`${name} 无法停止。`);
+    return;
+  }
+  try {
+    const gracefulExit = waitForChildExit(child, 5000);
     child.kill("SIGTERM");
+    await gracefulExit;
+  } catch {
+    if (processIsLive(child)) {
+      const forcedExit = waitForChildExit(child, 2000);
+      child.kill("SIGKILL");
+      await forcedExit;
+    }
   }
 }
 
@@ -473,13 +521,24 @@ async function startAll() {
   await stopAll();
   logLines = [];
   emit("logs", logLines);
-  await startLocalBroker(settings, runtime);
+  const appToolsBin = path.join(app.getPath("userData"), "tools", "bin");
+  const githubCliPath = resolveDesktopGitHubCli({ appToolsBin });
+  appendLog(
+    "host",
+    githubCliPath
+      ? `GitHub CLI：${githubCliPath}`
+      : "未检测到 GitHub CLI；GitHub 工具会返回可修复诊断，其他本地工具不受影响。",
+  );
+  await startLocalBroker(settings, runtime, { githubCliPath });
 
   const baseEnv = {
     ...process.env,
     PATH: buildTrustedCommandPath({
       nodePath: node,
-      additionalPaths: [path.join(app.getPath("userData"), "tools", "bin")],
+      additionalPaths: [
+        appToolsBin,
+        ...(githubCliPath ? [path.dirname(githubCliPath)] : []),
+      ],
     }),
     LPC_WORKSPACE: runtime.workspacePath,
     LPC_HOST: MCP_HOST,
@@ -487,6 +546,7 @@ async function startAll() {
     LPC_VERIFY_SANDBOX: "true",
     LPC_ENABLE_NETWORK_TOOLS: "true",
     LPC_LOCAL_BROKER_SOCKET: localBrokerSocket,
+    LPC_GITHUB_CLI_PATH: githubCliPath,
   };
   serverProcess = spawnLogged(node, [path.join(runtime.runtimePath, "dist", "server.js")], { env: baseEnv, cwd: runtime.runtimePath }, "agent");
   await waitForHealth();
@@ -535,6 +595,18 @@ function createWindow() {
 
 app.whenReady().then(() => {
   if (process.platform === "darwin" && app.dock) app.dock.setIcon(dockIcon());
+  updateService = createUpdateService({
+    updater: autoUpdater,
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    stopRuntime: stopAll,
+    setQuitting: (value) => { isQuitting = Boolean(value); },
+    emitState: (state) => {
+      windowRef?.webContents?.send("update:state", state);
+      updateTray();
+    },
+    log: (line) => appendLog("update", line),
+  });
   // The host has no browser-facing permissions. Tunnel traffic is handled by
   // the separate client process, not by renderer pages.
   const { session } = require("electron");
@@ -554,9 +626,26 @@ app.whenReady().then(() => {
   ipcMain.handle("host:status", getStatus);
   ipcMain.handle("host:logs", () => logLines);
   ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
+  ipcMain.handle("update:get-state", () => updateService.getState());
+  ipcMain.handle("update:check", () => updateService.checkForUpdates());
+  ipcMain.handle("update:download", () => updateService.downloadUpdate());
+  ipcMain.handle("update:install", () => updateService.installUpdateAndRestart());
   createTray();
   createWindow();
+  if (packageMetadata.WEBGPT_UPDATE_E2E_BUILD === true) {
+    const { runUpdateE2EControl } = require("./update-e2e-control.cjs");
+    void runUpdateE2EControl({ packageMeta: packageMetadata, updateService, app }).catch((error) => {
+      appendLog("update-e2e", error?.stack || error?.message || String(error));
+      setTimeout(() => app.exit(1), 250);
+    });
+  } else {
+    updateService.start();
+  }
   app.on("activate", showWindow);
 });
 
-app.on("before-quit", () => { isQuitting = true; void stopAll(); });
+app.on("before-quit", () => {
+  isQuitting = true;
+  updateService?.dispose();
+  void stopAll();
+});

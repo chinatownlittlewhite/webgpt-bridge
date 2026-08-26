@@ -278,6 +278,8 @@ Process launch reuses the same command policy, executable resolution, approval, 
 
 Processes started inside a Goal session are owned by that goal. Other goal sessions cannot poll, write to, or kill them through the goal-scoped tool path.
 
+`goal_cancel` enumerates only processes visible to the canceled session and force-requests termination for each running owned process. Sibling Goal processes remain invisible and untouched. Cleanup failures do not reactivate the Goal: cancellation stays terminal and returns a bounded `processCleanup` summary with `partial` status when necessary.
+
 Normal MCP server shutdown calls the process manager cleanup path. Native/parent guards provide additional crash cleanup for sandboxed children.
 
 ## Goal Mode
@@ -342,7 +344,11 @@ Production runtime enables file-backed Goal persistence by default under:
 .webgpt-bridge/goals
 ```
 
-Persisted JSON is treated as untrusted input and is revalidated on load. Path scope, budgets, history bounds, timestamps, and status are normalized again.
+Persisted JSON is treated as untrusted input and is revalidated on load. Path scope, budgets, history bounds, timestamps, and status are normalized again. Bounded project instructions are reloaded from the validated Goal cwd on restore rather than trusted from persisted JSON, and `goal_status` hands that context back to external orchestrators.
+
+Cancellation remains terminal even when an in-flight Goal tool or completion verifier resolves later. Trusted completion-verifier errors fail closed as bounded `continue_required` diagnostics instead of escaping the Goal boundary. `goal_step` and `goal_finish` are single-writer per Goal session: an overlapping mutation returns bounded `operation_in_progress`, while `goal_cancel` remains allowed to preempt the in-flight action.
+
+The external orchestrator preserves Goal startup failures such as capacity exhaustion and writes a bounded terminal `orchestrator_result` audit event without copying model summaries or evidence. Arbitrary Goal tools are not automatically retried because side-effecting operations must remain explicit and approval/policy controlled.
 
 The final acceptance harness explicitly starts a Goal, restarts the built MCP server, and verifies that the same session can be recovered and completed.
 

@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { discoverProjectTask } from "../src/project-task.js";
+import {
+  appendProjectTaskFailureDiagnostic,
+  discoverProjectTask,
+} from "../src/project-task.js";
 
 function makeWorkspace() {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-task-"));
@@ -44,4 +47,30 @@ test("project task discovery rejects unsupported task names", () => {
     () => discoverProjectTask({ workspace, cwd: "node-project", task: "deploy" }),
     /unsupported project task/,
   );
+});
+
+test("failed project tasks append a bounded TAP failure block after long output", () => {
+  const stdout = [
+    "x".repeat(6_000),
+    "not ok 23 - nested Windows regression identifies the failure",
+    "  ---",
+    "  failureType: 'testCodeFailure'",
+    "  error: 'workspace child runtime assertion failed'",
+    "  code: 'ERR_ASSERTION'",
+    "  ...",
+    "y".repeat(6_000),
+  ].join("\n");
+  const result = appendProjectTaskFailureDiagnostic({
+    status: "completed",
+    exitCode: 1,
+    stdout,
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  });
+
+  assert.match(result.stderr, /\[project-task failure excerpt\]/);
+  assert.match(result.stderr, /not ok 23 - nested Windows regression identifies the failure/);
+  assert.match(result.stderr, /workspace child runtime assertion failed/);
+  assert.ok(Buffer.byteLength(result.stderr) <= 4_096);
 });

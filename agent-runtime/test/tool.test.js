@@ -200,12 +200,40 @@ test("capabilities report final-acceptance guarantees without overclaiming inact
   assert.equal(report.workspaceInspection.executableContinuationHints, true);
   assert.equal(report.processManager.longRunning, true);
   assert.equal(report.git.worktrees, true);
-  assert.equal(report.networkSandbox, null);
+  assert.equal(report.networkSandbox.status, "disabled");
+  assert.equal(report.networkSandbox.usable, false);
+  assert.equal(report.networkSandbox.enabled, false);
+  assert.equal(report.githubCli.status, "unknown");
+  assert.equal(report.githubCli.resolvedPath, null);
   assert.equal(report.releaseAcceptance.requiredCommand, "npm run acceptance");
   assert.equal(report.releaseAcceptance.perTargetOs, true);
   assert.equal(report.releaseAcceptance.currentNativeSandboxVerified, false);
   assert.equal(Object.hasOwn(goalModeInputSchema.properties, "acceptanceCriteria"), true);
   assert.equal(Object.hasOwn(goalFinishInputSchema.properties, "criteriaEvidence"), true);
+});
+
+test("capabilities report bounded Windows host preparation state", () => {
+  const windowsHostPreparationState = {
+    status: "capability_ace_missing",
+    usable: false,
+    capabilityName: "com.localagenthost.desktop.null-device",
+    expectedPath: "C:\\Bridge\\lpc-windows-host-prep.exe",
+    remediation: "Repair the Windows installation as administrator.",
+  };
+  const report = createCapabilitiesTool({ windowsHostPreparationState, platform: "win32" }).invoke({});
+  assert.deepEqual(report.windowsHostPreparation, windowsHostPreparationState);
+});
+
+test("capabilities report trusted GitHub CLI path and version when startup probing succeeds", () => {
+  const githubCliState = {
+    status: "ready",
+    resolvedPath: "C:\\Program Files\\GitHub CLI\\gh.exe",
+    version: "2.98.0",
+    reason: "GitHub CLI 2.98.0 is available",
+    remediation: null,
+  };
+  const report = createCapabilitiesTool({ githubCliState, platform: "win32" }).invoke({});
+  assert.deepEqual(report.githubCli, githubCliState);
 });
 
 test("capabilities report marks goal cwd scoping active when workspace is configured", () => {

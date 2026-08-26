@@ -43,6 +43,18 @@
         <div><span>控制器</span><strong id="nextStep">点击“启动连接”</strong></div>
       </section>
 
+      <section class="update-card card" aria-labelledby="updateHeadline">
+        <div class="section-heading">
+          <div><h2 id="updateHeadline">应用更新</h2><p id="updateCurrentVersion">当前版本</p></div>
+          <button id="updateAction" class="secondary" type="button">检查更新</button>
+        </div>
+        <p id="updateNotes" class="update-notes" hidden></p>
+        <div id="updateProgress" class="update-progress" hidden>
+          <progress id="updateProgressBar" max="100" value="0"></progress>
+          <span id="updateMeta"></span>
+        </div>
+      </section>
+
       <details class="advanced card">
         <summary>权限与高级设置 <span>推荐保持默认</span></summary>
         <div class="settings-body">

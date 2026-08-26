@@ -7,29 +7,42 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-const project = path.resolve("native/windows-sandbox/LocalProjectCoding.WindowsSandbox.csproj");
-const output = path.resolve("native/windows-sandbox/bin/release");
-fs.mkdirSync(output, { recursive: true });
-
-const result = spawnSync(
-  "dotnet",
-  ["publish", project, "-c", "Release", "-o", output, "--self-contained", "false"],
+const nativeProjects = [
   {
-    stdio: "inherit",
-    shell: false,
-    windowsHide: true,
+    name: "Windows native sandbox",
+    project: path.resolve("native/windows-sandbox/LocalProjectCoding.WindowsSandbox.csproj"),
+    output: path.resolve("native/windows-sandbox/bin/release"),
+    executable: "lpc-windows-sandbox.exe",
   },
-);
+  {
+    name: "Windows host preparation",
+    project: path.resolve("native/windows-host-prep/LocalProjectCoding.WindowsHostPrep.csproj"),
+    output: path.resolve("native/windows-host-prep/bin/release"),
+    executable: "lpc-windows-host-prep.exe",
+  },
+];
 
-if (result.error) {
-  console.error(`Windows native sandbox build failed: ${result.error.message}`);
-  process.exit(1);
-}
-if (result.status !== 0) process.exit(result.status ?? 1);
+for (const nativeProject of nativeProjects) {
+  fs.mkdirSync(nativeProject.output, { recursive: true });
+  const result = spawnSync(
+    "dotnet",
+    ["publish", nativeProject.project, "-c", "Release", "-r", "win-x64", "-o", nativeProject.output, "--self-contained", "true"],
+    {
+      stdio: "inherit",
+      shell: false,
+      windowsHide: true,
+    },
+  );
+  if (result.error) {
+    console.error(`${nativeProject.name} build failed: ${result.error.message}`);
+    process.exit(1);
+  }
+  if (result.status !== 0) process.exit(result.status ?? 1);
 
-const helper = path.join(output, "lpc-windows-sandbox.exe");
-if (!fs.existsSync(helper)) {
-  console.error(`Windows native sandbox build did not produce ${helper}`);
-  process.exit(1);
+  const helper = path.join(nativeProject.output, nativeProject.executable);
+  if (!fs.existsSync(helper)) {
+    console.error(`${nativeProject.name} build did not produce ${helper}`);
+    process.exit(1);
+  }
+  console.log(`Built ${helper}`);
 }
-console.log(`Built ${helper}`);

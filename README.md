@@ -33,16 +33,22 @@ Tunnel ID、运行时密钥和工作区文件不会包含在仓库或安装包�
 
 ## 安装应用
 
-在 [Releases](https://github.com/chinatownlittlewhite/webgpt-bridge/releases) 下载对应系统的最新发行包。当前发布包未签名或公证，请只从本仓库 Releases 下载，并在下载页核对 SHA-256。
-
-当前 `v0.3.3` 提供 macOS Apple Silicon 与 Windows x64 安装包。两个平台都在对应 GitHub Actions 原生 runner 上完成 Agent acceptance 后才会发布；Linux 和 macOS Intel 暂不提供本版本安装包。
+在 [Releases](https://github.com/chinatownlittlewhite/webgpt-bridge/releases) 下载对应系统的最新正式发行包。正式版本采用同一个 GitHub Release 同时发布 Windows x64 与 macOS Universal（Apple Silicon + Intel）资产，并附带 `SHA256SUMS` 供下载后核验。
 
 | 平台 | 推荐下载 |
 | --- | --- |
-| macOS Apple Silicon | `WebGPT Bridge-0.3.3-mac-arm64.dmg`，也可下载 ZIP |
-| Windows 10 / 11 x64 | `WebGPT Bridge-0.3.3-win-x64.exe`，也可下载 ZIP |
+| macOS Apple Silicon / Intel | `WebGPT Bridge-<version>-mac-universal.dmg`；应用本体使用 Developer ID 签名并完成 Apple notarization |
+| Windows 10 / 11 x64 | `WebGPT Bridge-<version>-win-x64.exe`；正式安装器和关键可执行文件使用固定发布者身份签名 |
 
-每个 Release 同时包含 GitHub 自动生成的源码 ZIP / TAR.GZ 与 `SHA256SUMS.txt`。
+Windows 浏览器或 Microsoft Defender SmartScreen 对新发布者仍可能暂时显示“不常见应用”信誉提示；有效代码签名的目标是显示并长期保持同一个 Verified Publisher，而不是承诺新发布者首次下载绝对零提示。macOS 正式发行必须通过 Developer ID、notarization、stapling 和 Gatekeeper 验证，不使用移除 quarantine 属性来绕过系统检查。
+
+### 应用内更新
+
+WebGPT Bridge 启动约 10 秒后会检查一次更新，此后最多每 6 小时检查一次；这些后台动作**只检查版本，不会自动下载或重启应用**。也可以在主窗口的“应用更新”区域手动点击“检查更新”。
+
+发现新版本后，应用会显示版本、发行说明和下载进度。只有用户点击“下载更新”才开始下载，下载并校验完成后仍需再次点击“更新并重新启动”才会安装。Windows 使用 per-machine NSIS，因此升级时可能出现正常的 UAC 提示；macOS 使用已签名、公证的 Universal 更新包。更新失败、校验失败或安装被取消时，当前已安装版本继续可用。
+
+更新源固定为本仓库公开 GitHub Releases，运行中的客户端不保存 GitHub Token，也不允许界面指定任意更新 URL、安装器路径或仓库地址。
 
 ### macOS
 
@@ -155,7 +161,7 @@ http://127.0.0.1:7890
 git clone https://github.com/chinatownlittlewhite/webgpt-bridge.git
 cd webgpt-bridge
 npm ci
-npm run prepare:tunnel-client:mac   # macOS Apple Silicon
+npm run prepare:tunnel-client:mac   # macOS Universal（Apple Silicon + Intel）
 # Windows x64 改用：npm run prepare:tunnel-client:win
 npm run prepare:agent
 npm start
@@ -168,11 +174,13 @@ npm start
 构建发布包：
 
 ```bash
-npm run dist:mac   # macOS Apple Silicon：DMG 与 ZIP
-npm run dist:win   # Windows x64：NSIS 与 ZIP
+npm run dist:mac   # macOS Universal：DMG 与 updater ZIP
+npm run dist:win   # Windows x64：per-machine NSIS
 ```
 
-产物写入 `release/`。正式 tag 发布由 `.github/workflows/build-desktop.yml` 在 macOS arm64 与 Windows x64 原生 runner 上分别下载并校验对应的 OpenAI `tunnel-client v0.0.11`、执行桌面测试、Agent native acceptance 和打包，再汇总到同一个 GitHub Release。`npm run prepare:agent` 会在 Windows 自动构建 AppContainer native helper，在其他系统上安全跳过该步骤。
+产物写入 `release/`。普通 PR 使用 `.github/workflows/build-desktop.yml` 做未签名构建与平台验收；正式 `v${package.version}` tag 使用独立的 `.github/workflows/release-desktop.yml`。正式流程先创建不可见的 Draft Release，Windows/macOS 分别完成真实签名、平台 acceptance 和旧版→新版 packaged updater E2E，最终再次核对更新 manifest 与实际 SHA-512，并且只有两端都通过后才把同一个 Draft 公开为 stable Release。`npm run prepare:agent` 会在 Windows 自动构建 AppContainer native helper 与 host-prep helper，在其他系统上安全跳过该步骤。
+
+Windows 正式发行当前只支持 **per-machine NSIS**。安装器会以管理员权限把固定的 host-prep payload 安装到受保护的 Program Files 目录，立即准备 WebGPT Bridge 专属 AppContainer capability 对 Windows `NUL` 设备的最小访问，并注册固定的 SYSTEM 启动任务以便重启后幂等修复。卸载只移除 WebGPT Bridge 自己的 ACE 和该固定任务，不会重置整个对象 DACL。Portable ZIP 暂不作为正式 Windows 发行物，因为让 SYSTEM 启动任务指向用户可写的解压目录会形成不安全的提权边界。
 
 ## 故障排除
 

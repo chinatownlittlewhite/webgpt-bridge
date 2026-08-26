@@ -57,9 +57,32 @@ function runProbe({ adapter, workspace, outsidePath, port, timeoutMs }) {
   const script = `
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 const [insidePath, outsidePath, portText] = process.argv.slice(1);
-const result = { insideWrite: false, outsideReadBlocked: false, outsideWriteBlocked: false, loopbackAllowed: false, externalNetworkBlocked: false };
+const result = { insideWrite: false, outsideReadBlocked: false, outsideWriteBlocked: false, loopbackAllowed: false, externalNetworkBlocked: false, nullDeviceReadWrite: process.platform !== "win32", nullDeviceFailure: null };
 try { fs.writeFileSync(insidePath, "inside", "utf8"); result.insideWrite = true; } catch {}
+if (process.platform === "win32") {
+  let fd;
+  let nullDeviceStage = "open";
+  try {
+    fd = fs.openSync(os.devNull, "r+");
+    nullDeviceStage = "write";
+    fs.writeSync(fd, Buffer.from("bridge-null-device-probe"));
+    nullDeviceStage = "read";
+    fs.readSync(fd, Buffer.alloc(1), 0, 1, null);
+    result.nullDeviceReadWrite = true;
+  } catch (error) {
+    result.nullDeviceFailure = {
+      stage: nullDeviceStage,
+      code: error?.code ?? null,
+      errno: error?.errno ?? null,
+      syscall: error?.syscall ?? null,
+      path: error?.path ?? null,
+      message: typeof error?.message === "string" ? error.message.slice(0, 500) : null,
+    };
+  }
+  finally { if (fd !== undefined) try { fs.closeSync(fd); } catch {} }
+}
 try { fs.readFileSync(outsidePath, "utf8"); } catch { result.outsideReadBlocked = true; }
 try { fs.writeFileSync(outsidePath, "modified", "utf8"); } catch { result.outsideWriteBlocked = true; }
 await new Promise((resolve) => {
@@ -132,11 +155,13 @@ export function evaluateSandboxProbeChecks({
   loopbackConnected,
   requireNetworkBlocked = true,
   requireLoopback = true,
+  requireNullDevice = false,
 } = {}) {
   if (!probeResult || typeof probeResult !== "object") throw new TypeError("probeResult must be an object");
   if (typeof loopbackConnected !== "boolean") throw new TypeError("loopbackConnected must be a boolean");
   if (typeof requireNetworkBlocked !== "boolean") throw new TypeError("requireNetworkBlocked must be a boolean");
   if (typeof requireLoopback !== "boolean") throw new TypeError("requireLoopback must be a boolean");
+  if (typeof requireNullDevice !== "boolean") throw new TypeError("requireNullDevice must be a boolean");
 
   const observedNetworkBlocked = probeResult.externalNetworkBlocked === true;
   const observedLoopbackAllowed = probeResult.loopbackAllowed === true && loopbackConnected;
@@ -148,6 +173,7 @@ export function evaluateSandboxProbeChecks({
     networkPolicySatisfied: requireNetworkBlocked
       ? loopbackPolicySatisfied && observedNetworkBlocked
       : true,
+    nullDeviceReadWrite: requireNullDevice ? probeResult.nullDeviceReadWrite === true : true,
   };
   return {
     checks,
@@ -163,6 +189,7 @@ export async function verifySandboxAdapter({
   timeoutMs = 5_000,
   requireNetworkBlocked = true,
   requireLoopback = true,
+  requireNullDevice = false,
 } = {}) {
   const normalized = normalizeSandboxAdapter(adapter);
   if (!normalized.enforced) {
@@ -181,6 +208,9 @@ export async function verifySandboxAdapter({
   }
   if (typeof requireLoopback !== "boolean") {
     throw new TypeError("requireLoopback must be a boolean");
+  }
+  if (typeof requireNullDevice !== "boolean") {
+    throw new TypeError("requireNullDevice must be a boolean");
   }
 
   const root = resolveWorkspace(workspace);
@@ -218,6 +248,7 @@ export async function verifySandboxAdapter({
       loopbackConnected,
       requireNetworkBlocked,
       requireLoopback,
+      requireNullDevice,
     });
     return {
       passed: evaluation.passed,
@@ -228,6 +259,10 @@ export async function verifySandboxAdapter({
       observedLoopbackAllowed: evaluation.observedLoopbackAllowed,
       requireNetworkBlocked,
       requireLoopback,
+      requireNullDevice,
+      nullDeviceFailure: requireNullDevice && !evaluation.checks.nullDeviceReadWrite
+        ? probe.result.nullDeviceFailure ?? null
+        : null,
       stderr: probe.stderr,
     };
   } finally {

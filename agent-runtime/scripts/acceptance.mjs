@@ -19,6 +19,7 @@ const EXPECTED_TOOLS = [
 ].sort();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skipNative = process.argv.includes("--skip-native");
+const prebuiltNative = process.argv.includes("--prebuilt-native");
 
 function stage(name) {
   console.error(`\n[acceptance] ${name}`);
@@ -159,6 +160,65 @@ async function createAcceptanceGitBroker() {
   };
 }
 
+async function verifyWindowsExternalExecutableCompatibility(runtime) {
+  if (process.platform !== "win32") return;
+  const { wrapWithSandbox } = await import("../dist/sandbox.js");
+  const { createSandboxProbeEnvironment } = await import("../dist/sandbox-verify.js");
+  const smokeWorkspace = fs.mkdtempSync(path.join(root, "acceptance-windows-sandbox-"));
+  const commands = [
+    ["cmd.exe", "/d", "/c", "echo", "webgpt-bridge-appcontainer-smoke"],
+    ["git", "--version"],
+    ["dotnet", "--list-runtimes"],
+    ["node", "--version"],
+    ["gh", "--version"],
+  ];
+  try {
+    const env = createSandboxProbeEnvironment(smokeWorkspace, { platform: "win32", sourceEnv: process.env });
+    for (const argv of commands) {
+      let resolvedArgv;
+      let trustedReadPaths;
+      if (argv[0] === "gh" && runtime.githubCliState?.status === "ready") {
+        resolvedArgv = [runtime.githubCliState.resolvedPath, ...argv.slice(1)];
+        trustedReadPaths = [path.dirname(runtime.githubCliState.resolvedPath)];
+      } else {
+        const resolved = resolvePlatformArgv(argv, { env: process.env, platform: "win32" });
+        assert.equal(resolved.resolved, true, `${argv[0]} must be installed for Windows native release acceptance`);
+        resolvedArgv = resolved.argv;
+        trustedReadPaths = resolved.trustedReadPaths;
+      }
+      const wrapped = wrapWithSandbox(runtime.normalSandbox.adapter, {
+        argv: resolvedArgv,
+        cwd: smokeWorkspace,
+        workspace: smokeWorkspace,
+        extraReadPaths: trustedReadPaths,
+      });
+      const result = spawnSync(wrapped[0], wrapped.slice(1), {
+        cwd: smokeWorkspace,
+        env,
+        encoding: "utf8",
+        shell: false,
+        windowsHide: true,
+        timeout: 120_000,
+      });
+      if (result.error) throw result.error;
+      if (argv[0] === "git") {
+        assert.doesNotMatch(
+          `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+          /\/dev\/null.*Permission denied/i,
+          `Git for Windows must be able to use /dev/null through the product null-device capability: ${JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr, resolvedArgv })}`,
+        );
+      }
+      assert.equal(
+        result.status,
+        0,
+        `${argv[0]} must launch through the verified AppContainer without rewriting its persistent ACL: ${JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr, resolvedArgv })}`,
+      );
+    }
+  } finally {
+    fs.rmSync(smokeWorkspace, { recursive: true, force: true });
+  }
+}
+
 async function verifyNativeDeveloperWorkflow(runtime) {
   const { createCommandRunner } = await import("../dist/runner.js");
   const run = createCommandRunner({
@@ -253,9 +313,20 @@ async function verifyNativeDeveloperWorkflow(runtime) {
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 assert.equal(packageJson.version, VERSION);
 
-if (process.platform === "win32" && !skipNative) {
+if (process.platform === "win32" && !skipNative && !prebuiltNative) {
   stage("build Windows native sandbox helper");
   runHost(["npm", "run", "build:native"]);
+}
+if (process.platform === "win32" && !skipNative) {
+  stage("verify Windows native sandbox helper payload");
+  const nativeOutput = path.join(root, "native", "windows-sandbox", "bin", "release");
+  for (const requiredFile of ["lpc-windows-sandbox.exe", "hostfxr.dll", "hostpolicy.dll"]) {
+    assert.equal(
+      fs.existsSync(path.join(nativeOutput, requiredFile)),
+      true,
+      `self-contained Windows sandbox publish must include ${requiredFile}`,
+    );
+  }
 }
 
 stage("unit/integration tests");
@@ -290,6 +361,7 @@ try {
     host: "127.0.0.1",
     port: 0,
     verifySandbox: !skipNative,
+    enableNetworkTools: process.platform === "win32",
     installSignalHandlers: false,
   });
   if (!skipNative) {
@@ -300,6 +372,43 @@ try {
       `native sandbox probe must pass: ${JSON.stringify(server.runtime.normalSandbox.verification)}`,
     );
     assert.equal(server.runtime.normalSandbox.summary.autoRunSafe, true, "verified sandbox must be promoted");
+    if (process.platform === "win32") {
+      assert.equal(
+        server.runtime.windowsHostPreparationState.status,
+        "ready",
+        `Windows host preparation must be ready before native acceptance: ${JSON.stringify(server.runtime.windowsHostPreparationState)}`,
+      );
+      assert.equal(
+        server.runtime.networkSandboxState.status,
+        "ready",
+        `dedicated network sandbox must be ready: ${JSON.stringify(server.runtime.networkSandboxState)}`,
+      );
+      assert.equal(server.runtime.networkSandbox?.discovery.available, true, "dedicated network sandbox backend must be available");
+      assert.equal(
+        server.runtime.networkSandbox?.verification?.passed,
+        true,
+        `dedicated network sandbox probe must pass: ${JSON.stringify(server.runtime.networkSandbox?.verification)}`,
+      );
+      assert.equal(server.runtime.networkSandbox?.summary.autoRunSafe, true, "dedicated network sandbox must be promoted after verification");
+      const dependencyTool = server.runtime.tools.find((tool) => tool.name === "dependency_sync");
+      assert.ok(dependencyTool, "dependency_sync tool must exist");
+      const dependencyProbe = await dependencyTool.invoke({ cwd: ".", allowScripts: false });
+      assert.notEqual(
+        dependencyProbe.status,
+        "network_unavailable",
+        `dependency_sync must enter the dedicated network policy path: ${JSON.stringify(dependencyProbe)}`,
+      );
+      assert.equal(dependencyProbe.status, "approval_required", "dependency_sync smoke must stop at approval without mutating dependencies");
+      assert.equal(
+        dependencyProbe.sandbox?.capabilities?.networkIsolation,
+        "internet-client-capability",
+        `dependency_sync must be bound to the dedicated network sandbox: ${JSON.stringify(dependencyProbe.sandbox)}`,
+      );
+    }
+    if (process.platform === "win32") {
+      stage("Windows shared executable AppContainer compatibility");
+      await verifyWindowsExternalExecutableCompatibility(server.runtime);
+    }
     stage("native Node/npm/Git/process/worktree compatibility");
     await verifyNativeDeveloperWorkflow(server.runtime);
   }
@@ -339,7 +448,21 @@ try {
   assert.deepEqual([...caps.tools].sort(), EXPECTED_TOOLS);
   assert.equal(caps.mcp.protocolRevision, "2026-07-28");
   assert.equal(caps.guarantees.modelCannotSelfApprove, true);
-  if (!skipNative) assert.equal(caps.sandbox.autoRunSafe, true);
+  if (!skipNative) {
+    assert.equal(caps.sandbox.autoRunSafe, true);
+    assert.equal(caps.releaseAcceptance.currentNativeSandboxVerified, true);
+  }
+  if (process.platform === "win32" && !skipNative) {
+    assert.equal(caps.networkSandbox.status, "ready");
+    assert.equal(caps.networkSandbox.usableForStructuredNetworkTools, true);
+    assert.ok(["ready", "missing", "broken"].includes(caps.githubCli.status), `GitHub CLI capability must be actionable: ${JSON.stringify(caps.githubCli)}`);
+    if (caps.githubCli.status === "ready") {
+      assert.equal(typeof caps.githubCli.resolvedPath, "string");
+      assert.ok(caps.githubCli.resolvedPath.length > 0);
+      assert.equal(typeof caps.githubCli.version, "string");
+      assert.ok(caps.githubCli.version.length > 0);
+    }
+  }
 
   stage("HTTP health endpoint");
   const health = await fetch(`http://127.0.0.1:${server.port}/healthz`);
@@ -387,6 +510,7 @@ try {
     host: "127.0.0.1",
     port: 0,
     verifySandbox: !skipNative,
+    enableNetworkTools: process.platform === "win32",
     installSignalHandlers: false,
   });
   clientBundle = await connect(`http://127.0.0.1:${server.port}/mcp`);

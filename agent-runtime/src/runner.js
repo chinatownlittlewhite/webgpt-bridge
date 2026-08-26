@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createApprovalRequest, requestHostApproval } from "./approval.js";
 import { discoverManagedWorktreeGitAccess } from "./git-metadata.js";
-import { resolvePlatformArgv } from "./platform.js";
+import { normalizedPlatform, resolvePlatformArgv, stageWindowsNodeCliRuntime } from "./platform.js";
 import { classifyCommand } from "./policy.js";
 import { killProcessTree, wrapWithParentGuard } from "./process-tree.js";
 import { normalizeSandboxAdapter, sandboxSummary, wrapWithSandbox } from "./sandbox.js";
@@ -124,6 +124,32 @@ function relativeCwd(root, resolvedCwd) {
   return path.relative(root, resolvedCwd) || ".";
 }
 
+function normalizeTrustedExecutablePaths(bindings = {}, platform = process.platform) {
+  if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) {
+    throw new TypeError("trustedExecutablePaths must be an object");
+  }
+  const entries = Object.entries(bindings);
+  if (entries.length > 16) throw new RangeError("trustedExecutablePaths may contain at most 16 entries");
+  const normalized = {};
+  for (const [rawName, rawPath] of entries) {
+    if (typeof rawName !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(rawName)) {
+      throw new TypeError("trusted executable names must be simple command names");
+    }
+    if (typeof rawPath !== "string" || rawPath.includes("\0") || !(path.isAbsolute(rawPath) || (platform === "win32" && path.win32.isAbsolute(rawPath)))) {
+      throw new TypeError(`trusted executable '${rawName}' must use an absolute path`);
+    }
+    normalized[rawName.toLowerCase().replace(/\.(exe|cmd|bat|com)$/i, "")] = rawPath;
+  }
+  return Object.freeze(normalized);
+}
+
+function logicalCommandName(command) {
+  if (typeof command !== "string" || command.length === 0 || command.includes("\0") || command.includes("/") || command.includes("\\")) {
+    throw new Error("model command names must resolve through the trusted PATH and cannot select executable paths");
+  }
+  return path.basename(command).toLowerCase().replace(/\.(exe|cmd|bat|com)$/i, "");
+}
+
 function normalizeSandboxAccessPaths(paths = [], label) {
   if (!Array.isArray(paths) || paths.length > 32) {
     throw new TypeError(`${label} must be an array with at most 32 trusted-host paths`);
@@ -136,6 +162,41 @@ function normalizeSandboxAccessPaths(paths = [], label) {
   }))].sort();
 }
 
+function normalizeTrustedRuntimePathEntries(entries = [], root, platform = process.platform) {
+  if (!Array.isArray(entries) || entries.length > 16) {
+    throw new TypeError("trustedPathEntries must be an array with at most 16 trusted-host directories");
+  }
+  const impl = platform === "win32" ? path.win32 : path;
+  const canonicalRoot = fs.realpathSync(root);
+  const normalized = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    if (
+      typeof entry !== "string" ||
+      entry.length === 0 ||
+      entry.includes("\0") ||
+      !(path.isAbsolute(entry) || (platform === "win32" && path.win32.isAbsolute(entry)))
+    ) {
+      throw new TypeError("trustedPathEntries entries must be absolute paths without NUL bytes");
+    }
+    const lexicalStat = fs.lstatSync(entry);
+    if (!lexicalStat.isDirectory() || lexicalStat.isSymbolicLink()) {
+      throw new Error("trusted runtime PATH entries must be plain directories");
+    }
+    const canonicalEntry = fs.realpathSync(entry);
+    const relative = impl.relative(canonicalRoot, canonicalEntry);
+    if (relative.startsWith("..") || impl.isAbsolute(relative)) {
+      throw new Error("trusted runtime PATH entries must remain inside the command cwd");
+    }
+    const key = platform === "win32" ? canonicalEntry.toLowerCase() : canonicalEntry;
+    if (!seen.has(key)) {
+      seen.add(key);
+      normalized.push(canonicalEntry);
+    }
+  }
+  return normalized;
+}
+
 export function createCommandRunner({
   workspace,
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -143,6 +204,8 @@ export function createCommandRunner({
   sandboxAdapter,
   platform = process.platform,
   auditLogger,
+  trustedExecutablePaths = {},
+  platformRuntimeStager = stageWindowsNodeCliRuntime,
 } = {}) {
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > DEFAULT_TIMEOUT_MS) {
     throw new RangeError(`timeoutMs must be between 1 and ${DEFAULT_TIMEOUT_MS}`);
@@ -150,7 +213,11 @@ export function createCommandRunner({
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new RangeError("maxOutputBytes must be a positive integer");
   }
+  if (typeof platformRuntimeStager !== "function") {
+    throw new TypeError("platformRuntimeStager must be a trusted host function");
+  }
   const sandbox = normalizeSandboxAdapter(sandboxAdapter);
+  const trustedExecutables = normalizeTrustedExecutablePaths(trustedExecutablePaths, platform);
 
   return async function runCommand({
     argv,
@@ -174,11 +241,21 @@ export function createCommandRunner({
     const normalizedCwd = relativeCwd(root, resolvedCwd);
     const trustedExtraReadPaths = normalizeSandboxAccessPaths(sandboxExtraReadPaths, "sandboxExtraReadPaths");
     const trustedExtraWritePaths = normalizeSandboxAccessPaths(sandboxExtraWritePaths, "sandboxExtraWritePaths");
-    const childEnv = buildCommandEnvironment(resolvedCwd, validatedEnv, platform);
 
     let platformCommand;
     try {
-      platformCommand = resolvePlatformArgv(argv, { env: process.env, platform });
+      const logicalCommand = logicalCommandName(argv?.[0]);
+      const trustedExecutable = trustedExecutables[logicalCommand];
+      platformCommand = trustedExecutable
+        ? Object.freeze({
+            platform: normalizedPlatform(platform),
+            logicalCommand,
+            argv: Object.freeze([trustedExecutable, ...argv.slice(1)]),
+            resolved: true,
+            usedTrustedShim: true,
+            trustedReadPaths: Object.freeze([path.dirname(trustedExecutable)]),
+          })
+        : resolvePlatformArgv(argv, { env: process.env, platform });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       audit(auditLogger, { type: "command_platform_error", argv, cwd: normalizedCwd, platform, error: message });
@@ -188,6 +265,34 @@ export function createCommandRunner({
       const error = `executable '${argv[0]}' was not found on the trusted PATH`;
       audit(auditLogger, { type: "command_not_found", argv, cwd: normalizedCwd, platform, error });
       return { status: "spawn_error", policy, sandbox: sandboxInfo, error };
+    }
+    try {
+      platformCommand = platformRuntimeStager(platformCommand, {
+        workspace: resolvedCwd,
+        platform,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      audit(auditLogger, { type: "command_platform_error", argv, cwd: normalizedCwd, platform, error: message });
+      return { status: "platform_error", policy, sandbox: sandboxInfo, error: message };
+    }
+
+    let trustedRuntimePathEntries;
+    try {
+      trustedRuntimePathEntries = normalizeTrustedRuntimePathEntries(
+        platformCommand.trustedPathEntries ?? [],
+        resolvedCwd,
+        platform,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      audit(auditLogger, { type: "command_platform_error", argv, cwd: normalizedCwd, platform, error: message });
+      return { status: "platform_error", policy, sandbox: sandboxInfo, error: message };
+    }
+    const childEnv = buildCommandEnvironment(resolvedCwd, validatedEnv, platform);
+    if (trustedRuntimePathEntries.length > 0) {
+      const delimiter = platform === "win32" ? ";" : path.delimiter;
+      childEnv.PATH = [...trustedRuntimePathEntries, childEnv.PATH].filter(Boolean).join(delimiter);
     }
 
     let approvalRequest = null;

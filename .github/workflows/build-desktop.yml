@@ -2,11 +2,33 @@ name: Build desktop apps
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  pull_request:
+    branches:
+      - main
 
 jobs:
+  agent:
+    name: Agent runtime (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent-runtime/package-lock.json
+      - name: Install Bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          bwrap --version
+      - run: npm --prefix agent-runtime ci
+      - run: npm --prefix agent-runtime test
+      - run: npm --prefix agent-runtime run lint
+      - run: npm --prefix agent-runtime run contract
+      - run: npm --prefix agent-runtime run build
+      - run: npm --prefix agent-runtime run acceptance:quick
+
   macos:
     name: macOS universal
     runs-on: macos-latest
@@ -21,7 +43,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: webgpt-bridge-macos-universal
-          path: release/*
+          path: |
+            release/WebGPT-Bridge-*-mac-universal.dmg
+            release/WebGPT-Bridge-*-mac-universal.zip
+            release/*.blockmap
+            release/latest-mac.yml
 
   windows:
     name: Windows x64
@@ -32,9 +58,116 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
       - run: npm ci
+      - run: npm --prefix agent-runtime ci
+      - name: Build Windows native helpers
+        run: npm --prefix agent-runtime run build:native
+      - name: Prepare Windows AppContainer host access
+        shell: pwsh
+        run: |
+          $prep = (Resolve-Path "agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe").Path
+          & $prep --apply
+          if ($LASTEXITCODE -ne 0) { throw "host-prep first apply failed with exit $LASTEXITCODE" }
+          & $prep --apply
+          if ($LASTEXITCODE -ne 0) { throw "host-prep second apply failed with exit $LASTEXITCODE" }
+          $checkJson = & $prep --check --json
+          if ($LASTEXITCODE -ne 0) { throw "host-prep check failed with exit $LASTEXITCODE" }
+          $check = $checkJson | ConvertFrom-Json
+          if ($check.status -ne "ready") { throw "host-prep did not become ready: $checkJson" }
+
+          & $prep --remove
+          if ($LASTEXITCODE -ne 0) { throw "host-prep remove failed with exit $LASTEXITCODE" }
+          $removedJson = & $prep --check --json
+          if ($LASTEXITCODE -ne 0) { throw "host-prep post-remove check failed with exit $LASTEXITCODE" }
+          $removed = $removedJson | ConvertFrom-Json
+          if ($removed.status -ne "capability_ace_missing") { throw "host-prep remained unexpectedly ready after remove: $removedJson" }
+
+          & $prep --apply
+          if ($LASTEXITCODE -ne 0) { throw "host-prep repair apply failed with exit $LASTEXITCODE" }
+          $repairedJson = & $prep --check --json
+          if ($LASTEXITCODE -ne 0) { throw "host-prep repair check failed with exit $LASTEXITCODE" }
+          $repaired = $repairedJson | ConvertFrom-Json
+          if ($repaired.status -ne "ready") { throw "host-prep repair did not return to ready: $repairedJson" }
+      - name: Run Windows acceptance as standard user
+        shell: pwsh
+        run: |
+          $username = "wgbci$PID"
+          $passwordPlain = "WgB!$([guid]::NewGuid().ToString('N'))9a"
+          $securePassword = ConvertTo-SecureString $passwordPlain -AsPlainText -Force
+          New-LocalUser -Name $username -Password $securePassword -AccountNeverExpires -PasswordNeverExpires | Out-Null
+          $qualified = "$env:COMPUTERNAME\$username"
+          $acceptanceTemp = Join-Path $env:GITHUB_WORKSPACE ".ci-windows-standard-user-temp"
+          $previousTemp = $env:TEMP
+          $previousTmp = $env:TMP
+          try {
+            $adminMembers = Get-LocalGroupMember -Group "Administrators"
+            if ($adminMembers.Name -contains $qualified) { throw "acceptance user unexpectedly belongs to Administrators" }
+            & "$env:SystemRoot\System32\icacls.exe" $env:GITHUB_WORKSPACE /grant "${qualified}:(OI)(CI)F" /Q | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "failed to grant the standard user workspace access" }
+            New-Item -ItemType Directory -Path $acceptanceTemp -Force | Out-Null
+            $env:TEMP = $acceptanceTemp
+            $env:TMP = $acceptanceTemp
+
+            $npm = (Get-Command npm.cmd).Source
+            $acceptanceCommand = "npm --prefix agent-runtime run acceptance -- --prebuilt-native"
+            Write-Host "Running as ${qualified}: $acceptanceCommand"
+            $stdout = Join-Path $env:RUNNER_TEMP "webgpt-standard-user-acceptance.stdout.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "webgpt-standard-user-acceptance.stderr.log"
+            $credential = [System.Management.Automation.PSCredential]::new($qualified, $securePassword)
+            $process = Start-Process -FilePath $npm `
+              -ArgumentList @("--prefix", "agent-runtime", "run", "acceptance", "--", "--prebuilt-native") `
+              -WorkingDirectory $env:GITHUB_WORKSPACE `
+              -Credential $credential `
+              -LoadUserProfile `
+              -RedirectStandardOutput $stdout `
+              -RedirectStandardError $stderr `
+              -Wait -PassThru
+            if (Test-Path $stdout) { Get-Content $stdout | Write-Host }
+            if (Test-Path $stderr) { Get-Content $stderr | Write-Host }
+            if ($process.ExitCode -ne 0) { throw "standard-user Windows acceptance failed with exit $($process.ExitCode)" }
+          }
+          finally {
+            $env:TEMP = $previousTemp
+            $env:TMP = $previousTmp
+            Remove-Item -LiteralPath $acceptanceTemp -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-LocalUser -Name $username -ErrorAction SilentlyContinue
+          }
       - run: npm run dist:win
+      - name: Smoke install Windows NSIS artifact
+        shell: pwsh
+        run: |
+          $prep = (Resolve-Path "agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe").Path
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File "scripts\windows-installer-smoke.ps1" `
+            -ArtifactsDir "release" `
+            -SourcePrep $prep
+          if ($LASTEXITCODE -ne 0) { throw "Windows installer lifecycle smoke failed with exit $LASTEXITCODE" }
       - uses: actions/upload-artifact@v4
         with:
           name: webgpt-bridge-windows-x64
-          path: release/*
+          path: |
+            release/WebGPT-Bridge-*-win-x64.exe
+            release/*.blockmap
+            release/latest.yml
+      - name: Cleanup Windows host preparation
+        if: always()
+        shell: pwsh
+        run: |
+          $installRoot = Join-Path $env:ProgramFiles "WebGPT Bridge"
+          if (Test-Path $installRoot) {
+            $uninstaller = Get-ChildItem -Path $installRoot -Filter "Uninstall*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($uninstaller) {
+              $cleanupUninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList @("/S") -Wait -PassThru
+              if ($cleanupUninstall.ExitCode -ne 0) { Write-Warning "installer-smoke cleanup uninstall returned exit $($cleanupUninstall.ExitCode)" }
+            }
+          }
+          & "$env:SystemRoot\System32\schtasks.exe" /Delete /TN "WebGPT Bridge Host Preparation" /F *> $null
+          $prep = "agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe"
+          if (Test-Path $prep) {
+            & $prep --remove
+            if ($LASTEXITCODE -ne 0) { Write-Warning "host-prep cleanup returned exit $LASTEXITCODE" }
+          }

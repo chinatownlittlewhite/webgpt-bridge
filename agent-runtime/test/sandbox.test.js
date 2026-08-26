@@ -186,16 +186,19 @@ test("native sandbox verification requirements preserve stricter Windows no-netw
   assert.deepEqual(nativeSandboxVerificationRequirements({ platform: "win32", allowNetwork: false }), {
     requireNetworkBlocked: true,
     requireLoopback: false,
+    requireNullDevice: true,
     timeoutMs: 30_000,
   });
   assert.deepEqual(nativeSandboxVerificationRequirements({ platform: "darwin", allowNetwork: false }), {
     requireNetworkBlocked: true,
     requireLoopback: true,
+    requireNullDevice: false,
     timeoutMs: 5_000,
   });
   assert.deepEqual(nativeSandboxVerificationRequirements({ platform: "win32", allowNetwork: true }), {
     requireNetworkBlocked: false,
     requireLoopback: false,
+    requireNullDevice: true,
     timeoutMs: 30_000,
   });
 });
@@ -205,6 +208,16 @@ test("Windows native helper preserves Win32 error codes in diagnostics", () => {
   const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
   assert.match(source, /Win32Exception win32/);
   assert.match(source, /NativeErrorCode/);
+});
+
+test("Windows helper always includes the fixed product capability and adds internet client only for network mode", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
+  assert.match(source, /com\.localagenthost\.desktop\.null-device/);
+  assert.match(source, /DeriveCapabilitySidsFromName/);
+  assert.match(source, /CapabilityCount\s*=\s*\(uint\)capabilities\.Count/);
+  assert.match(source, /if \(allowNetwork\)[\s\S]*InternetClientCapabilitySid/);
+  assert.doesNotMatch(source, /uint capabilityCount = 0;/);
 });
 
 test("Windows helper does not claim a custom Unicode environment when inheriting the parent environment", () => {
@@ -234,15 +247,18 @@ test("Windows AppContainer child inherits the helper cwd instead of restating a 
   assert.match(source, /null,\s*ref startup,/s);
 });
 
-test("Windows helper grants only explicit runtime ACLs and never rewrites host ancestors", () => {
+test("Windows helper mutates ACLs only for workspace-owned paths and never for shared executables", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(path.join(here, "..", "native", "windows-sandbox", "Program.cs"), "utf8");
   assert.match(source, /Native\.GetNamedSecurityInfoW/);
   assert.match(source, /Native\.SetEntriesInAclW/);
   assert.match(source, /Native\.SetNamedSecurityInfoW/);
-  assert.match(source, /if \(profile\.Created\)\s*\{[\s\S]*?GrantAcl\(workspace, appContainerSid, modify: true\);[\s\S]*?\}/);
-  assert.match(source, /GrantAcl\(executable, appContainerSid, modify: false\)/);
-  assert.match(source, /GrantAcl\(resolved, appContainerSid, modify: false\)/);
+  assert.match(source, /GrantWorkspaceAcl\(workspace, workspace, appContainerSid, modify: true\)/);
+  assert.match(source, /FileAttributes\.ReparsePoint/);
+  assert.match(source, /ACL target traverses a reparse point/);
+  assert.doesNotMatch(source, /GrantAcl\(executable, appContainerSid/);
+  assert.match(source, /if \(IsInside\(workspace, resolved\)\)\s*\{[\s\S]*?GrantWorkspaceAcl\(workspace, resolved, appContainerSid, modify: false\);[\s\S]*?\}/);
+  assert.match(source, /if \(!IsInside\(workspace, resolved\)\)\s*\{[\s\S]*?write path escapes the configured workspace[\s\S]*?\}/);
   assert.doesNotMatch(source, /GrantTraversalAcl/);
   assert.doesNotMatch(source, /icacls\.exe/);
   assert.doesNotMatch(source, /Process\.Start\(psi\)/);

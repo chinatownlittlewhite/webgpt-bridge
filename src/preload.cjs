@@ -11,5 +11,14 @@ contextBridge.exposeInMainWorld("localAgentHost", {
   openChatGPT: () => ipcRenderer.invoke("chatgpt:open"),
   status: () => ipcRenderer.invoke("host:status"),
   logs: () => ipcRenderer.invoke("host:logs"),
+  getUpdateState: () => ipcRenderer.invoke("update:get-state"),
+  checkForUpdates: () => ipcRenderer.invoke("update:check"),
+  downloadUpdate: () => ipcRenderer.invoke("update:download"),
+  installUpdateAndRestart: () => ipcRenderer.invoke("update:install"),
+  onUpdateState: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("update:state", listener);
+    return () => ipcRenderer.removeListener("update:state", listener);
+  },
   onEvent: (callback) => ipcRenderer.on("host:event", (_event, value) => callback(value)),
 });

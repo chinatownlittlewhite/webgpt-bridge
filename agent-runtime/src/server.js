@@ -15,8 +15,9 @@ import {
   toNodeHandler,
 } from "@modelcontextprotocol/node";
 import { createAuditLogger } from "./audit.js";
+import { resolveGitHubCli } from "./github-cli.js";
 import { goalModeHostInstructions } from "./host-instructions.js";
-import { prepareNativeSandbox } from "./native-sandbox.js";
+import { prepareNativeSandbox, probeWindowsHostPreparation, sandboxPreparationDiagnostic } from "./native-sandbox.js";
 import { createProcessManager } from "./process-manager.js";
 import { loadProjectContext } from "./project-context.js";
 import { createHostApprovalClient } from "./local-broker-client.js";
@@ -266,6 +267,8 @@ export async function createProductionRuntime({
   enableNetworkTools = envBool(process.env.LPC_ENABLE_NETWORK_TOOLS, false),
   localBrokerSocket = process.env.LPC_LOCAL_BROKER_SOCKET ?? "",
   windowsHelperPath = process.env.LPC_WINDOWS_SANDBOX_HELPER,
+  windowsHostPrepPath = process.env.LPC_WINDOWS_HOST_PREP,
+  githubCliPath = process.env.LPC_GITHUB_CLI_PATH ?? "",
 } = {}) {
   const root = resolveWorkspace(workspace);
   const projectContext = loadProjectContext({ workspace: root, cwd: ".", maxTotalBytes: 48_000 });
@@ -276,11 +279,17 @@ export async function createProductionRuntime({
       : "",
   ].filter(Boolean).join("\n\n");
   const auditLogger = createAuditLogger({ workspace: root, enabled: !envBool(process.env.LPC_DISABLE_AUDIT, false) });
+  const windowsHostPreparationState = probeWindowsHostPreparation({
+    platform: process.platform,
+    helperPath: windowsHostPrepPath,
+  });
   const normalSandbox = await prepareNativeSandbox({
     workspace: root,
     platform: process.platform,
     allowNetwork: false,
     windowsHelperPath,
+    windowsHostPrepPath,
+    windowsHostPreparationState,
     verify: verifySandbox,
   });
   const networkSandbox = enableNetworkTools
@@ -289,12 +298,24 @@ export async function createProductionRuntime({
         platform: process.platform,
         allowNetwork: true,
         windowsHelperPath,
+        windowsHostPrepPath,
+        windowsHostPreparationState,
         verify: verifySandbox,
       })
     : null;
   const networkSandboxAdapter = networkSandbox?.summary.autoRunSafe === true
     ? networkSandbox.adapter
     : undefined;
+  const networkSandboxState = sandboxPreparationDiagnostic(networkSandbox, {
+    enabled: enableNetworkTools,
+    platform: process.platform,
+    allowNetwork: true,
+  });
+  const githubCliState = resolveGitHubCli({
+    platform: process.platform,
+    env: process.env,
+    explicitPath: githubCliPath,
+  });
 
   const processManager = createProcessManager({
     workspace: root,
@@ -307,6 +328,9 @@ export async function createProductionRuntime({
     workspace: root,
     sandboxAdapter: normalSandbox.adapter,
     networkSandboxAdapter,
+    networkSandboxState,
+    githubCliState,
+    windowsHostPreparationState,
     localBrokerSocket,
     processManager,
     platform: process.platform,
@@ -330,11 +354,9 @@ export async function createProductionRuntime({
     workspace: root,
     tools: tools.map((tool) => tool.name),
     sandbox: normalSandbox.summary,
-    networkTools: {
-      enabled: enableNetworkTools,
-      sandbox: networkSandbox?.summary ?? null,
-      usable: networkSandbox?.summary.autoRunSafe === true,
-    },
+    networkTools: networkSandboxState,
+    githubCli: githubCliState,
+    windowsHostPreparation: windowsHostPreparationState,
   });
 
   return Object.freeze({
@@ -345,6 +367,9 @@ export async function createProductionRuntime({
     auditLogger,
     normalSandbox,
     networkSandbox,
+    networkSandboxState,
+    githubCliState,
+    windowsHostPreparationState,
     mcpHandler,
   });
 }
