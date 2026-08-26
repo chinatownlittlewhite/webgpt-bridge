@@ -19,6 +19,13 @@ test("formal release is isolated from PR CI and starts as draft", () => {
   assert.doesNotMatch(build, /push:\s*\n\s*tags:/);
 });
 
+test("formal release supports explicit dispatch only when the selected ref is a real tag", () => {
+  const release = readReleaseWorkflow();
+  assert.match(release, /workflow_dispatch:/);
+  assert.match(release, /GITHUB_REF_TYPE/);
+  assert.match(release, /GITHUB_REF_TYPE[^\n]*tag|tag[^\n]*GITHUB_REF_TYPE/);
+});
+
 test("formal signing credentials are scoped away from PR workflow", () => {
   const build = fs.readFileSync(buildPath, "utf8");
   assert.doesNotMatch(build, /AZURE_FEDERATED_TOKEN_FILE|APPLE_API_KEY|CSC_LINK|WEBGPT_FORMAL_RELEASE/);
