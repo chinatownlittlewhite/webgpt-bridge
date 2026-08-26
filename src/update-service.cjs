@@ -106,36 +106,44 @@ function createUpdateService(options) {
     return publish({ status: "error", errorCode: normalized.code, errorMessage: normalized.message });
   }
 
+  function publishAvailable(info = {}) {
+    return publish({
+      status: "available",
+      availableVersion: info.version || state.availableVersion,
+      releaseDate: info.releaseDate || "",
+      releaseNotes: normalizeReleaseNotes(info.releaseNotes),
+      downloadPercent: 0,
+      downloadedBytes: 0,
+      totalBytes: 0,
+      bytesPerSecond: 0,
+      errorCode: "",
+      errorMessage: "",
+    });
+  }
+
+  function publishUpToDate() {
+    return publish({
+      status: "up_to_date",
+      availableVersion: "",
+      releaseDate: "",
+      releaseNotes: "",
+      downloadPercent: 0,
+      downloadedBytes: 0,
+      totalBytes: 0,
+      bytesPerSecond: 0,
+      errorCode: "",
+      errorMessage: "",
+    });
+  }
+
   function on(name, handler) {
     handlers.set(name, handler);
     updater.on(name, handler);
   }
 
   on("checking-for-update", () => publish({ status: "checking", errorCode: "", errorMessage: "" }));
-  on("update-available", (info = {}) => publish({
-    status: "available",
-    availableVersion: info.version || state.availableVersion,
-    releaseDate: info.releaseDate || "",
-    releaseNotes: normalizeReleaseNotes(info.releaseNotes),
-    downloadPercent: 0,
-    downloadedBytes: 0,
-    totalBytes: 0,
-    bytesPerSecond: 0,
-    errorCode: "",
-    errorMessage: "",
-  }));
-  on("update-not-available", () => publish({
-    status: "up_to_date",
-    availableVersion: "",
-    releaseDate: "",
-    releaseNotes: "",
-    downloadPercent: 0,
-    downloadedBytes: 0,
-    totalBytes: 0,
-    bytesPerSecond: 0,
-    errorCode: "",
-    errorMessage: "",
-  }));
+  on("update-available", (info = {}) => publishAvailable(info));
+  on("update-not-available", () => publishUpToDate());
   on("download-progress", (progress = {}) => publish({
     status: "downloading",
     downloadPercent: percent(progress.percent),
@@ -159,6 +167,18 @@ function createUpdateService(options) {
     return snapshot(state);
   }
 
+  function settleCheckResult(result) {
+    if (state.status !== "checking") return snapshot(state);
+    const info = result?.updateInfo || {};
+    if (result?.isUpdateAvailable === false || (info.version && String(info.version) === String(currentVersion))) {
+      return publishUpToDate();
+    }
+    if (result?.isUpdateAvailable === true || info.version) {
+      return publishAvailable(info);
+    }
+    return publishError(new Error("更新检查没有返回可用的版本状态。"));
+  }
+
   function checkForUpdates() {
     if (!isPackaged) {
       return publish({ status: "error", errorCode: "unsupported_environment", errorMessage: "更新检查仅在已安装版本中可用。" });
@@ -172,6 +192,7 @@ function createUpdateService(options) {
       return Promise.resolve(publishError(error));
     }
     checkPromise = Promise.resolve(result)
+      .then((value) => settleCheckResult(value))
       .catch((error) => publishError(error))
       .finally(() => { checkPromise = null; });
     return checkPromise;
