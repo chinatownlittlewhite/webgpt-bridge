@@ -6,38 +6,31 @@ on:
       - main
 
 permissions:
-  contents: write
+  actions: write
+  contents: read
 
 jobs:
-  replace:
-    if: github.event.head_commit.message == 'retry v0.3.7 prerelease replacement'
+  dispatch-release:
+    if: github.event.head_commit.message == 'dispatch v0.3.7 replacement release'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Verify replacement commit still declares 0.3.7
-        shell: bash
-        run: |
-          set -euo pipefail
-          node -e 'const p=require("./package.json"); if (p.version !== "0.3.7") { console.error(`expected package version 0.3.7, got ${p.version}`); process.exit(1); }'
-
-      - name: Delete only the old prerelease and retarget v0.3.7
+      - name: Verify replacement tag and dispatch formal release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_TAG_SHA: 5a55a4a832269db2c3a6bf6caf3ecf9d76d4e1aa
         run: |
           set -euo pipefail
 
-          if gh release view v0.3.7 --json isDraft,isPrerelease > "$RUNNER_TEMP/v037-release.json" 2>/dev/null; then
-            node -e 'const fs=require("node:fs"); const release=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (release.isDraft || release.isPrerelease !== true) { console.error("refusing to replace v0.3.7 because the existing release is not the expected published prerelease"); process.exit(1); }' "$RUNNER_TEMP/v037-release.json"
-            gh release delete v0.3.7 --yes
-          else
-            echo "v0.3.7 release is already absent; continuing idempotently"
+          if gh release view v0.3.7 >/dev/null 2>&1; then
+            echo "refusing to dispatch: a v0.3.7 release already exists" >&2
+            exit 1
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f v0.3.7 "$GITHUB_SHA"
-          git push --force origin refs/tags/v0.3.7
+          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.3.7" --jq '.object.sha')"
+          if [ "$tag_sha" != "$EXPECTED_TAG_SHA" ]; then
+            echo "v0.3.7 tag moved unexpectedly: $tag_sha" >&2
+            exit 1
+          fi
+
+          gh workflow run release-desktop.yml --ref v0.3.7
