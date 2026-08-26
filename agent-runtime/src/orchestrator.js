@@ -65,9 +65,20 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
     assertModelStep(modelStep);
     let currentSessionId = sessionId;
     let state;
+    const completeRun = (result, turns) => {
+      const output = { ...result, orchestratorTurns: turns };
+      audit(auditLogger, {
+        type: "orchestrator_result",
+        sessionId: output.sessionId ?? currentSessionId ?? null,
+        status: output.status ?? null,
+        mustContinue: output.mustContinue === true,
+        orchestratorTurns: turns,
+      });
+      return output;
+    };
     if (currentSessionId) {
       state = goalStatus.invoke({ sessionId: currentSessionId });
-      if (state.status === "not_found") return state;
+      if (state.status === "not_found") return completeRun(state, 0);
     } else {
       state = goalMode.invoke({
         goal,
@@ -77,6 +88,9 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
         ...(budgets.maxToolCalls ? { maxToolCalls: budgets.maxToolCalls } : {}),
         ...(budgets.maxDurationMs ? { maxDurationMs: budgets.maxDurationMs } : {}),
       });
+      if (state.status !== "active" || typeof state.sessionId !== "string") {
+        return completeRun(state, 0);
+      }
       currentSessionId = state.sessionId;
     }
 
@@ -84,7 +98,7 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
     for (let turn = 1; turn <= maxModelTurns; turn += 1) {
       state = goalStatus.invoke({ sessionId: currentSessionId });
       if (state.mustContinue === false && state.status !== "blocked_approval") {
-        return { ...state, orchestratorTurns: turn - 1 };
+        return completeRun(state, turn - 1);
       }
 
       let decision;
@@ -96,21 +110,20 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
           rule: "Continue until goal_finish returns completed; use user_input_required only for information unavailable to tools.",
         }));
       } catch (error) {
-        return {
+        return completeRun({
           status: "model_error",
           mustContinue: false,
           sessionId: currentSessionId,
           error: error instanceof Error ? error.message : String(error),
-          orchestratorTurns: turn,
-        };
+        }, turn);
       }
 
       audit(auditLogger, { type: "orchestrator_decision", sessionId: currentSessionId, turn, decision });
       if (decision.type === "user_input_required") {
-        return { status: "blocked_user_input", mustContinue: false, sessionId: currentSessionId, reason: decision.reason, orchestratorTurns: turn };
+        return completeRun({ status: "blocked_user_input", mustContinue: false, sessionId: currentSessionId, reason: decision.reason }, turn);
       }
       if (decision.type === "cancel") {
-        return { ...(await goalCancel.invoke({ sessionId: currentSessionId })), orchestratorTurns: turn };
+        return completeRun(await goalCancel.invoke({ sessionId: currentSessionId }), turn);
       }
 
       const trustedContext = {
@@ -127,16 +140,15 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
           }, trustedContext);
 
       if (result.status === "completed" || result.mustContinue === false) {
-        return { ...result, orchestratorTurns: turn };
+        return completeRun(result, turn);
       }
     }
 
-    return {
+    return completeRun({
       status: "orchestrator_budget_exhausted",
       mustContinue: false,
       sessionId: currentSessionId,
       reason: `external orchestrator model-turn budget (${maxModelTurns}) exhausted`,
-      orchestratorTurns: maxModelTurns,
-    };
+    }, maxModelTurns);
   };
 }

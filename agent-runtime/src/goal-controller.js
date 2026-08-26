@@ -340,6 +340,7 @@ export function createGoalController({
     throw new TypeError("goal sessionStore must expose loadAll, save, and remove functions");
   }
   const sessions = new Map();
+  const mutatingSessions = new Set();
   let storedSessions = [];
   try {
     storedSessions = store.loadAll();
@@ -399,6 +400,20 @@ export function createGoalController({
     return sessions.get(sessionId) ?? null;
   }
 
+  function beginMutation(session) {
+    if (mutatingSessions.has(session.id)) {
+      return {
+        status: "operation_in_progress",
+        mustContinue: false,
+        sessionId: session.id,
+        reason: "another goal_step or goal_finish operation is already in flight",
+        session: sessionView(session),
+      };
+    }
+    mutatingSessions.add(session.id);
+    return null;
+  }
+
   function start(input) {
     if (!makeRoom()) {
       return { status: "capacity_reached", mustContinue: false, reason: `goal session capacity (${maxSessions}) is full` };
@@ -452,6 +467,8 @@ export function createGoalController({
     const session = find(sessionId);
     if (!session) return { status: "not_found", mustContinue: false, sessionId };
     if (TERMINAL.has(session.status)) return { status: "already_terminal", mustContinue: false, session: sessionView(session) };
+    const mutationBlock = beginMutation(session);
+    if (mutationBlock) return mutationBlock;
     try {
       const stopped = stopForBudget(session);
       if (stopped) return stopped;
@@ -564,6 +581,7 @@ export function createGoalController({
         budget: budget(session),
       };
     } finally {
+      mutatingSessions.delete(session.id);
       persistSession(session);
     }
   }
@@ -613,6 +631,8 @@ export function createGoalController({
     const session = find(sessionId);
     if (!session) return { status: "not_found", mustContinue: false, sessionId };
     if (TERMINAL.has(session.status)) return { status: "already_terminal", mustContinue: false, session: sessionView(session) };
+    const mutationBlock = beginMutation(session);
+    if (mutationBlock) return mutationBlock;
     try {
       const stopped = stopForBudget(session);
       if (stopped) return stopped;
@@ -782,6 +802,7 @@ export function createGoalController({
         budget: budget(session),
       };
     } finally {
+      mutatingSessions.delete(session.id);
       persistSession(session);
     }
   }

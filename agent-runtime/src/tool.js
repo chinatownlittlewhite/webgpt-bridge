@@ -758,7 +758,7 @@ export function createCapabilitiesTool({
         },
         processManager: { longRunning: true, pty: "optional-node-pty", processTreeKill: true },
         git: { structuredActions: true, worktrees: true },
-        audit: { enabled: auditLogger?.enabled === true, hashChained: auditLogger?.enabled === true },
+        audit: { enabled: auditLogger?.enabled === true, hashChained: auditLogger?.enabled === true, orchestratorTerminalOutcomes: true },
         mcp: { serverV2Available: true, protocolRevision: "2026-07-28", mrtrApprovalSupported: true },
         goalMode: {
           orchestration: "explicit-session-handle",
@@ -771,6 +771,7 @@ export function createCapabilitiesTool({
             : goalPersistSessions === true ? "persistent-file" : "in-memory-until-server-restart-or-ttl",
           repeatedActionDetection: true,
           boundedAgentHistory: true,
+          singleWriterMutations: true,
           trackedActionsUseGoalStep: true,
           goalCwdScoped: typeof workspace === "string" && workspace.length > 0,
           cancelReclaimsOwnedProcesses: true,
@@ -786,6 +787,7 @@ export function createCapabilitiesTool({
           hostApprovalIsBoundToExactAndResolvedRequest: true,
           unattendedExecutionRequiresVerifiedSandbox: true,
           goalModeCannotRunUnbounded: true,
+          goalSessionMutationsSingleWriter: true,
           goalCancelReclaimsOwnedProcesses: true,
         },
       };
