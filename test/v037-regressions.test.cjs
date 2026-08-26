@@ -69,10 +69,13 @@ test("desktop GitHub CLI resolver finds Homebrew gh even when Finder PATH omits 
 });
 
 test("available update action sends the user to the exact GitHub Release instead of unsigned in-app install", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "index.html"), "utf8");
   const renderer = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "renderer.js"), "utf8");
+  assert.match(html, /data-release-base="https:\/\/github\.com\/chinatownlittlewhite\/webgpt-bridge\/releases\/tag\/v"/);
   assert.match(renderer, /在 GitHub 下载/);
-  assert.match(renderer, /github\.com\/chinatownlittlewhite\/webgpt-bridge\/releases\/tag\/v/);
   assert.match(renderer, /window\.open\(/);
+  const handler = renderer.slice(renderer.indexOf('byId("updateAction").addEventListener'));
+  assert.doesNotMatch(handler, /downloadUpdate|installUpdateAndRestart/);
 });
 
 test("tag release workflow publishes GitHub artifacts without external signing or notarization gates", () => {
