@@ -1,6 +1,7 @@
 name: Release desktop apps
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -15,6 +16,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Require a real tag ref
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "formal release requires a real tag ref" >&2
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
