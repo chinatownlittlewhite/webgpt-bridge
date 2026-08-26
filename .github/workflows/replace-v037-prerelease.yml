@@ -1,0 +1,50 @@
+name: Replace v0.3.7 prerelease
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  replace:
+    if: github.event.head_commit.message == 'release: replace v0.3.7 prerelease'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify replacement commit still declares 0.3.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e 'const p=require("./package.json"); if (p.version !== "0.3.7") { console.error(`expected package version 0.3.7, got ${p.version}`); process.exit(1); }'
+
+      - name: Delete only the old prerelease and retarget v0.3.7
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view v0.3.7 --json isDraft,isPrerelease > "$RUNNER_TEMP/v037-release.json" 2>/dev/null; then
+            node - "$RUNNER_TEMP/v037-release.json" <<'NODE'
+          const fs = require("node:fs");
+          const release = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (release.isDraft || release.isPrerelease !== true) {
+            console.error("refusing to replace v0.3.7 because the existing release is not the expected published prerelease");
+            process.exit(1);
+          }
+          NODE
+            gh release delete v0.3.7 --yes
+          else
+            echo "v0.3.7 release is already absent; continuing idempotently"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f v0.3.7 "$GITHUB_SHA"
+          git push --force origin refs/tags/v0.3.7
