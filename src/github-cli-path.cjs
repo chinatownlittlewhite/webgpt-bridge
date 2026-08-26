@@ -38,6 +38,8 @@ function resolveDesktopGitHubCli({
       candidates.push(path.win32.join(env.LOCALAPPDATA, "Programs", "GitHub CLI", "gh.exe"));
       candidates.push(path.win32.join(env.LOCALAPPDATA, "Microsoft", "WinGet", "Links", "gh.exe"));
     }
+  } else if (platform === "darwin") {
+    candidates.push("/opt/homebrew/bin/gh", "/usr/local/bin/gh");
   }
   const fromPath = findInPath("gh");
   if (fromPath) candidates.push(fromPath);
