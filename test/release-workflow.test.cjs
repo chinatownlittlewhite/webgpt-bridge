@@ -47,6 +47,20 @@ test("platform jobs cannot publish directly and publication waits for both valid
   assert.doesNotMatch(publish, /--clobber/);
 });
 
+test("release artifacts whitelist distributables instead of uploading the whole builder directory", () => {
+  const release = readReleaseWorkflow();
+  const windows = release.slice(release.indexOf("  windows:"), release.indexOf("  macos:"));
+  const mac = release.slice(release.indexOf("  macos:"), release.indexOf("  publish:"));
+  assert.doesNotMatch(windows, /path:\s*release\/\*/);
+  assert.match(windows, /release\/WebGPT-Bridge-\*-win-x64\.exe/);
+  assert.match(windows, /release\/latest\.yml/);
+  assert.doesNotMatch(mac, /path:\s*release\/\*/);
+  assert.match(mac, /release\/WebGPT-Bridge-\*-mac-universal\.dmg/);
+  assert.match(mac, /release\/WebGPT-Bridge-\*-mac-universal\.zip/);
+  assert.match(mac, /release\/latest-mac\.yml/);
+  assert.doesNotMatch(release, /builder-debug\.yml|builder-effective-config\.yaml/);
+});
+
 test("Windows GitHub release keeps native acceptance and installer lifecycle smoke without signing", () => {
   const release = readReleaseWorkflow();
   const windows = release.slice(release.indexOf("  windows:"), release.indexOf("  macos:"));
