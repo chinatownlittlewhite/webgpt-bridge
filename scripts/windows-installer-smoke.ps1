@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $taskName = "WebGPT Bridge Host Preparation"
-$installer = Get-ChildItem -Path $ArtifactsDir -Filter "WebGPT Bridge-*-win-x64.exe" -File | Select-Object -First 1
+$installer = Get-ChildItem -Path $ArtifactsDir -Filter "WebGPT-Bridge-*-win-x64.exe" -File | Select-Object -First 1
 if (-not $installer) { throw "built Windows NSIS installer was not found" }
 if (-not (Test-Path $SourcePrep -PathType Leaf)) { throw "source host-prep helper was not found: $SourcePrep" }
 if (Test-Path $InstallRoot) { throw "pre-existing WebGPT Bridge Program Files installation would invalidate installer smoke" }
