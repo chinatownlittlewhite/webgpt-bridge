@@ -12,6 +12,7 @@ const {
   sha512Base64,
   sha256Hex,
 } = require("../scripts/release-contract.cjs");
+const { createBuilderConfig } = require("../build/electron-builder-options.cjs");
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "webgpt-release-contract-"));
@@ -31,9 +32,13 @@ test("root package and lockfile versions stay aligned for release tags", () => {
   assert.equal(lock.packages?.[""]?.version, pkg.version);
 });
 
+test("builder uses the updater-safe release basename for every platform artifact", () => {
+  assert.equal(createBuilderConfig({}).artifactName, "WebGPT-Bridge-${version}-${os}-${arch}.${ext}");
+});
+
 test("manifest validation requires same version existing assets and matching sha512", () => {
   const dir = tempDir();
-  const asset = path.join(dir, "WebGPT Bridge-0.3.5-win-x64.exe");
+  const asset = path.join(dir, "WebGPT-Bridge-0.3.5-win-x64.exe");
   fs.writeFileSync(asset, "signed-installer-bytes");
   const manifestFile = path.join(dir, "latest.yml");
   fs.writeFileSync(manifestFile, yaml.dump({
@@ -84,9 +89,9 @@ test("update manifest parser accepts only a mapping document", () => {
 
 test("release asset CLI requires exact Windows and Universal macOS asset set", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "scripts", "validate-release-assets.cjs"), "utf8");
-  assert.match(source, /WebGPT Bridge-\$\{version\}-win-x64\.exe/);
-  assert.match(source, /WebGPT Bridge-\$\{version\}-mac-universal\.dmg/);
-  assert.match(source, /WebGPT Bridge-\$\{version\}-mac-universal\.zip/);
+  assert.match(source, /WebGPT-Bridge-\$\{version\}-win-x64\.exe/);
+  assert.match(source, /WebGPT-Bridge-\$\{version\}-mac-universal\.dmg/);
+  assert.match(source, /WebGPT-Bridge-\$\{version\}-mac-universal\.zip/);
   assert.match(source, /latest\.yml/);
   assert.match(source, /latest-mac\.yml/);
   assert.match(source, /duplicate basename/);
