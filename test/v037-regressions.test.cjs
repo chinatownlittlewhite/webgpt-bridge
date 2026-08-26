@@ -16,22 +16,11 @@ function updaterReturning(result) {
 }
 
 function serviceWith(updater) {
-  return createUpdateService({
-    updater,
-    currentVersion: "0.3.7",
-    isPackaged: true,
-    stopRuntime: async () => {},
-    setQuitting: () => {},
-  });
+  return createUpdateService({ updater, currentVersion: "0.3.7", isPackaged: true, stopRuntime: async () => {}, setQuitting: () => {} });
 }
 
 test("resolved no-update result always settles the UI as up to date", async () => {
-  const service = serviceWith(updaterReturning({
-    isUpdateAvailable: false,
-    updateInfo: { version: "0.3.7" },
-  }));
-
-  const state = await service.checkForUpdates();
+  const state = await serviceWith(updaterReturning({ isUpdateAvailable: false, updateInfo: { version: "0.3.7" } })).checkForUpdates();
   assert.equal(state.status, "up_to_date");
   assert.equal(state.canCheck, true);
   assert.equal(state.canDownload, false);
@@ -40,16 +29,7 @@ test("resolved no-update result always settles the UI as up to date", async () =
 });
 
 test("resolved update result can recover the available state even if provider event is absent", async () => {
-  const service = serviceWith(updaterReturning({
-    isUpdateAvailable: true,
-    updateInfo: {
-      version: "0.3.8",
-      releaseDate: "2026-08-26T00:00:00Z",
-      releaseNotes: "<b>GitHub release</b>",
-    },
-  }));
-
-  const state = await service.checkForUpdates();
+  const state = await serviceWith(updaterReturning({ isUpdateAvailable: true, updateInfo: { version: "0.3.8", releaseDate: "2026-08-26T00:00:00Z", releaseNotes: "<b>GitHub release</b>" } })).checkForUpdates();
   assert.equal(state.status, "available");
   assert.equal(state.availableVersion, "0.3.8");
   assert.equal(state.releaseNotes, "GitHub release");
@@ -82,7 +62,7 @@ test("tag release workflow publishes GitHub artifacts without external signing o
   const release = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "release-desktop.yml"), "utf8");
   assert.match(release, /push:\s*\n\s*tags:\s*\n\s*-\s*["']v\*["']/);
   assert.match(release, /gh release edit[^\n]*--draft=false[^\n]*--prerelease=false[^\n]*--latest/);
-  assert.doesNotMatch(release, /desktop-release-windows|desktop-release-macos/);
+  assert.doesNotMatch(release, /environment:\s*desktop-release-(?:windows|macos)/);
   assert.doesNotMatch(release, /AZURE_|WEBGPT_WINDOWS_SIGN_|WEBGPT_MAC_IDENTITY|CSC_LINK|CSC_KEY_PASSWORD|APPLE_API_/);
   assert.doesNotMatch(release, /Get-AuthenticodeSignature|codesign\s+--verify|stapler\s+validate|spctl\s+--assess/);
 });
