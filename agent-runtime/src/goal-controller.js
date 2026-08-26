@@ -749,16 +749,74 @@ export function createGoalController({
     return session ? sessionView(session, true) : { status: "not_found", mustContinue: false, sessionId };
   }
 
-  function cancel(sessionId) {
+  async function cancel(sessionId) {
     const session = find(sessionId);
     if (!session) return { status: "not_found", mustContinue: false, sessionId };
     if (TERMINAL.has(session.status)) return { status: "already_terminal", mustContinue: false, session: sessionView(session) };
+
     session.status = "canceled";
     session.updatedAt = Date.now();
     session.lastFeedback = "goal session canceled";
-    addEvent(session, { type: "goal_canceled" });
+
+    const processList = availableTools.get("process_list");
+    const processKill = availableTools.get("process_kill");
+    let processCleanup = {
+      status: "not_available",
+      runningFound: 0,
+      attempted: 0,
+      killed: 0,
+      failed: 0,
+      failures: [],
+    };
+
+    if (processList && processKill) {
+      const goalTrustedContext = Object.freeze({
+        goalSessionId: session.id,
+        goalCwd: session.cwd,
+      });
+      try {
+        const listed = await processList.invoke({}, goalTrustedContext);
+        const running = (Array.isArray(listed?.processes) ? listed.processes : [])
+          .filter((record) => record && record.status === "running" && typeof record.processId === "string")
+          .slice(0, 256);
+        const failures = [];
+        let killed = 0;
+        for (const record of running) {
+          let result;
+          try {
+            result = await processKill.invoke({ processId: record.processId, force: true }, goalTrustedContext);
+          } catch {
+            result = { status: "tool_error" };
+          }
+          if (result?.status === "kill_requested" || result?.status === "already_terminal") {
+            killed += 1;
+          } else {
+            failures.push({ processId: record.processId, status: result?.status ?? "tool_error" });
+          }
+        }
+        processCleanup = {
+          status: failures.length > 0 ? "partial" : "completed",
+          runningFound: running.length,
+          attempted: running.length,
+          killed,
+          failed: failures.length,
+          failures,
+        };
+      } catch {
+        processCleanup = {
+          status: "partial",
+          runningFound: 0,
+          attempted: 0,
+          killed: 0,
+          failed: 1,
+          failures: [{ processId: "process_list", status: "list_failed" }],
+        };
+      }
+    }
+
+    addEvent(session, { type: "goal_canceled", processCleanup });
     persistSession(session);
-    return sessionView(session);
+    return Object.freeze({ ...sessionView(session), processCleanup });
   }
 
   return Object.freeze({ start, step, finish, status, cancel });

@@ -622,7 +622,7 @@ export function createGoalStatusTool(goalController) {
 }
 
 export function createGoalCancelTool(goalController) {
-  return { name: "goal_cancel", description: "Cancel a non-terminal goal session.", inputSchema: goalSessionInputSchema, invoke: (input) => goalController.cancel(input.sessionId) };
+  return { name: "goal_cancel", description: "Cancel a non-terminal goal session and reclaim its owned running managed processes.", inputSchema: goalSessionInputSchema, invoke: (input) => goalController.cancel(input.sessionId) };
 }
 
 export function createReadFileTool({ workspace } = {}) {
@@ -773,6 +773,7 @@ export function createCapabilitiesTool({
           boundedAgentHistory: true,
           trackedActionsUseGoalStep: true,
           goalCwdScoped: typeof workspace === "string" && workspace.length > 0,
+          cancelReclaimsOwnedProcesses: true,
           acceptanceCriteriaGate: true,
           externalOrchestratorCompatible: true,
         },
@@ -785,6 +786,7 @@ export function createCapabilitiesTool({
           hostApprovalIsBoundToExactAndResolvedRequest: true,
           unattendedExecutionRequiresVerifiedSandbox: true,
           goalModeCannotRunUnbounded: true,
+          goalCancelReclaimsOwnedProcesses: true,
         },
       };
     },

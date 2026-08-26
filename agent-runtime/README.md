@@ -278,6 +278,8 @@ Process launch reuses the same command policy, executable resolution, approval, 
 
 Processes started inside a Goal session are owned by that goal. Other goal sessions cannot poll, write to, or kill them through the goal-scoped tool path.
 
+`goal_cancel` enumerates only processes visible to the canceled session and force-requests termination for each running owned process. Sibling Goal processes remain invisible and untouched. Cleanup failures do not reactivate the Goal: cancellation stays terminal and returns a bounded `processCleanup` summary with `partial` status when necessary.
+
 Normal MCP server shutdown calls the process manager cleanup path. Native/parent guards provide additional crash cleanup for sandboxed children.
 
 ## Goal Mode
