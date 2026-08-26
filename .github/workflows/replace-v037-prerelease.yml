@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   dispatch-release:
-    if: github.event.head_commit.message == 'dispatch v0.3.7 replacement release'
+    if: github.event.head_commit.message == 'dispatch v0.3.7 replacement release retry'
     runs-on: ubuntu-latest
     steps:
       - name: Verify replacement tag and dispatch formal release
@@ -22,7 +22,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if gh release view v0.3.7 >/dev/null 2>&1; then
+          if gh release view v0.3.7 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "refusing to dispatch: a v0.3.7 release already exists" >&2
             exit 1
           fi
@@ -33,4 +33,4 @@ jobs:
             exit 1
           fi
 
-          gh workflow run release-desktop.yml --ref v0.3.7
+          gh workflow run release-desktop.yml --repo "$GITHUB_REPOSITORY" --ref v0.3.7
