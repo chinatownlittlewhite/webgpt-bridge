@@ -4,7 +4,7 @@ import { createMemoryGoalSessionStore } from "./goal-store.js";
 
 const RECOVERABLE_STATUSES = new Set(["active", "blocked_approval"]);
 const MARKER_KIND = "goal_tool";
-const INTERRUPTED_FEEDBACK = "a previous Goal operation was interrupted before durable completion; the session failed closed to prevent replaying an uncertain effect";
+const INTERRUPTED_FEEDBACK = "a previous Goal mutation was interrupted before durable completion; the session failed closed to prevent replaying an uncertain effect";
 
 function hashInput(value) {
   try {
@@ -234,11 +234,19 @@ export function createGoalController(options = {}) {
     if (typeof sessionId === "string" && state.failedClosedSessions.has(sessionId)) {
       return alreadyFailed(sessionId);
     }
-    if (typeof sessionId === "string") beginTrackedOperation(state, sessionId);
+    if (typeof sessionId !== "string") return core.finish(input, trustedContext);
+
+    beginTrackedOperation(state, sessionId);
+    if (!persistMutationIntent(store, state, sessionId, "goal_finish", input)) {
+      const failure = persistenceFailure(
+        sessionId,
+        finishTrackedOperation(state, store, sessionId),
+        "Goal finish",
+      );
+      return failure ?? persistenceErrorResult({ status }, sessionId, "Goal finish mutation intent could not be durably persisted");
+    }
 
     const result = await core.finish(input, trustedContext);
-    if (typeof sessionId !== "string") return result;
-
     const failure = persistenceFailure(
       sessionId,
       finishTrackedOperation(state, store, sessionId),
