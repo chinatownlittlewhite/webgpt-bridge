@@ -45,12 +45,11 @@ test("formal builder config scopes credentials to one platform and fails closed"
   assert.equal(windows.mac.forceCodeSigning, undefined);
 });
 
-test("Windows signing setup is documented without a client secret fallback", () => {
+test("current release policy documents unsigned GitHub distribution and controlled prerelease replacement", () => {
   const docs = fs.readFileSync(path.join(__dirname, "..", "docs", "release-signing.md"), "utf8");
-  assert.match(docs, /Artifact Signing Certificate Profile Signer/);
-  assert.match(docs, /desktop-release-windows/);
-  assert.match(docs, /AZURE_FEDERATED_TOKEN_FILE/);
-  assert.match(docs, /WEBGPT_WINDOWS_PUBLISHER/);
+  assert.match(docs, /without requiring external code-signing or Apple notarization credentials/);
+  assert.match(docs, /published prerelease may be deleted and rebuilt under the same version/);
+  assert.match(docs, /Never overwrite a stable public release/);
   assert.doesNotMatch(docs, /AZURE_CLIENT_SECRET/);
 });
 
