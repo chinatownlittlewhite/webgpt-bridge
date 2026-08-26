@@ -7,6 +7,28 @@ on:
       - main
 
 jobs:
+  agent:
+    name: Agent runtime (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent-runtime/package-lock.json
+      - name: Install Bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          bwrap --version
+      - run: npm --prefix agent-runtime ci
+      - run: npm --prefix agent-runtime test
+      - run: npm --prefix agent-runtime run lint
+      - run: npm --prefix agent-runtime run contract
+      - run: npm --prefix agent-runtime run build
+      - run: npm --prefix agent-runtime run acceptance:quick
+
   macos:
     name: macOS universal
     runs-on: macos-latest
