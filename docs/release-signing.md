@@ -6,7 +6,7 @@ WebGPT Bridge currently publishes desktop builds directly through GitHub Release
 
 A release tag must still exactly match `v${package.version}`. The release workflow creates or reuses an unpublished Draft, builds and validates Windows and macOS artifacts, writes SHA-256 checksums, uploads the validated files, and only then publishes the Release as stable (`prerelease=false`, latest).
 
-Do not replace the bytes of an already-public version. If a published version needs a fix, increment the patch version and publish a new tag.
+Do not replace the bytes of an already-public stable release. A published prerelease may be deleted and rebuilt under the same version only when the replacement is intentional, fully revalidated, and the corresponding tag is retargeted to the corrected commit before the new stable release is published.
 
 ### Windows
 
@@ -26,15 +26,15 @@ The production renderer does not receive an arbitrary update-feed URL or install
 
 The builder still contains opt-in signing configuration so signed distribution can be restored later without redesigning packaging. It is not used by the current GitHub-only release workflow.
 
-For Windows, the previous design used Microsoft Artifact Signing / Trusted Signing with the **Artifact Signing Certificate Profile Signer** role, a protected `desktop-release-windows` environment, `AZURE_FEDERATED_TOKEN_FILE`, and `WEBGPT_WINDOWS_PUBLISHER`. It intentionally did not require an `AZURE_CLIENT_SECRET`.
+For Windows, the previous design used Microsoft Artifact Signing / Trusted Signing with the **Artifact Signing Certificate Profile Signer** role, a protected `desktop-release-windows` environment, a federated workload-identity token file, and `WEBGPT_WINDOWS_PUBLISHER`. No long-lived client secret is part of the current release path.
 
 For macOS, the optional builder path can still require a Developer ID identity and notarization inputs when explicitly enabled. Those credentials must remain outside pull-request CI and must never be added back as mandatory inputs unless the release policy intentionally changes again.
 
 ## Release checklist
 
-1. Bump the root package and lockfile to a new version.
+1. Keep the root package and lockfile versions aligned with the intended tag.
 2. Run the desktop and Agent verification suites.
-3. Create a real tag exactly equal to `v${package.version}`.
+3. For a normal release, create a real tag exactly equal to `v${package.version}`. For an intentional prerelease replacement, first delete only the old prerelease and retarget that same tag to the corrected commit.
 4. Let the tag workflow build both platforms and validate the final asset set.
 5. Confirm the public Release is stable rather than prerelease and contains the expected Windows installer, Universal macOS DMG/ZIP, updater metadata, blockmaps, and `SHA256SUMS`.
-6. Never overwrite a public release in place; publish a higher patch version for fixes.
+6. Never overwrite a stable public release in place; publish a higher patch version for stable-release fixes.
