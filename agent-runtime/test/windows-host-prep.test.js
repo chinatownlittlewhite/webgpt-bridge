@@ -94,11 +94,12 @@ test("Windows host preparation keeps the read-only check usable by a standard us
   }
 });
 
-test("Windows native build publishes sandbox and host preparation as self-contained win-x64 payloads", () => {
+test("Windows native build publishes a single combined self-contained host", () => {
   const build = fs.readFileSync(path.join(root, "scripts", "build-native.mjs"), "utf8");
-  assert.match(build, /windows-sandbox/);
-  assert.match(build, /windows-host-prep/);
+  assert.match(build, /windows-host/);
+  assert.match(build, /lpc-windows-host\.exe/);
   assert.match(build, /-r["']?,\s*["']win-x64/);
   assert.match(build, /--self-contained["']?,\s*["']true/);
-  assert.doesNotMatch(build, /PublishSingleFile|PublishTrimmed|PublishAot|NativeAOT/i);
+  assert.match(build, /PublishAot=true/);
+  assert.match(build, /PublishSingleFile=true/);
 });

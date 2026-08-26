@@ -30,6 +30,8 @@ export function createProcessManager({
   maxProcesses = 32,
   maxBufferBytes = 2_000_000,
   terminalTtlMs = 30 * 60_000,
+  ptyLoader = () => import("node-pty"),
+  designIssueRecorder,
 } = {}) {
   if (!Number.isInteger(maxProcesses) || maxProcesses < 1 || maxProcesses > 256) {
     throw new RangeError("maxProcesses must be between 1 and 256");
@@ -161,18 +163,27 @@ export function createProcessManager({
     if (pty === true) {
       let ptyModule;
       try {
-        ptyModule = await import("node-pty");
+        ptyModule = await ptyLoader();
       } catch {
         records.delete(id);
         return { status: "unavailable", reason: "PTY support requires optional dependency 'node-pty'" };
       }
-      const terminal = ptyModule.spawn(executionArgv[0], executionArgv.slice(1), {
-        cwd: resolvedCwd,
-        env: childEnv,
-        cols: Math.max(20, Math.min(400, cols)),
-        rows: Math.max(5, Math.min(200, rows)),
-        name: "xterm-256color",
-      });
+      let terminal;
+      try {
+        terminal = ptyModule.spawn(executionArgv[0], executionArgv.slice(1), {
+          cwd: resolvedCwd,
+          env: childEnv,
+          cols: Math.max(20, Math.min(400, cols)),
+          rows: Math.max(5, Math.min(200, rows)),
+          name: "xterm-256color",
+        });
+      } catch (error) {
+        records.delete(id);
+        const message = error instanceof Error ? error.message : String(error);
+        audit(auditLogger, { type: "managed_process_spawn_error", processId: id, pty: true, error: message });
+        try { designIssueRecorder?.({ module: "process-manager", category: "pty-lifecycle", symptom: message, suggestion: "Verify node-pty native compatibility and keep failed starts terminal.", relatedTest: "test/process-manager.test.js" }); } catch {}
+        return { status: "spawn_error", error: message, policy, sandbox: sandboxInfo };
+      }
       record.terminal = terminal;
       record.pid = terminal.pid;
       record.status = "running";

@@ -31,16 +31,16 @@ test("Windows acceptance mirrors the desktop Git broker architecture", () => {
   assert.match(source, /await git\.invoke\(\{ action: "status", cwd: path\.relative\(root, repo\) \}\)/);
 });
 
-test("Windows acceptance verifies self-contained native runtime payload before sandbox checks", () => {
-  assert.match(source, /hostfxr\.dll/);
-  assert.match(source, /hostpolicy\.dll/);
-  assert.match(source, /lpc-windows-sandbox\.exe/);
+test("Windows acceptance verifies the combined native host payload before sandbox checks", () => {
+  assert.match(source, /lpc-windows-host\.exe/);
+  assert.match(source, /combined Windows native publish must include/);
+  assert.match(source, /legacyRuntimeFiles/);
 });
 
 test("Windows prebuilt acceptance skips compilation without skipping native verification", () => {
   assert.match(source, /const prebuiltNative = process\.argv\.includes\("--prebuilt-native"\)/);
   assert.match(source, /process\.platform === "win32" && !skipNative && !prebuiltNative/);
-  assert.match(source, /process\.platform === "win32" && !skipNative[\s\S]*self-contained Windows sandbox publish must include/);
+  assert.match(source, /process\.platform === "win32" && !skipNative[\s\S]*combined Windows native publish must include/);
   assert.doesNotMatch(source, /prebuiltNative[\s\S]{0,120}verifySandbox:\s*false/);
 });
 

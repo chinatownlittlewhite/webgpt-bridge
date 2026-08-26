@@ -13,12 +13,14 @@ const argv = process.argv.slice(separator + 1);
 
 const child = spawn(argv[0], argv.slice(1), {
   shell: false,
-  detached: false,
+  detached: true,
   windowsHide: true,
   stdio: "inherit",
 });
 
 let finished = false;
+let shuttingDown = false;
+let forceExitTimer = null;
 function parentAlive() {
   try {
     process.kill(parentPid, 0);
@@ -29,14 +31,22 @@ function parentAlive() {
 }
 
 function killGuardGroup() {
-  if (finished) return;
-  finished = true;
+  if (finished || shuttingDown) return;
+  shuttingDown = true;
   try {
-    process.kill(-process.pid, "SIGKILL");
-    return;
-  } catch {}
-  try { child.kill("SIGKILL"); } catch {}
-  process.exit(137);
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try { child.kill("SIGKILL"); } catch {
+      finished = true;
+      process.exit(137);
+    }
+  }
+  forceExitTimer = setTimeout(() => process.exit(137), 2_000);
+  forceExitTimer.unref();
+}
+
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.once(signal, killGuardGroup);
 }
 
 const timer = setInterval(() => {
@@ -53,6 +63,8 @@ child.once("error", (error) => {
 child.once("close", (code, signal) => {
   finished = true;
   clearInterval(timer);
+  if (forceExitTimer) clearTimeout(forceExitTimer);
+  if (shuttingDown) process.exit(137);
   if (typeof code === "number") process.exit(code);
   process.exit(signal ? 128 : 1);
 });

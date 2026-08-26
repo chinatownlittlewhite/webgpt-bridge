@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { resolvePlatformArgv } from "../src/platform.js";
 
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 const EXPECTED_TOOLS = [
   "run_command", "run_project_task", "git", "dependency_sync", "github",
   "process_start", "process_poll", "process_input", "process_kill", "process_list",
@@ -318,15 +318,17 @@ if (process.platform === "win32" && !skipNative && !prebuiltNative) {
   runHost(["npm", "run", "build:native"]);
 }
 if (process.platform === "win32" && !skipNative) {
-  stage("verify Windows native sandbox helper payload");
-  const nativeOutput = path.join(root, "native", "windows-sandbox", "bin", "release");
-  for (const requiredFile of ["lpc-windows-sandbox.exe", "hostfxr.dll", "hostpolicy.dll"]) {
-    assert.equal(
-      fs.existsSync(path.join(nativeOutput, requiredFile)),
-      true,
-      `self-contained Windows sandbox publish must include ${requiredFile}`,
-    );
-  }
+  stage("verify combined Windows native host payload");
+  const nativeOutput = path.join(root, "native", "windows-host", "bin", "release");
+  const requiredFile = "lpc-windows-host.exe";
+  assert.equal(
+    fs.existsSync(path.join(nativeOutput, requiredFile)),
+    true,
+    `combined Windows native publish must include ${requiredFile}`,
+  );
+  const legacyRuntimeFiles = ["hostfxr.dll", "hostpolicy.dll", "coreclr.dll"]
+    .filter((name) => fs.existsSync(path.join(nativeOutput, name)));
+  assert.ok(legacyRuntimeFiles.length < 3, "combined native host must not ship a second pair of full CoreCLR payloads");
 }
 
 stage("unit/integration tests");

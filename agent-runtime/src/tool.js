@@ -233,6 +233,8 @@ export const gitInputSchema = Object.freeze({
         "worktree_remove",
         "add",
         "commit",
+        "fetch",
+        "pull",
         "push",
         "restore",
       ],
@@ -269,7 +271,7 @@ export const githubInputSchema = Object.freeze({
   additionalProperties: false,
   required: ["action"],
   properties: {
-    action: { type: "string", enum: ["pr_view", "pr_create", "ci_status", "issue_view", "issue_create"] },
+    action: { type: "string", enum: ["pr_view", "pr_create", "ci_status", "issue_view", "issue_create", "release_view", "release_create"] },
     cwd: cwdSchema,
     number: { type: "integer", minimum: 1, maximum: 1_000_000 },
     limit: { type: "integer", minimum: 1, maximum: 100 },
@@ -277,6 +279,9 @@ export const githubInputSchema = Object.freeze({
     body: { type: "string", maxLength: 64_000 },
     base: { type: "string", minLength: 1, maxLength: 512 },
     head: { type: "string", minLength: 1, maxLength: 512 },
+    tag: { type: "string", minLength: 1, maxLength: 512 },
+    draft: { type: "boolean", default: false },
+    assets: { type: "array", maxItems: 20, items: { type: "string", minLength: 1, maxLength: 4_096 } },
   },
 });
 
@@ -444,7 +449,7 @@ export function createRunProjectTaskTool({ workspace, defaultTimeoutMs = 120_000
 export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger } = {}) {
   return {
     name: "git",
-    description: "Run a structured Git operation, including isolated worktree management. Windows Git and fixed origin/HEAD pushes run through the desktop App's policy-controlled local broker.",
+    description: "Run a structured Git operation, including isolated worktree management. Network Git sync/push and Windows Git run through the desktop App's policy-controlled local broker when available.",
     inputSchema: gitInputSchema,
     async invoke(input, trustedContext = {}) {
       const hasLocalBroker = typeof localBrokerSocket === "string" && localBrokerSocket.length > 0;
@@ -455,7 +460,8 @@ export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAd
           error: "Windows structured Git requires the App-owned local broker because Git for Windows cannot open the NUL device from the AppContainer.",
         };
       }
-      if ((platform === "win32" || input.action === "push") && hasLocalBroker) {
+      const networkGitAction = new Set(["fetch", "pull", "push"]).has(input.action);
+      if ((platform === "win32" || networkGitAction) && hasLocalBroker) {
         const cwd = resolveModelWorkspaceCwd(workspace, input.cwd ?? ".", { platform }).cwd;
         const argv = buildGitArgv(input);
         const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000 })
@@ -473,7 +479,7 @@ export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAd
           resolvedArgv: argv,
           policy: {
             decision: "brokered",
-            rule: platform === "win32" ? "app-owned-windows-git-broker" : "app-owned-git-push-broker",
+            rule: platform === "win32" ? "app-owned-windows-git-broker" : "app-owned-network-git-broker",
           },
         };
       }
@@ -506,7 +512,7 @@ export function createDependencySyncTool({ workspace, networkSandboxAdapter, net
 export function createGitHubTool({ workspace, networkSandboxAdapter, networkSandboxState, githubCliState, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger } = {}) {
   return {
     name: "github",
-    description: "Run a bounded GitHub CLI action for PRs, CI, or issues. When connected to the desktop App, authenticated actions run through its confirmed local broker so tokens remain in the OS keychain.",
+    description: "Run bounded GitHub CLI actions for PRs, CI, issues, and releases. Authenticated desktop actions run through the App-owned broker so tokens remain in the OS keychain. Release assets must be workspace-relative.",
     inputSchema: githubInputSchema,
     async invoke(input, trustedContext = {}) {
       const githubCli = resolveGitHubCliState(githubCliState);
@@ -727,7 +733,7 @@ export function createCapabilitiesTool({
       const sandbox = sandboxSummary(sandboxAdapter);
       const networkSandbox = resolveNetworkSandboxState({ networkSandboxState, networkSandboxAdapter, platform });
       return {
-        version: "0.9.0",
+        version: "0.9.1",
         releaseStage: "final-acceptance-candidate",
         platform: normalizedPlatform(platform),
         tools: [...V09_TOOLS, ...(typeof localBrokerSocket === "string" && localBrokerSocket ? LOCAL_BROKER_TOOL_NAMES : [])],

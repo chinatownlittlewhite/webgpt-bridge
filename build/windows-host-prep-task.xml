@@ -32,8 +32,8 @@
   </Settings>
   <Actions Context="LocalSystem">
     <Exec>
-      <Command>%ProgramFiles%\WebGPT Bridge\resources\app.asar.unpacked\agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe</Command>
-      <Arguments>--apply</Arguments>
+      <Command>%ProgramFiles%\WebGPT Bridge Host\lpc-windows-host.exe</Command>
+      <Arguments>host-prep --apply</Arguments>
     </Exec>
   </Actions>
 </Task>

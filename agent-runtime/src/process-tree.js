@@ -35,6 +35,14 @@ export async function killProcessTree(child, {
     });
   }
 
+  if (platform === "darwin") {
+    try {
+      return child.kill("SIGTERM");
+    } catch {
+      return false;
+    }
+  }
+
   const signal = force ? "SIGKILL" : "SIGTERM";
   try {
     process.kill(-child.pid, signal);

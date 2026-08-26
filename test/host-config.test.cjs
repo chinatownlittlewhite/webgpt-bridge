@@ -30,7 +30,7 @@ test("legacy development-mode settings migrate back to the bundled runtime", () 
 test("normalization keeps older bundled settings compatible", () => {
   const { normalizeSettings } = api();
   assert.deepEqual(normalizeSettings({ workspacePath: "/work" }, { runtimePath: "/runtime", agentMode: "bundled", developmentPath: "" }), {
-    workspacePath: "/work", runtimePath: "/runtime", agentMode: "bundled", developmentPath: "", approvalMode: "development",
+    workspacePath: "/work", runtimePath: "/runtime", agentMode: "bundled", developmentPath: "", approvalMode: "development", designIssueJournal: false,
   });
 });
 

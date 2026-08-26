@@ -10,7 +10,7 @@ test("Windows installer lifecycle smoke exercises repair before uninstall", () =
   const uninstallerLookup = smoke.indexOf("$uninstaller = Get-ChildItem");
   assert.ok(uninstallerLookup > 0, "smoke must locate the uninstaller after install/repair checks");
   const beforeUninstall = smoke.slice(0, uninstallerLookup);
-  const installerStarts = beforeUninstall.match(/Start-Process -FilePath \$installer\.FullName -ArgumentList @\("\/S"\) -Wait -PassThru/g) || [];
+  const installerStarts = beforeUninstall.match(/Start-Process -FilePath \$installer\.FullName -ArgumentList @\("\/S", "\/D=\$InstallRoot"\) -Wait -PassThru/g) || [];
 
   assert.equal(installerStarts.length, 2, "smoke must run the same NSIS installer once for install and once for repair");
   assert.match(beforeUninstall, /\$repair\s*=\s*Start-Process -FilePath \$installer\.FullName/);

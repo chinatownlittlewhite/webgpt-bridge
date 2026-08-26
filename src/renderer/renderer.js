@@ -10,7 +10,7 @@ function message(text, error = false) {
 }
 
 function collect() {
-  return Object.fromEntries(ids.map((id) => [id, byId(id).value.trim()]));
+  return { ...Object.fromEntries(ids.map((id) => [id, byId(id).value.trim()])), designIssueJournal: byId("designIssueJournal").checked };
 }
 
 function renderStatus(status) {
@@ -122,6 +122,7 @@ api.onUpdateState(renderUpdate);
 (async () => {
   const settings = await api.loadSettings();
   for (const id of ids) if (id !== "runtimeKey") byId(id).value = settings[id] || "";
+  byId("designIssueJournal").checked = settings.designIssueJournal === true;
   byId("keyStatus").textContent = settings.hasRuntimeKey ? "此电脑的密钥已安全保存" : "尚未保存运行时密钥";
   renderStatus(await api.status());
   renderLogs(await api.logs());

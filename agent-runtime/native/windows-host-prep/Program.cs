@@ -6,7 +6,7 @@ using System.Text.Json;
 
 namespace LocalProjectCoding.WindowsHostPrep;
 
-internal static class Program
+public static class HostPreparationProgram
 {
     private const string CapabilityName = "com.localagenthost.desktop.null-device";
     private const string AllApplicationPackagesSid = "S-1-15-2-1";
@@ -30,12 +30,12 @@ internal static class Program
     private static readonly IntPtr InvalidHandleValue = new(-1);
     private static readonly int NullDeviceAccessMask = unchecked((int)(FileGenericRead | FileGenericWrite | FileGenericExecute));
 
-    public static int Main(string[] args)
+    public static int Run(string[] args)
     {
         var operation = ParseOperation(args);
         if (operation is null)
         {
-            Console.Error.WriteLine("usage: lpc-windows-host-prep --check --json | --apply | --remove");
+            Console.Error.WriteLine("usage: lpc-windows-host host-prep --check --json | --apply | --remove");
             return 2;
         }
         if ((operation is "apply" or "remove") && !IsAdministrator())

@@ -17,8 +17,9 @@ test("Windows installer registers a fixed XML task definition without /TR quote 
   assert.match(xml, /<BootTrigger>[\s\S]*<Enabled>true<\/Enabled>[\s\S]*<\/BootTrigger>/);
   assert.match(xml, /<UserId>S-1-5-18<\/UserId>/);
   assert.match(xml, /<RunLevel>HighestAvailable<\/RunLevel>/);
-  assert.match(xml, /<Command>%ProgramFiles%\\WebGPT Bridge\\resources\\app\.asar\.unpacked\\agent-runtime\\native\\windows-host-prep\\bin\\release\\lpc-windows-host-prep\.exe<\/Command>/);
-  assert.match(xml, /<Arguments>--apply<\/Arguments>/);
+  assert.match(xml, /<Command>%ProgramFiles%\\WebGPT Bridge Host\\lpc-windows-host\.exe<\/Command>/);
+  assert.match(xml, /<Arguments>host-prep --apply<\/Arguments>/);
+  assert.doesNotMatch(xml, /WebGPT Bridge\\resources|%APPDATA%|%LOCALAPPDATA%/i);
 
   assert.match(builder, /windows-host-prep-task\.xml/);
   assert.match(installer, /schtasks\.exe[\s\S]*\/Create[\s\S]*\/XML[\s\S]*windows-host-prep-task\.xml/);

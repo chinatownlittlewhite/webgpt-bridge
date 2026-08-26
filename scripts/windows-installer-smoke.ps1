@@ -1,7 +1,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$ArtifactsDir,
   [Parameter(Mandatory = $true)][string]$SourcePrep,
-  [string]$InstallRoot = (Join-Path $env:ProgramFiles "WebGPT Bridge")
+  [string]$InstallRoot = (Join-Path $env:SystemDrive "WebGPT-Bridge-Custom-Install-Smoke")
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,21 +9,22 @@ $taskName = "WebGPT Bridge Host Preparation"
 $installer = Get-ChildItem -Path $ArtifactsDir -Filter "WebGPT-Bridge-*-win-x64.exe" -File | Select-Object -First 1
 if (-not $installer) { throw "built Windows NSIS installer was not found" }
 if (-not (Test-Path $SourcePrep -PathType Leaf)) { throw "source host-prep helper was not found: $SourcePrep" }
-if (Test-Path $InstallRoot) { throw "pre-existing WebGPT Bridge Program Files installation would invalidate installer smoke" }
+if (Test-Path $InstallRoot) { throw "pre-existing WebGPT Bridge custom installation would invalidate installer smoke" }
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw "pre-existing SYSTEM host-preparation task would invalidate installer smoke" }
 
-$installedPrep = Join-Path $InstallRoot "resources\app.asar.unpacked\agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe"
+$protectedHostRoot = Join-Path $env:ProgramFiles "WebGPT Bridge Host"
+$installedPrep = Join-Path $protectedHostRoot "lpc-windows-host.exe"
 $installedTaskXml = Join-Path $InstallRoot "resources\windows-host-prep-task.xml"
 
 try {
-  & $SourcePrep --remove
+  & $SourcePrep host-prep --remove
   if ($LASTEXITCODE -ne 0) { throw "pre-install host-prep remove failed with exit $LASTEXITCODE" }
-  $preInstallJson = & $SourcePrep --check --json
+  $preInstallJson = & $SourcePrep host-prep --check --json
   if ($LASTEXITCODE -ne 0) { throw "pre-install host-prep check failed with exit $LASTEXITCODE" }
   $preInstall = $preInstallJson | ConvertFrom-Json
   if ($preInstall.status -ne "capability_ace_missing") { throw "pre-install host preparation must be capability_ace_missing: $preInstallJson" }
 
-  $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S") -Wait -PassThru
+  $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$InstallRoot") -Wait -PassThru
   if ($install.ExitCode -ne 0) {
     $taskDiagnosticExit = -1
     $taskDiagnostic = "installed task XML was not found"
@@ -42,7 +43,8 @@ try {
     }
     throw "silent NSIS installation failed with exit $($install.ExitCode); task registration diagnostic exit $taskDiagnosticExit`: $taskDiagnostic"
   }
-  if (-not (Test-Path $installedPrep -PathType Leaf)) { throw "installed host-prep helper was not found under Program Files" }
+  if (-not (Test-Path $installedPrep -PathType Leaf)) { throw "protected combined Windows host was not found under Program Files" }
+  if (-not (Test-Path (Join-Path $InstallRoot "WebGPT Bridge.exe") -PathType Leaf)) { throw "application was not installed at the requested custom directory: $InstallRoot" }
 
   $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   if (-not $task) { throw "installed SYSTEM host-preparation task was not registered" }
@@ -54,18 +56,18 @@ try {
   $taskExecute = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($taskExecuteRaw))
   $expectedExecute = [IO.Path]::GetFullPath($installedPrep)
   if (-not [string]::Equals($taskExecute, $expectedExecute, [StringComparison]::OrdinalIgnoreCase)) { throw "host-preparation task executable is not the protected installed helper: $taskExecute" }
-  if (([string]$taskActions[0].Arguments).Trim() -ne "--apply") { throw "host-preparation task Arguments must be fixed to --apply: $($taskActions[0].Arguments)" }
+  if (([string]$taskActions[0].Arguments).Trim() -ne "host-prep --apply") { throw "host-preparation task Arguments must be fixed to host-prep --apply: $($taskActions[0].Arguments)" }
   $taskTriggers = @($task.Triggers)
   if ($taskTriggers.Count -ne 1 -or $taskTriggers[0].CimClass.CimClassName -ne "MSFT_TaskBootTrigger") { throw "host-preparation task must have exactly one boot trigger" }
 
-  $installedJson = & $installedPrep --check --json
+  $installedJson = & $installedPrep host-prep --check --json
   if ($LASTEXITCODE -ne 0) { throw "installed host-prep check failed with exit $LASTEXITCODE" }
   $installed = $installedJson | ConvertFrom-Json
   if ($installed.status -ne "ready") { throw "installed host preparation is not ready: $installedJson" }
 
-  & $SourcePrep --remove
+  & $SourcePrep host-prep --remove
   if ($LASTEXITCODE -ne 0) { throw "scheduled-task execution precondition remove failed with exit $LASTEXITCODE" }
-  $taskExecutionPreconditionJson = & $SourcePrep --check --json
+  $taskExecutionPreconditionJson = & $SourcePrep host-prep --check --json
   if ($LASTEXITCODE -ne 0) { throw "scheduled-task execution precondition check failed with exit $LASTEXITCODE" }
   $taskExecutionPrecondition = $taskExecutionPreconditionJson | ConvertFrom-Json
   if ($taskExecutionPrecondition.status -ne "capability_ace_missing") { throw "scheduled-task execution precondition must be capability_ace_missing: $taskExecutionPreconditionJson" }
@@ -75,7 +77,7 @@ try {
   $taskExecutionJson = ""
   for ($attempt = 0; $attempt -lt 40; $attempt++) {
     Start-Sleep -Milliseconds 250
-    $taskExecutionJson = & $installedPrep --check --json
+    $taskExecutionJson = & $installedPrep host-prep --check --json
     if ($LASTEXITCODE -eq 0) {
       $taskExecution = $taskExecutionJson | ConvertFrom-Json
       if ($taskExecution.status -eq "ready") {
@@ -86,12 +88,12 @@ try {
   }
   if (-not $taskRestoredReady) { throw "scheduled task did not restore host preparation to ready: $taskExecutionJson" }
 
-  $repair = Start-Process -FilePath $installer.FullName -ArgumentList @("/S") -Wait -PassThru
+  $repair = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$InstallRoot") -Wait -PassThru
   if ($repair.ExitCode -ne 0) { throw "silent NSIS repair installation failed with exit $($repair.ExitCode)" }
   if (-not (Test-Path $installedPrep -PathType Leaf)) { throw "installed host-prep helper was not restored by repair" }
   $repairTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   if (-not $repairTask) { throw "SYSTEM host-preparation task was not restored by repair" }
-  $repairedJson = & $installedPrep --check --json
+  $repairedJson = & $installedPrep host-prep --check --json
   if ($LASTEXITCODE -ne 0) { throw "post-repair host-prep check failed with exit $LASTEXITCODE" }
   $repaired = $repairedJson | ConvertFrom-Json
   if ($repaired.status -ne "ready") { throw "post-repair host preparation is not ready: $repairedJson" }
@@ -103,7 +105,7 @@ try {
   if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw "SYSTEM host-preparation task remained after uninstall" }
   if (Test-Path $installedPrep) { throw "installed host-prep payload remained after uninstall" }
 
-  $removedJson = & $SourcePrep --check --json
+  $removedJson = & $SourcePrep host-prep --check --json
   if ($LASTEXITCODE -ne 0) { throw "post-uninstall host-prep check failed with exit $LASTEXITCODE" }
   $removed = $removedJson | ConvertFrom-Json
   if ($removed.status -ne "capability_ace_missing") { throw "uninstall did not remove the product capability ACE: $removedJson" }
@@ -124,7 +126,7 @@ finally {
   } catch { Write-Warning "installer-smoke task cleanup failed: $($_.Exception.Message)" }
 
   try {
-    & $SourcePrep --remove
+    & $SourcePrep host-prep --remove
     if ($LASTEXITCODE -ne 0) { Write-Warning "installer-smoke host-prep cleanup returned exit $LASTEXITCODE" }
   } catch { Write-Warning "installer-smoke host-prep cleanup failed: $($_.Exception.Message)" }
 }

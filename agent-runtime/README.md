@@ -4,7 +4,7 @@ Safety-first local coding-agent runtime designed for ChatGPT/MCP and external ag
 
 ## Release status
 
-Current version: **v0.9.0 Final Acceptance Candidate**.
+Current version: **v0.9.1 Final Acceptance Candidate**.
 
 The machine-verifiable release matrix and sign-off rules are recorded in `FINAL_ACCEPTANCE.md`.
 

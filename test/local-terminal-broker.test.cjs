@@ -65,35 +65,52 @@ test("trusted executable bindings rewrite only the spawn argv while policy sees 
   assert.equal(calls[0].options.cwd, "/project");
 });
 
-test("full control bypasses native confirmation and command blocking", async () => {
+test("full control skips confirmation for allowed commands but preserves terminal safety boundaries", async () => {
   const { createLocalTerminalBroker } = require("../src/local-terminal-broker.cjs");
   let confirmations = 0;
   const calls = [];
   const broker = createLocalTerminalBroker({
     approvalMode: "full_control",
-    classifyCommand: () => ({ decision: "deny", rule: "always-deny", reason: "blocked" }),
+    classifyCommand: classifier,
     confirm: async () => { confirmations += 1; return false; },
     spawnCommand: async (argv) => { calls.push(argv); return { code: 0 }; },
   });
-  await broker.run({ argv: ["sudo", "whoami"], cwd: "/project" });
-  await broker.run({ argv: ["/bin/sh", "-c", "echo hi"], cwd: "/project" });
+  await broker.run({ argv: ["git", "push", "origin", "HEAD"], cwd: "/project" });
+  await broker.run({ argv: ["gh", "release", "create", "v1.0.0"], cwd: "/project" });
+  await assert.rejects(broker.run({ argv: ["sudo", "whoami"], cwd: "/project" }), /sudo/);
+  await assert.rejects(broker.run({ argv: ["/bin/sh", "-c", "echo hi"], cwd: "/project" }), /PATH/);
   assert.equal(confirmations, 0);
-  assert.deepEqual(calls, [["sudo", "whoami"], ["/bin/sh", "-c", "echo hi"]]);
+  assert.deepEqual(calls, [["git", "push", "origin", "HEAD"], ["gh", "release", "create", "v1.0.0"]]);
 });
 
-test("full control bypasses the real Agent classifier for blocked and absolute executables", async () => {
+test("full control keeps the real Agent classifier deny boundary", async () => {
   const { createLocalTerminalBroker } = require("../src/local-terminal-broker.cjs");
   const { classifyCommand } = await import("../agent-runtime/src/policy.js");
   const calls = [];
   const broker = createLocalTerminalBroker({
     approvalMode: "full_control",
     classifyCommand,
-    confirm: async () => { throw new Error("full control must not confirm"); },
+    confirm: async () => { throw new Error("full control must not confirm for allowed commands"); },
     spawnCommand: async (argv) => { calls.push(argv); return { code: 0 }; },
   });
-  await broker.run({ argv: ["sudo", "whoami"], cwd: "/project" });
-  await broker.run({ argv: ["/bin/sh", "-c", "echo hi"], cwd: "/project" });
-  assert.deepEqual(calls, [["sudo", "whoami"], ["/bin/sh", "-c", "echo hi"]]);
+  await broker.run({ argv: ["git", "push", "origin", "HEAD"], cwd: "/project" });
+  await assert.rejects(broker.run({ argv: ["sudo", "whoami"], cwd: "/project" }), /blocked|sudo/i);
+  await assert.rejects(broker.run({ argv: ["/bin/sh", "-c", "echo hi"], cwd: "/project" }), /PATH/);
+  assert.deepEqual(calls, [["git", "push", "origin", "HEAD"]]);
+});
+
+test("broker forwards cancellation and a bounded timeout to host commands", async () => {
+  const { createLocalTerminalBroker } = require("../src/local-terminal-broker.cjs");
+  const controller = new AbortController();
+  const calls = [];
+  const broker = createLocalTerminalBroker({
+    approvalMode: "full_control",
+    classifyCommand: classifier,
+    spawnCommand: async (argv, options) => { calls.push({ argv, options }); return { code: 0 }; },
+  });
+  await broker.run({ argv: ["git", "fetch", "origin"], cwd: "/project" }, { signal: controller.signal });
+  assert.equal(calls[0].options.signal, controller.signal);
+  assert.equal(calls[0].options.timeoutMs, 10 * 60_000);
 });
 
 test("does not execute a request when native confirmation is declined", async () => {

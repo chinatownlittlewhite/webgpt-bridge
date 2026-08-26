@@ -294,6 +294,7 @@ test("Windows AppContainer adapter passes only trusted helper arguments and pare
     extraWritePaths: ["/workspace/git-meta"],
   });
   assert.equal(wrapped[0], "/trusted/lpc-windows-sandbox.exe");
+  assert.equal(wrapped[1], "sandbox");
   assert.ok(wrapped.includes("--parent-pid"));
   assert.ok(wrapped.includes(String(process.pid)));
   assert.ok(wrapped.includes("--network"));

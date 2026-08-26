@@ -34,7 +34,7 @@ function packageAvailable(name, required = true) {
 }
 
 const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
-check("project version", packageJson.version === "0.9.0", packageJson.version, true);
+check("project version", packageJson.version === "0.9.1", packageJson.version, true);
 check("Node >=20", Number(process.versions.node.split(".")[0]) >= 20, process.version, true);
 packageAvailable("@modelcontextprotocol/server", true);
 packageAvailable("@modelcontextprotocol/node", true);
@@ -55,13 +55,13 @@ const workspace = path.resolve(process.env.LPC_WORKSPACE ?? process.cwd());
 check("workspace exists", fs.existsSync(workspace) && fs.statSync(workspace).isDirectory(), workspace, true);
 
 if (process.platform === "win32") {
-  const helper = path.resolve(process.env.LPC_WINDOWS_SANDBOX_HELPER ?? "native/windows-sandbox/bin/release/lpc-windows-sandbox.exe");
+  const helper = path.resolve(process.env.LPC_WINDOWS_SANDBOX_HELPER ?? "native/windows-host/bin/release/lpc-windows-host.exe");
   check("Windows AppContainer sandbox helper", fs.existsSync(helper), helper, true);
   const hostPreparation = probeWindowsHostPreparation({
     platform: "win32",
     helperPath: process.env.LPC_WINDOWS_HOST_PREP
       ? path.resolve(process.env.LPC_WINDOWS_HOST_PREP)
-      : path.resolve("native/windows-host-prep/bin/release/lpc-windows-host-prep.exe"),
+      : path.resolve("native/windows-host/bin/release/lpc-windows-host.exe"),
   });
   check(
     "Windows host preparation",

@@ -62,19 +62,22 @@ test("allows safe reads but protects changes according to the persisted approval
   assert.equal(classifyLocalAction({ kind: "read", approvalMode: "auto", sensitive: true }).decision, "confirm");
   assert.equal(classifyLocalAction({ kind: "update", approvalMode: "auto", sensitive: true }).decision, "deny");
   assert.equal(classifyLocalAction({ kind: "network", approvalMode: "full_control", sensitive: false }).decision, "allow");
-  assert.equal(classifyLocalAction({ kind: "update", approvalMode: "full_control", sensitive: true }).decision, "allow");
-  assert.equal(classifyLocalAction({ kind: "delete", approvalMode: "full_control", sensitive: true, withinWorkspace: false }).decision, "allow");
+  assert.equal(classifyLocalAction({ kind: "read", approvalMode: "full_control", sensitive: true }).decision, "confirm");
+  assert.equal(classifyLocalAction({ kind: "update", approvalMode: "full_control", sensitive: true }).decision, "deny");
+  assert.equal(classifyLocalAction({ kind: "delete", approvalMode: "full_control", sensitive: true, withinWorkspace: false }).decision, "deny");
 });
 
-test("full control allows paths normally blocked by local path policy", (t) => {
+test("full control preserves sensitive and system path boundaries", (t) => {
   const { classifyLocalPath } = api();
-  const { root, home } = makeFixture(t);
+  const { root, home, workspace } = makeFixture(t);
   const ssh = path.join(home, ".ssh");
   const system = path.join(root, "System");
   fs.mkdirSync(ssh, { recursive: true });
   fs.mkdirSync(system, { recursive: true });
-  assert.equal(classifyLocalPath(path.join(ssh, "config"), { homeDir: home, approvalMode: "full_control" }).decision, "allow");
-  assert.equal(classifyLocalPath(path.join(system, "config"), { homeDir: home, systemRoots: [system], approvalMode: "full_control" }).decision, "allow");
+  fs.writeFileSync(path.join(workspace, "safe.txt"), "ok\n");
+  assert.equal(classifyLocalPath(path.join(workspace, "safe.txt"), { homeDir: home, approvalMode: "full_control" }).decision, "allow");
+  assert.equal(classifyLocalPath(path.join(ssh, "config"), { homeDir: home, approvalMode: "full_control" }).decision, "deny");
+  assert.equal(classifyLocalPath(path.join(system, "config"), { homeDir: home, systemRoots: [system], approvalMode: "full_control" }).decision, "deny");
 });
 
 test("auto-approves low-risk verified Agent commands while preserving high-risk confirmation", () => {
@@ -127,9 +130,13 @@ test("auto-approves low-risk verified Agent commands while preserving high-risk 
   assert.equal(classifyHostCommandApproval(request(["node", "script.mjs"], "runtime-execution", { sandboxAccess: { read: ["/outside"], write: [] } }), "auto").decision, "confirm");
 
   const denied = request(["sudo", "rm", "-rf", "/"], "always-deny", { policy: { decision: "deny", rule: "always-deny" }, sandbox: { enforced: false, autoRunSafe: false }, sandboxAccess: { read: ["/"], write: ["/"] } });
-  assert.equal(classifyHostCommandApproval(denied, "full_control").decision, "allow");
+  assert.equal(classifyHostCommandApproval(denied, "full_control").decision, "deny");
   assert.equal(classifyHostCommandApproval(request(["curl", "https://example.com"], "network"), "full_control").decision, "allow");
-  assert.equal(classifyHostCommandApproval(request(["gh", "pr", "create"], "default-ask"), "full_control").decision, "allow");
+  assert.equal(classifyHostCommandApproval(request(["git", "fetch", "origin"], "git-mutation"), "full_control").decision, "allow");
+  assert.equal(classifyHostCommandApproval(request(["git", "push", "origin", "HEAD"], "git-mutation"), "full_control").decision, "allow");
+  assert.equal(classifyHostCommandApproval(request(["gh", "repo", "clone", "owner/repo"], "default-ask"), "full_control").decision, "allow");
+  assert.equal(classifyHostCommandApproval(request(["gh", "release", "create", "v1.0.0"], "default-ask"), "full_control").decision, "allow");
   assert.equal(classifyHostCommandApproval(request(["docker", "run", "x"], "sensitive-command"), "full_control").decision, "allow");
   assert.equal(classifyHostCommandApproval(request(["osascript", "-e", "return 1"], "default-ask"), "full_control").decision, "allow");
+  assert.equal(classifyHostCommandApproval(request(["node", "script.mjs"], "runtime-execution", { sandboxAccess: { read: ["/outside"], write: [] } }), "full_control").decision, "confirm");
 });

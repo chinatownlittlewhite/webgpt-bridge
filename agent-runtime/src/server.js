@@ -17,6 +17,7 @@ import {
 import { createAuditLogger } from "./audit.js";
 import { resolveGitHubCli } from "./github-cli.js";
 import { goalModeHostInstructions } from "./host-instructions.js";
+import { ensureHandoffBundle, recordDesignIssue } from "./handoff.js";
 import { prepareNativeSandbox, probeWindowsHostPreparation, sandboxPreparationDiagnostic } from "./native-sandbox.js";
 import { createProcessManager } from "./process-manager.js";
 import { loadProjectContext } from "./project-context.js";
@@ -24,7 +25,7 @@ import { createHostApprovalClient } from "./local-broker-client.js";
 import { createCoreTools } from "./tool.js";
 import { resolveWorkspace } from "./workspace.js";
 
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 const DEFAULT_PORT = 8787;
 
 function envBool(value, fallback = false) {
@@ -269,9 +270,11 @@ export async function createProductionRuntime({
   windowsHelperPath = process.env.LPC_WINDOWS_SANDBOX_HELPER,
   windowsHostPrepPath = process.env.LPC_WINDOWS_HOST_PREP,
   githubCliPath = process.env.LPC_GITHUB_CLI_PATH ?? "",
+  designIssueJournal = envBool(process.env.LPC_DESIGN_ISSUE_JOURNAL, false),
 } = {}) {
   const root = resolveWorkspace(workspace);
-  const projectContext = loadProjectContext({ workspace: root, cwd: ".", maxTotalBytes: 48_000 });
+  ensureHandoffBundle({ workspace: root, cwd: ".", version: VERSION });
+  const projectContext = loadProjectContext({ workspace: root, cwd: ".", maxFiles: 12, maxTotalBytes: 48_000 });
   const serverInstructions = [
     goalModeHostInstructions,
     projectContext.instructions
@@ -323,6 +326,9 @@ export async function createProductionRuntime({
     platform: process.platform,
     auditLogger,
     maxProcesses: 32,
+    designIssueRecorder: designIssueJournal
+      ? (issue) => recordDesignIssue({ workspace: root, enabled: true, version: VERSION, ...issue })
+      : undefined,
   });
   const tools = createCoreTools({
     workspace: root,

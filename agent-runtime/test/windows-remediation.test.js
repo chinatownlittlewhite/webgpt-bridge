@@ -6,11 +6,13 @@ const buildNativeSource = fs.readFileSync(new URL("../scripts/build-native.mjs",
 const doctorSource = fs.readFileSync(new URL("../scripts/doctor.mjs", import.meta.url), "utf8");
 const sandboxVerifySource = fs.readFileSync(new URL("../src/sandbox-verify.js", import.meta.url), "utf8");
 
-test("Windows native sandbox publish is win-x64 self-contained without trimming or single-file modes", () => {
-  assert.match(buildNativeSource, /"-r",\s*"win-x64"/);
+test("Windows native build publishes one combined host and prefers NativeAOT with a single-file fallback", () => {
+  assert.match(buildNativeSource, /native\/windows-host\/LocalProjectCoding\.WindowsHost\.csproj/);
+  assert.match(buildNativeSource, /lpc-windows-host\.exe/);
+  assert.match(buildNativeSource, /PublishAot=true/);
+  assert.match(buildNativeSource, /PublishSingleFile=true/);
   assert.match(buildNativeSource, /"--self-contained",\s*"true"/);
-  assert.doesNotMatch(buildNativeSource, /"--self-contained",\s*"false"/);
-  assert.doesNotMatch(buildNativeSource, /PublishSingleFile|PublishTrimmed|PublishAot|NativeAOT/i);
+  assert.doesNotMatch(buildNativeSource, /nativeProjects\s*=\s*\[/);
 });
 
 test("Windows host preparation probe is read-only, structured, and fixed to the product capability", async () => {
@@ -46,7 +48,7 @@ test("Windows host preparation probe is read-only, structured, and fixed to the 
       };
     },
   });
-  assert.deepEqual(invocation.args, ["--check", "--json"]);
+  assert.deepEqual(invocation.args, ["host-prep", "--check", "--json"]);
   assert.equal(invocation.options.shell, false);
   assert.equal(ready.status, "ready");
   assert.equal(ready.usable, true);

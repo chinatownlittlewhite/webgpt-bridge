@@ -76,6 +76,7 @@ function defaultSettings() {
     profile: "webgpt-bridge",
     httpsProxy: "",
     approvalMode: "development",
+    designIssueJournal: false,
   };
 }
 
@@ -341,14 +342,14 @@ async function stopLocalBroker() {
   if (socketPath && process.platform !== "win32") await fsp.rm(socketPath, { force: true }).catch(() => {});
 }
 
-function localBrokerDispatch(method, params) {
+function localBrokerDispatch(method, params, executionContext = {}) {
   const handlers = {
     local_list: () => localFileBroker.list(params),
     local_read: () => localFileBroker.read(params),
     local_request_sensitive_access: () => localFileBroker.requestSensitiveAccess(params),
     local_stage_changes: () => localFileBroker.stage(params),
     local_confirm_batch: () => localFileBroker.confirmBatch(params),
-    local_run_command: () => localTerminalBroker.run(params),
+    local_run_command: () => localTerminalBroker.run(params, executionContext),
     host_approve_command: () => confirmHostCommandApproval(params),
   };
   if (!Object.hasOwn(handlers, method)) throw new Error("未知的本机代理方法。");
@@ -357,7 +358,12 @@ function localBrokerDispatch(method, params) {
 
 function attachLocalBrokerConnection(socket) {
   let buffered = "";
+  const activeRequests = new Set();
   socket.setEncoding("utf8");
+  socket.on("close", () => {
+    for (const controller of activeRequests) controller.abort();
+    activeRequests.clear();
+  });
   socket.on("data", (chunk) => {
     buffered += chunk;
     if (buffered.length > 1024 * 1024) return socket.destroy();
@@ -370,10 +376,16 @@ function attachLocalBrokerConnection(socket) {
         try {
           message = JSON.parse(line);
           if (!message || typeof message !== "object" || typeof message.method !== "string" || !message.params || typeof message.params !== "object") throw new Error("本机代理请求格式无效。");
-          const result = await localBrokerDispatch(message.method, message.params);
-          socket.write(`${JSON.stringify({ id: message.id, ok: true, result })}\n`);
+          const controller = new AbortController();
+          activeRequests.add(controller);
+          try {
+            const result = await localBrokerDispatch(message.method, message.params, { signal: controller.signal });
+            if (!socket.destroyed) socket.write(`${JSON.stringify({ id: message.id, ok: true, result })}\n`);
+          } finally {
+            activeRequests.delete(controller);
+          }
         } catch (error) {
-          socket.write(`${JSON.stringify({ id: message?.id, ok: false, error: error.message || "本机代理请求失败。" })}\n`);
+          if (!socket.destroyed) socket.write(`${JSON.stringify({ id: message?.id, ok: false, error: error.message || "本机代理请求失败。" })}\n`);
         }
       })();
     }
@@ -547,6 +559,7 @@ async function startAll() {
     LPC_ENABLE_NETWORK_TOOLS: "true",
     LPC_LOCAL_BROKER_SOCKET: localBrokerSocket,
     LPC_GITHUB_CLI_PATH: githubCliPath,
+    LPC_DESIGN_ISSUE_JOURNAL: settings.designIssueJournal === true ? "true" : "false",
   };
   serverProcess = spawnLogged(node, [path.join(runtime.runtimePath, "dist", "server.js")], { env: baseEnv, cwd: runtime.runtimePath }, "agent");
   await waitForHealth();

@@ -5,6 +5,7 @@ function normalizeSettings(input = {}, defaults = {}) {
     agentMode: "bundled",
     developmentPath: "",
     approvalMode: ["cautious", "development", "auto", "full_control"].includes(input.approvalMode) ? input.approvalMode : "development",
+    designIssueJournal: input.designIssueJournal === true,
   };
 }
 

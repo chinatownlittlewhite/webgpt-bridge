@@ -198,6 +198,26 @@ test("Goal sessions allow only one non-cancel mutation while a tool action is in
   assert.equal(completed.status, "completed");
 });
 
+test("Goal mutation lock is released after a tool throws", async () => {
+  let calls = 0;
+  const tool = {
+    name: "throw_once",
+    inputSchema: { type: "object", additionalProperties: false },
+    async invoke() {
+      calls += 1;
+      if (calls === 1) throw new Error("boom");
+      return { status: "completed" };
+    },
+  };
+  const controller = createGoalController({ tools: [tool], verificationTasks: [] });
+  const goal = controller.start({ goal: "recover after tool failure" });
+  const first = await controller.step({ sessionId: goal.sessionId, tool: "throw_once", input: {} });
+  assert.equal(first.actionResult.status, "tool_error");
+  const second = await controller.step({ sessionId: goal.sessionId, tool: "throw_once", input: {} });
+  assert.notEqual(second.status, "operation_in_progress");
+  assert.equal(second.actionResult.status, "completed");
+});
+
 test("external orchestrator preserves goal_mode start failures instead of degrading them to not_found", async () => {
   const workspace = makeWorkspace("wgb-orchestrator-capacity-");
   try {

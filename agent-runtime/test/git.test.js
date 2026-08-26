@@ -49,6 +49,12 @@ test("git log limits are bounded", () => {
   assert.throws(() => buildGitArgv({ action: "log", limit: 201 }), /between 1 and 200/);
 });
 
+test("network Git actions are fixed to the configured origin and current branch", () => {
+  assert.deepEqual(buildGitArgv({ action: "fetch" }), ["git", "fetch", "--prune", "origin"]);
+  assert.deepEqual(buildGitArgv({ action: "pull" }), ["git", "pull", "--ff-only"]);
+  assert.deepEqual(buildGitArgv({ action: "push" }), ["git", "push", "origin", "HEAD"]);
+});
+
 test("git mutations still require trusted-host approval", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-git-"));
   const runGit = createGitRunner({ workspace: root });

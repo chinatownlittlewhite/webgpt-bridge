@@ -103,6 +103,16 @@ test("GitHub integration builds bounded argv without a shell", () => {
   assert.deepEqual(create, ["gh", "pr", "create", "--title", "Test PR", "--body", "Body", "--base", "main", "--head", "feature"]);
   assert.throws(() => buildGitHubArgv({ action: "pr_create", title: "x", body: "", base: "--repo" }), /does not start/);
   assert.throws(() => buildGitHubArgv({ action: "issue_view", number: 0 }), /between 1/);
+  assert.deepEqual(
+    buildGitHubArgv({ action: "release_view", tag: "v0.4.0" }),
+    ["gh", "release", "view", "v0.4.0", "--json", "tagName,name,isDraft,isPrerelease,url,publishedAt"],
+  );
+  assert.deepEqual(
+    buildGitHubArgv({ action: "release_create", tag: "v0.4.0", title: "WebGPT Bridge v0.4.0", body: "notes", draft: true, assets: ["release/app.dmg", "release/app.exe"] }),
+    ["gh", "release", "create", "v0.4.0", "release/app.dmg", "release/app.exe", "--title", "WebGPT Bridge v0.4.0", "--notes", "notes", "--draft"],
+  );
+  assert.throws(() => buildGitHubArgv({ action: "release_create", tag: "--repo", title: "x", body: "" }), /does not start/);
+  assert.throws(() => buildGitHubArgv({ action: "release_create", tag: "v1", title: "x", body: "", assets: ["../secret"] }), /relative/);
 });
 
 test("GitHub tool delegates authenticated CLI calls to the App-owned broker", async (t) => {

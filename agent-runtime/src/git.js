@@ -91,6 +91,10 @@ export function buildGitArgv(input) {
       }
       return ["git", "commit", "-m", input.message];
     }
+    case "fetch":
+      return ["git", "fetch", "--prune", "origin"];
+    case "pull":
+      return ["git", "pull", "--ff-only"];
     case "push":
       return ["git", "push", "origin", "HEAD"];
     case "restore": {

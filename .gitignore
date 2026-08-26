@@ -2,7 +2,9 @@ node_modules/
 release/
 release-patched/
 .npm/
+.local/
 .webgpt-bridge/
+.webgpt-handoff/
 Library/
 agent-runtime/node_modules/
 agent-runtime/dist/

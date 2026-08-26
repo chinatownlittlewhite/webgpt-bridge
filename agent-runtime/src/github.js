@@ -13,6 +13,22 @@ function positive(value, fallback, max) {
   return resolved;
 }
 
+function relativeAsset(value) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.includes("\0") ||
+    value.startsWith("-") ||
+    value.startsWith("/") ||
+    value.startsWith("\\") ||
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    value.split(/[\\/]+/).includes("..")
+  ) {
+    throw new TypeError("release asset must be a safe relative workspace path");
+  }
+  return value;
+}
+
 export function buildGitHubArgv(input = {}) {
   switch (input.action) {
     case "pr_view":
@@ -33,6 +49,17 @@ export function buildGitHubArgv(input = {}) {
       if (typeof input.title !== "string" || input.title.trim().length === 0) throw new TypeError("issue title is required");
       if (typeof input.body !== "string") throw new TypeError("issue body must be a string");
       return ["gh", "issue", "create", "--title", input.title, "--body", input.body];
+    }
+    case "release_view":
+      return ["gh", "release", "view", token(input.tag, "release tag"), "--json", "tagName,name,isDraft,isPrerelease,url,publishedAt"];
+    case "release_create": {
+      const tag = token(input.tag, "release tag");
+      if (typeof input.title !== "string" || input.title.trim().length === 0) throw new TypeError("release title is required");
+      if (typeof input.body !== "string") throw new TypeError("release body must be a string");
+      const assets = Array.isArray(input.assets) ? input.assets.map(relativeAsset) : [];
+      const args = ["gh", "release", "create", tag, ...assets, "--title", input.title, "--notes", input.body];
+      if (input.draft === true) args.push("--draft");
+      return args;
     }
     default:
       throw new TypeError(`unsupported GitHub action: ${String(input.action)}`);

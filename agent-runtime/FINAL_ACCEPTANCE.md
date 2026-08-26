@@ -1,4 +1,4 @@
-# Local Project Coding v0.9.0 — Final Acceptance
+# WebGPT Bridge Agent v0.9.1 — Final Acceptance
 
 ## Status
 
@@ -8,7 +8,7 @@ Do not relabel this release as “Final Accepted” until the full acceptance co
 
 ## Frozen release contract
 
-- Version: `0.9.0`
+- Version: `0.9.1`
 - MCP protocol target: `2026-07-28`
 - Model-facing MCP tools: exactly 23
 - Default raw command network policy: denied by the normal native sandbox
@@ -77,7 +77,7 @@ The full acceptance harness must exit non-zero if any required item fails:
 15. Tool discovery returns exactly the frozen 23 tools.
 16. `read_file`, `list_dir`, and `search_text` work through the built MCP server with bounded results.
 17. Agent-facing MCP `content` is concise rather than a JSON mirror of `structuredContent`, and pageable inspection/process results expose continuation metadata.
-18. `get_capabilities` returns version `0.9.0` and release stage `final-acceptance-candidate`.
+18. `get_capabilities` returns version `0.9.1` and release stage `final-acceptance-candidate`.
 19. The health endpoint reports the correct version/tool count.
 20. A persistent Goal session survives a full MCP server restart and receives bounded project instruction context when applicable.
 21. `goal_finish` executes real project verification and returns `completed` with `verified=true`.
@@ -118,7 +118,7 @@ npm run acceptance
 The expected native helper location is:
 
 ```text
-native/windows-sandbox/bin/release/lpc-windows-sandbox.exe
+native/windows-host/bin/release/lpc-windows-host.exe
 ```
 
 ## macOS-specific acceptance
@@ -159,4 +159,4 @@ to a final accepted/release status in code and documentation.
 
 Until then, the accurate description is:
 
-> v0.9.0 implementation and release harness complete; native final acceptance pending real target-OS execution.
+> v0.9.1 implementation and release harness complete; native final acceptance pending real target-OS execution.

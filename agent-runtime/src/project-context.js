@@ -4,6 +4,7 @@ import path from "node:path";
 import { INTERNAL_STATE_DIR, LEGACY_INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
 const INSTRUCTION_NAMES = new Set(["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
+const HANDOFF_NAMES = ["CONTEXT.md", "PLAN.md", "CHANGES.md", "TESTS.md", "TODO.md", "MANIFEST.json"];
 const DEFAULT_MAX_FILES = 8;
 const DEFAULT_MAX_FILE_BYTES = 32_000;
 const DEFAULT_MAX_TOTAL_BYTES = 96_000;
@@ -74,6 +75,13 @@ export function loadProjectContext({
   for (const directory of ancestorChain) {
     for (const name of INSTRUCTION_NAMES) {
       const candidate = path.join(directory, name);
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) addFile(candidate);
+    }
+  }
+  const handoffDir = path.join(projectRoot, ".webgpt-handoff");
+  if (fs.existsSync(handoffDir) && fs.statSync(handoffDir).isDirectory()) {
+    for (const name of HANDOFF_NAMES) {
+      const candidate = path.join(handoffDir, name);
       if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) addFile(candidate);
     }
   }

@@ -178,7 +178,7 @@ test("core tool set exposes the frozen v0.9 final-acceptance surface", () => {
 
 test("capabilities report final-acceptance guarantees without overclaiming inactive sandbox", () => {
   const report = createCapabilitiesTool().invoke({});
-  assert.equal(report.version, "0.9.0");
+  assert.equal(report.version, "0.9.1");
   assert.equal(report.releaseStage, "final-acceptance-candidate");
   assert.deepEqual(report.tools, EXPECTED_TOOLS);
   assert.equal(report.sandbox.enforced, false);

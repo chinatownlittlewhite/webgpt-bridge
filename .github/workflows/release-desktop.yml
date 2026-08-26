@@ -75,20 +75,20 @@ jobs:
       - name: Prepare Windows AppContainer host access
         shell: pwsh
         run: |
-          $prep = (Resolve-Path "agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe").Path
-          & $prep --apply
+          $prep = (Resolve-Path "agent-runtime\native\windows-host\bin\release\lpc-windows-host.exe").Path
+          & $prep host-prep --apply
           if ($LASTEXITCODE -ne 0) { throw "host-prep first apply failed with exit $LASTEXITCODE" }
-          & $prep --apply
+          & $prep host-prep --apply
           if ($LASTEXITCODE -ne 0) { throw "host-prep second apply failed with exit $LASTEXITCODE" }
-          $readyJson = & $prep --check --json
+          $readyJson = & $prep host-prep --check --json
           if ($LASTEXITCODE -ne 0) { throw "host-prep check failed with exit $LASTEXITCODE" }
           if (($readyJson | ConvertFrom-Json).status -ne "ready") { throw "host-prep did not become ready: $readyJson" }
-          & $prep --remove
+          & $prep host-prep --remove
           if ($LASTEXITCODE -ne 0) { throw "host-prep remove failed with exit $LASTEXITCODE" }
-          $removedJson = & $prep --check --json
+          $removedJson = & $prep host-prep --check --json
           if ($LASTEXITCODE -ne 0) { throw "host-prep post-remove check failed with exit $LASTEXITCODE" }
           if (($removedJson | ConvertFrom-Json).status -ne "capability_ace_missing") { throw "host-prep remained unexpectedly ready after remove: $removedJson" }
-          & $prep --apply
+          & $prep host-prep --apply
           if ($LASTEXITCODE -ne 0) { throw "host-prep repair apply failed with exit $LASTEXITCODE" }
           $repairedJson = & $prep --check --json
           if ($LASTEXITCODE -ne 0) { throw "host-prep repair check failed with exit $LASTEXITCODE" }
@@ -138,7 +138,7 @@ jobs:
       - name: Smoke install Windows NSIS artifact
         shell: pwsh
         run: |
-          $prep = (Resolve-Path "agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe").Path
+          $prep = (Resolve-Path "agent-runtime\native\windows-host\bin\release\lpc-windows-host.exe").Path
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
             -NoLogo -NoProfile -ExecutionPolicy Bypass `
             -File "scripts\windows-installer-smoke.ps1" `
@@ -157,7 +157,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $installRoot = Join-Path $env:ProgramFiles "WebGPT Bridge"
+          $installRoot = Join-Path $env:SystemDrive "WebGPT-Bridge-Custom-Install-Smoke"
           if (Test-Path $installRoot) {
             $uninstaller = Get-ChildItem -Path $installRoot -Filter "Uninstall*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($uninstaller) {
@@ -166,11 +166,12 @@ jobs:
             }
           }
           & "$env:SystemRoot\System32\schtasks.exe" /Delete /TN "WebGPT Bridge Host Preparation" /F *> $null
-          $prep = "agent-runtime\native\windows-host-prep\bin\release\lpc-windows-host-prep.exe"
+          $prep = "agent-runtime\native\windows-host\bin\release\lpc-windows-host.exe"
           if (Test-Path $prep) {
-            & $prep --remove
+            & $prep host-prep --remove
             if ($LASTEXITCODE -ne 0) { Write-Warning "host-prep cleanup returned exit $LASTEXITCODE" }
           }
+          Remove-Item -LiteralPath (Join-Path $env:ProgramFiles "WebGPT Bridge Host") -Recurse -Force -ErrorAction SilentlyContinue
 
   macos:
     needs: [verify, draft]

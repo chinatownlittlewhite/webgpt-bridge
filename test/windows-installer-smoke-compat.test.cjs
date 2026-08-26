@@ -21,3 +21,14 @@ test("Windows installer smoke discovers the updater-safe release basename", () =
   assert.match(smoke, /-Filter "WebGPT-Bridge-\*-win-x64\.exe"/);
   assert.doesNotMatch(smoke, /-Filter "WebGPT Bridge-\*-win-x64\.exe"/);
 });
+
+test("Windows installer smoke exercises a custom install directory while keeping the SYSTEM host protected", () => {
+  const smoke = fs.readFileSync(path.join(root, "scripts", "windows-installer-smoke.ps1"), "utf8");
+  assert.match(smoke, /\/D=\$InstallRoot/);
+  assert.match(smoke, /WebGPT Bridge Host/);
+  assert.match(smoke, /lpc-windows-host\.exe/);
+  assert.match(smoke, /host-prep --check --json/);
+  assert.match(smoke, /host-prep --remove/);
+  assert.match(smoke, /Arguments.*host-prep --apply/);
+  assert.doesNotMatch(smoke, /windows-host-prep\\bin\\release\\lpc-windows-host-prep\.exe/);
+});

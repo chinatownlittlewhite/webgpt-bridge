@@ -7,42 +7,36 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-const nativeProjects = [
-  {
-    name: "Windows native sandbox",
-    project: path.resolve("native/windows-sandbox/LocalProjectCoding.WindowsSandbox.csproj"),
-    output: path.resolve("native/windows-sandbox/bin/release"),
-    executable: "lpc-windows-sandbox.exe",
-  },
-  {
-    name: "Windows host preparation",
-    project: path.resolve("native/windows-host-prep/LocalProjectCoding.WindowsHostPrep.csproj"),
-    output: path.resolve("native/windows-host-prep/bin/release"),
-    executable: "lpc-windows-host-prep.exe",
-  },
-];
+const project = path.resolve("native/windows-host/LocalProjectCoding.WindowsHost.csproj");
+const output = path.resolve("native/windows-host/bin/release");
+const executable = path.join(output, "lpc-windows-host.exe");
 
-for (const nativeProject of nativeProjects) {
-  fs.mkdirSync(nativeProject.output, { recursive: true });
-  const result = spawnSync(
+function publish(extraArgs) {
+  fs.rmSync(output, { recursive: true, force: true });
+  fs.mkdirSync(output, { recursive: true });
+  return spawnSync(
     "dotnet",
-    ["publish", nativeProject.project, "-c", "Release", "-r", "win-x64", "-o", nativeProject.output, "--self-contained", "true"],
-    {
-      stdio: "inherit",
-      shell: false,
-      windowsHide: true,
-    },
+    ["publish", project, "-c", "Release", "-r", "win-x64", "-o", output, "--self-contained", "true", ...extraArgs],
+    { stdio: "inherit", shell: false, windowsHide: true },
   );
-  if (result.error) {
-    console.error(`${nativeProject.name} build failed: ${result.error.message}`);
-    process.exit(1);
-  }
-  if (result.status !== 0) process.exit(result.status ?? 1);
-
-  const helper = path.join(nativeProject.output, nativeProject.executable);
-  if (!fs.existsSync(helper)) {
-    console.error(`${nativeProject.name} build did not produce ${helper}`);
-    process.exit(1);
-  }
-  console.log(`Built ${helper}`);
 }
+
+let result = publish(["-p:PublishAot=true", "-p:StripSymbols=true", "-p:IlcOptimizationPreference=Size"]);
+if (result.error) {
+  console.error(`Windows native host build failed: ${result.error.message}`);
+  process.exit(1);
+}
+if (result.status !== 0) {
+  console.warn("NativeAOT publish was unavailable; falling back to one self-contained single-file Windows host.");
+  result = publish(["-p:PublishSingleFile=true", "-p:DebugType=None", "-p:DebugSymbols=false"]);
+}
+if (result.error) {
+  console.error(`Windows native host fallback build failed: ${result.error.message}`);
+  process.exit(1);
+}
+if (result.status !== 0) process.exit(result.status ?? 1);
+if (!fs.existsSync(executable)) {
+  console.error(`Windows native host build did not produce ${executable}`);
+  process.exit(1);
+}
+console.log(`Built ${executable}`);

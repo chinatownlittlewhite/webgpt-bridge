@@ -95,3 +95,26 @@ test("process manager close terminates all running children", async () => {
   assert.equal(closed.processesTerminated, 2);
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("PTY spawn failure returns a terminal error without leaving a starting record", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-process-pty-failure-"));
+  const manager = createProcessManager({
+    workspace: root,
+    sandboxAdapter: verifiedSandbox,
+    maxProcesses: 4,
+    ptyLoader: async () => ({
+      spawn() {
+        throw new Error("synthetic pty spawn failure");
+      },
+    }),
+  });
+  const started = await manager.start(
+    { argv: ["node", "-e", "setTimeout(() => {}, 5000)"], pty: true },
+    { requestApproval: () => true },
+  );
+  assert.equal(started.status, "spawn_error");
+  assert.match(started.error, /synthetic pty spawn failure/);
+  assert.deepEqual(manager.list().processes, []);
+  await manager.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});

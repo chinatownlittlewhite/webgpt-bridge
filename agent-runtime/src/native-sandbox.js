@@ -34,7 +34,7 @@ export function probeWindowsHostPreparation({
     });
   }
   const expectedPath = helperPath ?? path.join(
-    moduleRoot(), "native", "windows-host-prep", "bin", "release", "lpc-windows-host-prep.exe",
+    moduleRoot(), "native", "windows-host", "bin", "release", "lpc-windows-host.exe",
   );
   if (!existsSync(expectedPath)) {
     return Object.freeze({
@@ -46,7 +46,7 @@ export function probeWindowsHostPreparation({
       remediation: "Repair or reinstall WebGPT Bridge as administrator.",
     });
   }
-  const result = spawnSyncImpl(expectedPath, ["--check", "--json"], {
+  const result = spawnSyncImpl(expectedPath, ["host-prep", "--check", "--json"], {
     encoding: "utf8",
     shell: false,
     windowsHide: true,
@@ -111,10 +111,10 @@ export function discoverNativeSandboxAdapter({
     const helper = windowsHelperPath ?? path.join(
       moduleRoot(),
       "native",
-      "windows-sandbox",
+      "windows-host",
       "bin",
       "release",
-      "lpc-windows-sandbox.exe",
+      "lpc-windows-host.exe",
     );
     if (!fs.existsSync(helper)) {
       return {

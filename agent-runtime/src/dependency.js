@@ -31,7 +31,7 @@ export function discoverDependencySync({ workspace, cwd = ".", allowScripts = fa
   throw new Error(`no supported dependency manifest was found in ${cwd}`);
 }
 
-export function createDependencySyncRunner({ workspace, sandboxAdapter, platform = process.platform, auditLogger, timeoutMs = 120_000 } = {}) {
+export function createDependencySyncRunner({ workspace, sandboxAdapter, platform = process.platform, auditLogger, timeoutMs = 10 * 60_000 } = {}) {
   const run = createCommandRunner({ workspace, sandboxAdapter, platform, auditLogger, timeoutMs });
   return async function syncDependencies(input = {}, trustedContext = {}) {
     const discovered = discoverDependencySync({ workspace, cwd: input.cwd ?? ".", allowScripts: input.allowScripts === true });

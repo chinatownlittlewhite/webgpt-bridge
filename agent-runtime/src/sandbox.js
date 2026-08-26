@@ -224,6 +224,7 @@ export function createWindowsAppContainerAdapter({
     wrapArgv({ argv, cwd, workspace, extraReadPaths: dynamicReadPaths = [], extraWritePaths: dynamicWritePaths = [] }) {
       const args = [
         helperPath,
+        "sandbox",
         "--profile-prefix",
         profilePrefix,
         "--workspace",

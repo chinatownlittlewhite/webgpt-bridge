@@ -19,10 +19,15 @@ test("builder config fixes GitHub update source and platform targets", () => {
   assert.deepEqual(config.win.target, ["nsis"]);
   assert.equal(config.win.verifyUpdateCodeSignature, true);
   assert.equal(config.nsis.perMachine, true);
-  assert.equal(config.nsis.allowToChangeInstallationDirectory, false);
+  assert.equal(config.nsis.allowToChangeInstallationDirectory, true);
   assert.deepEqual(config.mac.target, ["dmg", "zip"]);
   assert.equal(config.mac.mergeASARs, false, "universal packaging must not rebuild the fully unpacked Agent runtime into one giant ASAR glob");
-  assert.deepEqual(config.asarUnpack, ["agent-runtime/**/*"], "the external Agent runtime must remain on the real filesystem");
+  assert.deepEqual(config.asarUnpack, [
+    "agent-runtime/dist/**/*",
+    "agent-runtime/node_modules/**/*",
+    "agent-runtime/package.json",
+    "agent-runtime/native/windows-host/bin/release/**/*",
+  ], "the production Agent runtime must remain on the real filesystem without unpacking development sources");
   assert.equal(config.mac.x64ArchFiles, "**/node-pty/prebuilds/darwin-*/{pty.node,spawn-helper}");
 });
 
@@ -53,9 +58,20 @@ test("current release policy documents unsigned GitHub distribution and controll
   assert.doesNotMatch(docs, /AZURE_CLIENT_SECRET/);
 });
 
-test("packaging excludes Agent runtime state and npm logs", () => {
-  assert.ok(builderConfig.files.includes("!agent-runtime/.webgpt-bridge{,/**}"));
-  assert.ok(builderConfig.files.includes("!agent-runtime/.npm{,/**}"));
+test("packaging contains only production Agent runtime payload and bounded Electron locales", () => {
+  assert.ok(builderConfig.files.includes("agent-runtime/dist/**/*"));
+  assert.ok(builderConfig.files.includes("agent-runtime/node_modules/**/*"));
+  assert.ok(builderConfig.files.includes("agent-runtime/package.json"));
+  assert.ok(builderConfig.files.includes("agent-runtime/native/windows-host/bin/release/**/*"));
+  assert.equal(builderConfig.files.includes("agent-runtime/**/*"), false);
+  assert.equal(builderConfig.files.some((entry) => /agent-runtime\/(?:src|test|scripts)\/\*\*/.test(entry)), false);
+  assert.deepEqual(builderConfig.asarUnpack, [
+    "agent-runtime/dist/**/*",
+    "agent-runtime/node_modules/**/*",
+    "agent-runtime/package.json",
+    "agent-runtime/native/windows-host/bin/release/**/*",
+  ]);
+  assert.deepEqual(builderConfig.electronLanguages, ["en-US", "zh-CN", "zh-TW", "ja"]);
 });
 
 test("desktop host enables the dedicated network-tool sandbox", () => {
@@ -78,7 +94,7 @@ test("desktop UI exposes four permission levels without a development Agent mode
   assert.match(html, />高自治</);
   assert.match(html, /value="full_control">完全控制（无确认）</);
   assert.match(html, /同类权限.*本次连接.*自动记住/);
-  assert.match(html, /完全控制.*不会显示权限确认/);
+  assert.match(html, /完全控制.*无需管理员权限.*不会绕过敏感路径、shell、SSH 或提权安全边界/);
   assert.doesNotMatch(html, /桌面开发版|developmentPath|Agent 模式/);
 });
 
@@ -135,34 +151,34 @@ test("Windows installer is per-machine NSIS and owns fixed host-preparation life
   assert.doesNotMatch(packageJson.scripts["dist:win"], /\bzip\b/);
   assert.deepEqual(builderConfig.win.target, ["nsis"]);
   assert.equal(builderConfig.nsis.perMachine, true);
-  assert.equal(builderConfig.nsis.allowToChangeInstallationDirectory, false);
+  assert.equal(builderConfig.nsis.allowToChangeInstallationDirectory, true);
   assert.equal(builderConfig.nsis.include, "build/installer.nsh");
   const gitignore = fs.readFileSync(path.join(__dirname, "..", ".gitignore"), "utf8");
   assert.match(gitignore, /^!build\/installer\.nsh$/m, "the NSIS source include must be tracked even though generated build outputs are ignored");
 
   const installer = fs.readFileSync(path.join(__dirname, "..", "build", "installer.nsh"), "utf8");
-  assert.match(installer, /!macro customInit/);
-  const customInitStart = installer.indexOf("!macro customInit");
-  const customInitEnd = installer.indexOf("!macroend", customInitStart);
-  assert.ok(customInitStart >= 0 && customInitEnd > customInitStart, "installer must define a bounded customInit macro");
-  const customInit = installer.slice(customInitStart, customInitEnd);
-  assert.match(customInit, /\$PROGRAMFILES/);
-  assert.match(customInit, /\$PROGRAMFILES64/);
-  assert.match(customInit, /\$\{RunningX64\}/);
-  assert.match(customInit, /\$\{APP_FILENAME\}/);
-  assert.match(customInit, /StrCpy\s+\$INSTDIR/);
-  assert.doesNotMatch(customInit, /GetDParameter|\$CMDLINE|\/D=/i, "customInit must ignore command-line installation-directory overrides");
+  assert.doesNotMatch(installer, /!macro customInit[\s\S]*StrCpy\s+\$INSTDIR/, "installer must not re-pin the directory chosen by the assisted installer");
+  assert.match(installer, /WEBGPT_BRIDGE_PROTECTED_HOST_ROOT/);
+  assert.match(installer, /\$PROGRAMFILES64|\$PROGRAMFILES/);
+  assert.match(installer, /CopyFiles[\s\S]*lpc-windows-host\.exe/);
+  assert.match(installer, /CopyFiles[\s\S]*windows-host-prep-task\.xml/);
   assert.match(installer, /!macro customInstall/);
   assert.match(installer, /!macro customUnInstall/);
   assert.match(installer, /WebGPT Bridge Host Preparation/);
-  assert.match(installer, /lpc-windows-host-prep\.exe/);
+  assert.match(installer, /lpc-windows-host\.exe/);
   assert.match(installer, /--apply/);
   assert.match(installer, /--remove/);
   assert.match(installer, /\/RU SYSTEM/);
   assert.match(installer, /\/SC ONSTART/);
   assert.match(installer, /\/RL HIGHEST/);
-  assert.ok(installer.includes('!define WEBGPT_BRIDGE_HOST_PREP_RELATIVE "resources\\app.asar.unpacked\\agent-runtime\\native\\windows-host-prep\\bin\\release\\lpc-windows-host-prep.exe"'));
-  assert.ok(installer.includes('$INSTDIR\\${WEBGPT_BRIDGE_HOST_PREP_RELATIVE}'));
+  assert.ok(installer.includes('!define WEBGPT_BRIDGE_HOST_RELATIVE "resources\\app.asar.unpacked\\agent-runtime\\native\\windows-host\\bin\\release\\lpc-windows-host.exe"'));
+  assert.match(installer, /StrCpy\s+\$9\s+"\$PROGRAMFILES(?:64)?\\\$\{WEBGPT_BRIDGE_PROTECTED_HOST_ROOT\}"/);
+  assert.match(installer, /\$9\\lpc-windows-host\.exe/);
+  assert.doesNotMatch(installer, /ExecWait\s+'"\$INSTDIR\\\$\{WEBGPT_BRIDGE_HOST_RELATIVE\}"/, "host preparation must never execute a helper from a user-selectable install directory");
+  assert.match(installer, /ExecWait\s+'"\$9\\lpc-windows-host\.exe" host-prep --apply'/);
+  const hostPrepTask = fs.readFileSync(path.join(__dirname, "..", "build", "windows-host-prep-task.xml"), "utf8");
+  assert.match(hostPrepTask, /%ProgramFiles%\\WebGPT Bridge Host\\lpc-windows-host\.exe/);
+  assert.doesNotMatch(hostPrepTask, /WebGPT Bridge\\resources|%LOCALAPPDATA%|%APPDATA%/i);
   assert.doesNotMatch(installer, /\$TEMP|\$APPDATA|\$LOCALAPPDATA/);
 
   const createTask = installer.indexOf('/Create /TN "${WEBGPT_BRIDGE_HOST_PREP_TASK}"');

@@ -7,7 +7,7 @@ using System.Text.Json;
 
 namespace LocalProjectCoding.WindowsSandbox;
 
-internal static class Program
+public static class SandboxProgram
 {
     private const uint ExtendedStartupInfoPresent = 0x00080000;
     private const uint CreateSuspended = 0x00000004;
@@ -43,7 +43,7 @@ internal static class Program
     private const string ProductNullDeviceCapabilityName = "com.localagenthost.desktop.null-device";
     private const string InternetClientCapabilitySid = "S-1-15-3-1";
 
-    public static int Main(string[] args)
+    public static int Run(string[] args)
     {
         try
         {
