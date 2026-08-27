@@ -20,10 +20,17 @@ test("relative cwd escape is rejected", () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("symlink cwd escape is rejected", () => {
+test("symlink cwd escape is rejected", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-workspace-"));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-outside-"));
-  fs.symlinkSync(outside, path.join(root, "escape"), "dir");
+  try {
+    fs.symlinkSync(outside, path.join(root, "escape"), "dir");
+  } catch (error) {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+    t.skip(`directory symlinks are unavailable: ${error.message}`);
+    return;
+  }
   assert.throws(() => resolveWorkspaceCwd(root, "escape"), /symlink outside/);
   fs.rmSync(root, { recursive: true, force: true });
   fs.rmSync(outside, { recursive: true, force: true });
