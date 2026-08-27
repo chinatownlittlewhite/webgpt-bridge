@@ -48,7 +48,10 @@ function createBuilderConfig(env = process.env) {
     win: {
       target: ["nsis"],
       verifyUpdateCodeSignature: true,
-      extraResources: [{ from: "build/windows-host-prep-task.xml", to: "windows-host-prep-task.xml" }],
+      extraResources: [
+        { from: "build/windows-host-prep-task.xml", to: "windows-host-prep-task.xml" },
+        { from: "build/node-runtime", to: "node-runtime" },
+      ],
     },
     nsis: {
       oneClick: false,
