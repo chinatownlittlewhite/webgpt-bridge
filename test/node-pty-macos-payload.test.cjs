@@ -10,7 +10,7 @@ const {
 
 function makeFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "webgpt-node-pty-"));
-  const base = path.join(
+  const packageRoot = path.join(
     root,
     "Contents",
     "Resources",
@@ -18,8 +18,8 @@ function makeFixture() {
     "agent-runtime",
     "node_modules",
     "node-pty",
-    "prebuilds",
   );
+  const base = path.join(packageRoot, "prebuilds");
   for (const arch of ["darwin-arm64", "darwin-x64"]) {
     const dir = path.join(base, arch);
     fs.mkdirSync(dir, { recursive: true });
@@ -27,6 +27,20 @@ function makeFixture() {
     fs.writeFileSync(path.join(dir, "pty.node"), `pty-${arch}`);
     fs.chmodSync(path.join(dir, "spawn-helper"), 0o644);
   }
+  fs.mkdirSync(path.join(packageRoot, "lib"), { recursive: true });
+  fs.writeFileSync(
+    path.join(packageRoot, "lib", "unixTerminal.js"),
+    [
+      "const fs = require('fs');",
+      "const path = require('path');",
+      "let helperPath = native.dir + '/spawn-helper';",
+      "helperPath = path.resolve(__dirname, helperPath);",
+      "helperPath = helperPath.replace('app.asar', 'app.asar.unpacked');",
+      "helperPath = helperPath.replace('node_modules.asar', 'node_modules.asar.unpacked');",
+      "const DEFAULT_FILE = 'sh';",
+      "",
+    ].join("\n"),
+  );
   return root;
 }
 
