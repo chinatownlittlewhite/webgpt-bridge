@@ -28,7 +28,7 @@ test("builder config fixes GitHub update source and platform targets", () => {
     "agent-runtime/package.json",
     "agent-runtime/native/windows-host/bin/release/**/*",
   ], "the production Agent runtime must remain on the real filesystem without unpacking development sources");
-  assert.equal(config.mac.x64ArchFiles, "**/node-pty/prebuilds/darwin-*/{pty.node,spawn-helper}");
+  assert.equal(config.mac.x64ArchFiles, "**/{node-pty/prebuilds/darwin-*/pty.node,node-pty/prebuilds/darwin-*/spawn-helper,node-pty-helper/darwin-*/spawn-helper}");
 });
 
 test("formal builder config scopes credentials to one platform and fails closed", () => {
