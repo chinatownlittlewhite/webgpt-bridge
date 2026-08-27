@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isNestedMacOSManagedRunner } from "../scripts/run-tests.mjs";
 import { createCommandRunner } from "../src/runner.js";
 import { createProcessManager } from "../src/process-manager.js";
 import { createDependencySyncTool, createProcessTools } from "../src/tool.js";
@@ -36,29 +37,37 @@ test("MCP v2 request cancellation is converted into trusted tool context", () =>
   assert.equal(Object.hasOwn(trusted, "mcpReq"), false);
 });
 
-test("aborting a synchronous command returns canceled instead of waiting for command timeout", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-v044-abort-"));
-  try {
-    const controller = new AbortController();
-    const run = createCommandRunner({
-      workspace: root,
-      timeoutMs: 250,
-      sandboxAdapter: verifiedSandbox("abort-sandbox"),
-    });
-    const pending = run({
-      argv: ["node", "-e", "setTimeout(() => {}, 5000)"],
-      requestApproval: () => true,
-      signal: controller.signal,
-    });
-    setTimeout(() => controller.abort(), 20);
-    const result = await pending;
-    assert.equal(result.status, "canceled");
-    assert.notEqual(result.status, "timed_out");
-    assert.ok(result.durationMs < 250, `cancel should complete before timeout, got ${result.durationMs}ms`);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
+test(
+  "aborting a synchronous command returns canceled instead of waiting for command timeout",
+  {
+    skip: isNestedMacOSManagedRunner()
+      ? "top-level macOS acceptance covers process cancellation; nested Seatbelt verification cannot signal descendants"
+      : false,
+  },
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-v044-abort-"));
+    try {
+      const controller = new AbortController();
+      const run = createCommandRunner({
+        workspace: root,
+        timeoutMs: 250,
+        sandboxAdapter: verifiedSandbox("abort-sandbox"),
+      });
+      const pending = run({
+        argv: ["node", "-e", "setTimeout(() => {}, 5000)"],
+        requestApproval: () => true,
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 20);
+      const result = await pending;
+      assert.equal(result.status, "canceled");
+      assert.notEqual(result.status, "timed_out");
+      assert.ok(result.durationMs < 250, `cancel should complete before timeout, got ${result.durationMs}ms`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("dependency_sync delegates to the shared process manager and returns a managed running operation", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-v044-dependency-"));
