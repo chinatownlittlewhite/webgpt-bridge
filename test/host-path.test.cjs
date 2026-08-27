@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildTrustedCommandPath } = require("../src/host-path.cjs");
+const { buildTrustedCommandPath, selectSupportedNode } = require("../src/host-path.cjs");
 
 test("macOS Agent PATH includes Homebrew and the selected Node directory", () => {
   const knownDirectories = new Set([
@@ -33,4 +33,18 @@ test("macOS Agent PATH includes Homebrew and the selected Node directory", () =>
     "/sbin",
     "/custom/bin",
   ]);
+});
+
+test("Node selection skips candidates older than Node 20", () => {
+  assert.equal(typeof selectSupportedNode, "function");
+  const versions = new Map([
+    ["C:\\Program Files\\nodejs\\node.exe", "v18.16.0"],
+    ["C:\\tools\\node22\\node.exe", "v22.23.2"],
+  ]);
+  assert.equal(
+    selectSupportedNode([...versions.keys()], (candidate) => versions.get(candidate)),
+    "C:\\tools\\node22\\node.exe",
+  );
+  assert.equal(selectSupportedNode(["node20"], () => "v20.0.0"), "node20");
+  assert.equal(selectSupportedNode(["broken"], () => "not-a-version"), "");
 });
