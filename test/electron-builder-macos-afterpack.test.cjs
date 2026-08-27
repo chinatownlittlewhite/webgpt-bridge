@@ -27,6 +27,21 @@ function makePackFixture({ includePayload = true } = {}) {
       fs.writeFileSync(path.join(dir, "pty.node"), `pty-${arch}`);
       fs.chmodSync(path.join(dir, "spawn-helper"), 0o644);
     }
+    const packageRoot = path.dirname(base);
+    fs.mkdirSync(path.join(packageRoot, "lib"), { recursive: true });
+    fs.writeFileSync(
+      path.join(packageRoot, "lib", "unixTerminal.js"),
+      [
+        "const fs = require('fs');",
+        "const path = require('path');",
+        "let helperPath = native.dir + '/spawn-helper';",
+        "helperPath = path.resolve(__dirname, helperPath);",
+        "helperPath = helperPath.replace('app.asar', 'app.asar.unpacked');",
+        "helperPath = helperPath.replace('node_modules.asar', 'node_modules.asar.unpacked');",
+        "const DEFAULT_FILE = 'sh';",
+        "",
+      ].join("\n"),
+    );
   }
   return { appOutDir, appRoot };
 }
