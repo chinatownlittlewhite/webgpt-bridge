@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const path = require("node:path");
 const { createRuntimeSupervisor } = require("../src/runtime-supervisor.cjs");
 
 function deferred() {
@@ -208,4 +210,23 @@ test("subscribe snapshots include monotonic transition id and phase timings", as
   assert.equal(typeof status.phaseTimings.agent_starting, "number");
   assert.equal(typeof status.phaseTimings.tunnel_starting, "number");
   assert.equal(Object.isFrozen(status), true);
+});
+
+test("desktop host delegates start stop status and tray lifecycle authority to RuntimeSupervisor", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
+  assert.match(source, /createRuntimeSupervisor/);
+  assert.match(source, /runtimeSupervisor\s*=\s*createRuntimeSupervisor/);
+  assert.doesNotMatch(source, /async function startAll\s*\(/);
+  assert.doesNotMatch(source, /async function stopAll\s*\(/);
+
+  const startHandler = source.match(/ipcMain\.handle\("host:start",([\s\S]*?)\);/)?.[1] || "";
+  const stopHandler = source.match(/ipcMain\.handle\("host:stop",([\s\S]*?)\);/)?.[1] || "";
+  const statusHandler = source.match(/ipcMain\.handle\("host:status",([\s\S]*?)\);/)?.[1] || "";
+  assert.match(startHandler, /runtimeSupervisor\.start/);
+  assert.match(stopHandler, /runtimeSupervisor\.stop/);
+  assert.match(statusHandler, /runtimeSupervisor|getStatus/);
+
+  const trayBlock = source.match(/function updateTray\(\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(trayBlock, /runtimeSupervisor\.start/);
+  assert.match(trayBlock, /runtimeSupervisor\.stop/);
 });
