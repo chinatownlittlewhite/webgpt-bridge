@@ -16,6 +16,7 @@ const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { buildTrustedCommandPath, preferredNodeCandidates, selectSupportedNode } = require("./host-path.cjs");
 const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { createRuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { createUpdateService } = require("./update-service.cjs");
 const { trayIconDataUrl } = require("./tray-icon.cjs");
 const { autoUpdater } = require("electron-updater");
@@ -40,9 +41,11 @@ let localFileBroker;
 let localTerminalBroker;
 let localApprovalMode = "development";
 const approvalSession = createApprovalSession();
+const initializedTunnelPreflights = new WeakSet();
 let logLines = [];
 let isQuitting = false;
 let updateService;
+let runtimeSupervisor;
 
 function configPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -234,7 +237,6 @@ function spawnLogged(command, args, options, label) {
   child.on("error", (error) => appendLog(label, `启动失败：${error.message}`));
   child.on("exit", (code, signal) => {
     appendLog(label, `进程已退出（code=${code ?? "null"}, signal=${signal ?? "none"}）`);
-    emit("status", getStatus());
   });
   return child;
 }
@@ -269,10 +271,20 @@ async function waitForHealth() {
 }
 
 function getStatus() {
+  const status = runtimeSupervisor?.getStatus() || {
+    state: "stopped",
+    connected: false,
+    server: false,
+    tunnel: false,
+    localBroker: false,
+    agentHealth: "unknown",
+    tunnelReadiness: "unknown",
+    transitionId: 0,
+    lastExitReason: null,
+    phaseTimings: Object.freeze({}),
+  };
   return {
-    server: processIsLive(serverProcess),
-    tunnel: processIsLive(tunnelProcess),
-    localBroker: Boolean(localBrokerServer),
+    ...status,
     healthUrl: `http://${MCP_HOST}:${MCP_PORT}/healthz`,
     tunnelAdminUrl: "http://127.0.0.1:8080/ui",
   };
@@ -430,6 +442,7 @@ async function startLocalBroker(settings, runtime, { githubCliPath = "" } = {}) 
   });
   if (process.platform !== "win32") await fsp.chmod(localBrokerSocket, 0o600);
   appendLog("local-broker", "已启动受控本机文件与终端代理。");
+  return localBrokerServer;
 }
 
 function trayIcon() {
@@ -453,7 +466,7 @@ function showWindow() {
 function updateTray() {
   if (!trayRef) return;
   const status = getStatus();
-  const connected = status.tunnel;
+  const connected = status.connected;
   const update = updateService?.getState();
   const updateItem = update?.status === "downloaded"
     ? { label: `更新已下载 · v${update.availableVersion}`, enabled: false }
@@ -469,9 +482,9 @@ function updateTray() {
     {
       label: "启动连接",
       enabled: !connected,
-      click: () => startAll().catch((error) => appendLog("host", `启动失败：${error.message}`)),
+      click: () => runtimeSupervisor.start().catch((error) => appendLog("host", `启动失败：${error.message}`)),
     },
-    { label: "停止服务", enabled: status.server || status.tunnel, click: () => { void stopAll(); } },
+    { label: "停止服务", enabled: status.server || status.tunnel, click: () => { void runtimeSupervisor.stop("tray"); } },
     { type: "separator" },
     {
       label: "退出 WebGPT Bridge",
@@ -526,22 +539,11 @@ async function stopChild(child, name) {
   }
 }
 
-async function stopAll() {
-  await stopChild(tunnelProcess, "隧道客户端");
-  await stopChild(serverProcess, "Agent 服务");
-  await stopLocalBroker();
-  tunnelProcess = undefined;
-  serverProcess = undefined;
-  emit("status", getStatus());
-}
-
-async function startAll() {
-  if (processIsLive(tunnelProcess)) return getStatus();
+async function prepareRuntime() {
   const settings = await loadSettings();
   const { node, runtime, tunnelClient } = validateSettings(settings);
   const runtimeKey = await readRuntimeKey();
   if (!runtimeKey) throw new Error("请先保存此电脑专用的 OpenAI Tunnel 运行时密钥。");
-  await stopAll();
   logLines = [];
   emit("logs", logLines);
   const appToolsBin = path.join(app.getPath("userData"), "tools", "bin");
@@ -552,8 +554,15 @@ async function startAll() {
       ? `GitHub CLI：${githubCliPath}`
       : "未检测到 GitHub CLI；GitHub 工具会返回可修复诊断，其他本地工具不受影响。",
   );
-  await startLocalBroker(settings, runtime, { githubCliPath });
+  return { settings, node, runtime, tunnelClient, runtimeKey, appToolsBin, githubCliPath };
+}
 
+async function startRuntimeBroker(preflight) {
+  return startLocalBroker(preflight.settings, preflight.runtime, { githubCliPath: preflight.githubCliPath });
+}
+
+async function startRuntimeAgent(preflight) {
+  const { settings, node, runtime, appToolsBin, githubCliPath } = preflight;
   const baseEnv = {
     ...process.env,
     PATH: buildTrustedCommandPath({
@@ -573,24 +582,65 @@ async function startAll() {
     LPC_DESIGN_ISSUE_JOURNAL: settings.designIssueJournal === true ? "true" : "false",
   };
   serverProcess = spawnLogged(node, [path.join(runtime.runtimePath, "dist", "server.js")], { env: baseEnv, cwd: runtime.runtimePath }, "agent");
-  await waitForHealth();
+  return serverProcess;
+}
 
+async function waitRuntimeAgentReady() {
+  await waitForHealth();
+  return true;
+}
+
+async function startRuntimeTunnel(preflight) {
+  const { settings, tunnelClient, runtimeKey } = preflight;
   const tunnelEnv = {
     ...process.env,
     CONTROL_PLANE_API_KEY: runtimeKey,
     ...(settings.httpsProxy ? { HTTPS_PROXY: settings.httpsProxy, HTTP_PROXY: settings.httpsProxy } : {}),
   };
-  const init = spawnLogged(
-    tunnelClient,
-    ["init", "--force", "--profile", settings.profile, "--tunnel-id", settings.tunnelId, "--mcp-server-url", `http://${MCP_HOST}:${MCP_PORT}/mcp`],
-    { env: tunnelEnv },
-    "tunnel-init",
-  );
-  await onceExit(init);
+  if (!initializedTunnelPreflights.has(preflight)) {
+    const init = spawnLogged(
+      tunnelClient,
+      ["init", "--force", "--profile", settings.profile, "--tunnel-id", settings.tunnelId, "--mcp-server-url", `http://${MCP_HOST}:${MCP_PORT}/mcp`],
+      { env: tunnelEnv },
+      "tunnel-init",
+    );
+    await onceExit(init);
+    initializedTunnelPreflights.add(preflight);
+  }
   tunnelProcess = spawnLogged(tunnelClient, ["run", "--profile", settings.profile], { env: tunnelEnv }, "tunnel");
-  emit("status", getStatus());
-  return getStatus();
+  return tunnelProcess;
 }
+
+async function waitRuntimeTunnelReady(tunnel) {
+  return processIsLive(tunnel);
+}
+
+async function stopRuntimeResource(resource, { kind }) {
+  if (kind === "tunnel") {
+    await stopChild(resource, "隧道客户端");
+    if (tunnelProcess === resource) tunnelProcess = undefined;
+    return;
+  }
+  if (kind === "agent") {
+    await stopChild(resource, "Agent 服务");
+    if (serverProcess === resource) serverProcess = undefined;
+    return;
+  }
+  if (kind === "broker") {
+    await stopLocalBroker();
+  }
+}
+
+runtimeSupervisor = createRuntimeSupervisor({
+  prepare: prepareRuntime,
+  startBroker: startRuntimeBroker,
+  startAgent: startRuntimeAgent,
+  waitAgentReady: waitRuntimeAgentReady,
+  startTunnel: startRuntimeTunnel,
+  waitTunnelReady: waitRuntimeTunnelReady,
+  stopResource: stopRuntimeResource,
+});
+runtimeSupervisor.subscribe(() => emit("status", getStatus()));
 
 function createWindow() {
   windowRef = new BrowserWindow({
@@ -623,7 +673,7 @@ app.whenReady().then(() => {
     updater: autoUpdater,
     currentVersion: app.getVersion(),
     isPackaged: app.isPackaged,
-    stopRuntime: stopAll,
+    stopRuntime: () => runtimeSupervisor.stop("update-install"),
     setQuitting: (value) => { isQuitting = Boolean(value); },
     emitState: (state) => {
       windowRef?.webContents?.send("update:state", state);
@@ -645,9 +695,9 @@ app.whenReady().then(() => {
   ipcMain.handle("settings:clear-key", async () => { await fsp.rm(secretPath(), { force: true }); return { hasRuntimeKey: false }; });
   ipcMain.handle("dialog:directory", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openDirectory"] })).filePaths[0] || "");
   ipcMain.handle("dialog:file", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openFile"] })).filePaths[0] || "");
-  ipcMain.handle("host:start", startAll);
-  ipcMain.handle("host:stop", stopAll);
-  ipcMain.handle("host:status", getStatus);
+  ipcMain.handle("host:start", () => runtimeSupervisor.start());
+  ipcMain.handle("host:stop", () => runtimeSupervisor.stop("ipc"));
+  ipcMain.handle("host:status", () => getStatus());
   ipcMain.handle("host:logs", () => logLines);
   ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
   ipcMain.handle("update:get-state", () => updateService.getState());
@@ -671,5 +721,5 @@ app.whenReady().then(() => {
 app.on("before-quit", () => {
   isQuitting = true;
   updateService?.dispose();
-  void stopAll();
+  void runtimeSupervisor.stop("before-quit");
 });
