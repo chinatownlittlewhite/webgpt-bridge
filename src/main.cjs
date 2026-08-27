@@ -14,7 +14,7 @@ const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, nor
 const { createLocalFileBroker } = require("./local-file-broker.cjs");
 const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
-const { buildTrustedCommandPath, selectSupportedNode } = require("./host-path.cjs");
+const { buildTrustedCommandPath, preferredNodeCandidates, selectSupportedNode } = require("./host-path.cjs");
 const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
 const { createUpdateService } = require("./update-service.cjs");
 const { autoUpdater } = require("electron-updater");
@@ -62,6 +62,12 @@ function defaultBundledTunnelClientPath() {
     resourcesPath: app.isPackaged ? process.resourcesPath : path.join(__dirname, "..", "build"),
     platform: process.platform,
   });
+}
+
+function defaultBundledNodePath() {
+  if (process.platform !== "win32") return "";
+  const resourcesRoot = app.isPackaged ? process.resourcesPath : path.join(__dirname, "..", "build");
+  return path.join(resourcesRoot, "node-runtime", "node.exe");
 }
 
 function defaultSettings() {
@@ -181,15 +187,14 @@ function nvmNodeCandidates() {
 }
 
 function preferredNode(settings) {
-  const candidates = [
-    settings.nodePath,
-    process.env.LPC_NODE_PATH,
-    process.platform === "darwin" ? "/opt/homebrew/bin/node" : "",
-    process.platform === "darwin" ? "/usr/local/bin/node" : "",
-    process.platform === "win32" ? path.join(process.env.ProgramFiles || "C:\\Program Files", "nodejs", "node.exe") : "",
-    ...nvmNodeCandidates(),
-    "node",
-  ];
+  const candidates = preferredNodeCandidates({
+    settingsNodePath: settings.nodePath,
+    lpcNodePath: process.env.LPC_NODE_PATH,
+    bundledNodePath: defaultBundledNodePath(),
+    platform: process.platform,
+    env: process.env,
+    nvmCandidates: nvmNodeCandidates(),
+  });
   return selectSupportedNode(candidates, nodeVersion);
 }
 
