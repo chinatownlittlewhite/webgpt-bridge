@@ -5,6 +5,15 @@ function inheritedPath(env, delimiter) {
   return String(env.PATH ?? env.Path ?? env.path ?? "").split(delimiter).filter(Boolean);
 }
 
+function nodeMajor(version) {
+  const match = /^v?(\d+)\./.exec(String(version || "").trim());
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+function selectSupportedNode(candidates, versionOf) {
+  return candidates.find((candidate) => candidate && nodeMajor(versionOf(candidate)) >= 20) || "";
+}
+
 function buildTrustedCommandPath({
   nodePath = "",
   additionalPaths = [],
@@ -23,4 +32,4 @@ function buildTrustedCommandPath({
   return [...new Set(candidates.filter((candidate) => candidate && isDirectory(candidate)))].join(delimiter);
 }
 
-module.exports = { buildTrustedCommandPath };
+module.exports = { buildTrustedCommandPath, selectSupportedNode };
