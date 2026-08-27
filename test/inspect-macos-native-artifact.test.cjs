@@ -7,27 +7,36 @@ const { verifyMacNativeArtifact } = require("../scripts/inspect-macos-native-art
 
 function makeFixture(mode = 0o755) {
   const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "webgpt-inspector-"));
-  const base = path.join(
-    appRoot,
-    "Contents",
-    "Resources",
+  const resources = path.join(appRoot, "Contents", "Resources");
+  const packageRoot = path.join(
+    resources,
     "app.asar.unpacked",
     "agent-runtime",
     "node_modules",
     "node-pty",
-    "prebuilds",
   );
+  const base = path.join(packageRoot, "prebuilds");
   for (const arch of ["darwin-arm64", "darwin-x64"]) {
     const dir = path.join(base, arch);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "spawn-helper"), `helper-${arch}`);
     fs.writeFileSync(path.join(dir, "pty.node"), `pty-${arch}`);
     fs.chmodSync(path.join(dir, "spawn-helper"), mode);
+
+    const shortDir = path.join(resources, "node-pty-helper", arch);
+    fs.mkdirSync(shortDir, { recursive: true });
+    fs.writeFileSync(path.join(shortDir, "spawn-helper"), `helper-${arch}`);
+    fs.chmodSync(path.join(shortDir, "spawn-helper"), 0o755);
   }
+  fs.mkdirSync(path.join(packageRoot, "lib"), { recursive: true });
+  fs.writeFileSync(
+    path.join(packageRoot, "lib", "unixTerminal.js"),
+    "/* webgpt-bridge:darwin-short-spawn-helper */\nconst shortHelper = '../../../../../node-pty-helper/';\n",
+  );
   return appRoot;
 }
 
-test("final artifact inspector accepts executable helpers for both Darwin architectures", (t) => {
+test("final artifact inspector accepts original and short executable helpers for both Darwin architectures", (t) => {
   if (process.platform === "win32") {
     return t.skip("POSIX execute-bit semantics are not portable on Windows CI");
   }
@@ -35,13 +44,14 @@ test("final artifact inspector accepts executable helpers for both Darwin archit
   try {
     const result = verifyMacNativeArtifact(root);
     assert.deepEqual(result.helpers.map((item) => item.mode), [0o755, 0o755]);
+    assert.deepEqual(result.shortHelpers.map((item) => item.mode), [0o755, 0o755]);
     assert.equal(result.nativeModules.length, 2);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("final artifact inspector rejects non-executable helper without modifying it", (t) => {
+test("final artifact inspector rejects non-executable original helper without modifying it", (t) => {
   if (process.platform === "win32") {
     return t.skip("POSIX execute-bit semantics are not portable on Windows CI");
   }
