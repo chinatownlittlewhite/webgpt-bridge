@@ -1,0 +1,58 @@
+name: Bootstrap v0.4.1 version commit
+
+on:
+  push:
+    branches:
+      - release/v0.4.1
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v0.4.1
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Bump desktop version and lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm version 0.4.1 --no-git-tag-version --allow-same-version
+          git mv test/version-contract-v040.test.cjs test/version-contract-v041.test.cjs
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'test/version-contract-v041.test.cjs';
+          const next = fs.readFileSync(path, 'utf8').replaceAll('0.4.0', '0.4.1').replaceAll('v0.4.0', 'v0.4.1');
+          fs.writeFileSync(path, next);
+          NODE
+      - name: Verify synchronized version metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          node --test test/*.test.cjs
+          node - <<'NODE'
+          const pkg = require('./package.json');
+          const lock = require('./package-lock.json');
+          if (pkg.version !== '0.4.1' || lock.version !== '0.4.1' || lock.packages[''].version !== '0.4.1') {
+            throw new Error(`version mismatch: package=${pkg.version} lock=${lock.version} root=${lock.packages[''].version}`);
+          }
+          NODE
+      - name: Commit clean release bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/bootstrap-v041.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json test/version-contract-v041.test.cjs test/version-contract-v040.test.cjs .github/workflows/bootstrap-v041.yml
+          git commit -m 'chore: release v0.4.1'
+          git push origin HEAD:release/v0.4.1
