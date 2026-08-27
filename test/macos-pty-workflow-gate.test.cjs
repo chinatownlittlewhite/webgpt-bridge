@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+// This contract intentionally lands before the workflow wiring so CI records the RED gate.
 function workflow(name) {
   return fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", name), "utf8");
 }
