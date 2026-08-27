@@ -35,3 +35,11 @@ test("packaged Windows host considers its bundled Node runtime", () => {
   assert.match(mainSource, /node-runtime/);
   assert.match(mainSource, /preferredNodeCandidates/);
 });
+
+test("Windows installer smoke proves the installed bundled Node actually runs", () => {
+  const smoke = fs.readFileSync(path.join(__dirname, "..", "scripts", "windows-installer-smoke.ps1"), "utf8");
+  assert.match(smoke, /node-runtime\\node\.exe/);
+  assert.match(smoke, /--version/);
+  assert.match(smoke, /v22\.23\.2/);
+  assert.match(smoke, /bundledNodeBytes/);
+});
