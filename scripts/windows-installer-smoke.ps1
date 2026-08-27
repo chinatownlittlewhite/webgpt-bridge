@@ -87,7 +87,9 @@ try {
     packagedNativeHostBytes = Get-PathSizeBytes $agentNativeRoot
     protectedNativeHostBytes = Get-PathSizeBytes $installedPrep
   }
-  Write-Host ("WINDOWS_INSTALL_SIZE_JSON=" + ($sizeReport | ConvertTo-Json -Compress))
+  $sizeReportJson = $sizeReport | ConvertTo-Json -Compress
+  Write-Host ("WINDOWS_INSTALL_SIZE_JSON=" + $sizeReportJson)
+  Set-Content -LiteralPath (Join-Path $ArtifactsDir "windows-install-size.json") -Value $sizeReportJson -Encoding UTF8
 
   & $SourcePrep host-prep --remove
   if ($LASTEXITCODE -ne 0) { throw "scheduled-task execution precondition remove failed with exit $LASTEXITCODE" }
