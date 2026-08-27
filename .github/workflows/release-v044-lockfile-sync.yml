@@ -1,0 +1,52 @@
+name: Sync v0.4.4 lockfile
+
+on:
+  push:
+    branches:
+      - release/v0.4.4
+    paths:
+      - .github/workflows/release-v044-lockfile-sync.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact triggering commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Update only desktop root lockfile versions
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("package-lock.json")
+          lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+          assert lines[2] == '  "version": "0.4.3",\n', repr(lines[2])
+          assert lines[8] == '      "version": "0.4.3",\n', repr(lines[8])
+          lines[2] = '  "version": "0.4.4",\n'
+          lines[8] = '      "version": "0.4.4",\n'
+          path.write_text("".join(lines), encoding="utf-8")
+          PY
+
+          git diff --check
+          test "$(git diff --numstat -- package-lock.json | awk '{print $1 ":" $2}')" = "2:2"
+          test "$(git diff --name-only | wc -l | tr -d ' ')" = "1"
+          test "$(git diff --name-only)" = "package-lock.json"
+
+      - name: Commit exact lockfile change
+        shell: bash
+        run: |
+          git add package-lock.json
+          git diff --cached --check
+          test "$(git diff --cached --name-only)" = "package-lock.json"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "release: sync 0.4.4 lockfile"
+          git push origin HEAD:release/v0.4.4
