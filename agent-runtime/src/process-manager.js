@@ -9,6 +9,7 @@ import { killProcessTree, wrapWithParentGuard } from "./process-tree.js";
 import {
   buildCommandEnvironment,
   effectiveCommandPolicy,
+  normalizeTrustedRuntimePathEntries,
   validateCommandEnvironment,
 } from "./runner.js";
 import { normalizeSandboxAdapter, sandboxSummary, wrapWithSandbox } from "./sandbox.js";
@@ -20,6 +21,39 @@ function audit(logger, event) {
 
 function relativeCwd(root, cwd) {
   return path.relative(root, cwd) || ".";
+}
+
+function normalizeProcessKind(value) {
+  if (value === undefined) return "process";
+  if (typeof value !== "string" || !/^[a-z0-9_-]{1,64}$/.test(value)) {
+    throw new TypeError("managed process kind must use 1-64 lowercase letters, digits, underscores, or hyphens");
+  }
+  return value;
+}
+
+function normalizeProcessMetadata(value) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new TypeError("managed process metadata must be a plain object");
+  }
+  const serialized = JSON.stringify(value);
+  if (Buffer.byteLength(serialized) > 4_096) throw new RangeError("managed process metadata must not exceed 4096 bytes");
+  return Object.freeze(JSON.parse(serialized));
+}
+
+function normalizeExecutionOptions(options = {}) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("managed process execution options must be a trusted object");
+  }
+  if (options.platformRuntimeStager !== undefined && typeof options.platformRuntimeStager !== "function") {
+    throw new TypeError("platformRuntimeStager must be a trusted host function");
+  }
+  return Object.freeze({
+    sandboxAdapter: options.sandboxAdapter,
+    platformRuntimeStager: options.platformRuntimeStager,
+    kind: normalizeProcessKind(options.kind),
+    metadata: normalizeProcessMetadata(options.metadata),
+  });
 }
 
 export function createProcessManager({
@@ -36,7 +70,7 @@ export function createProcessManager({
   if (!Number.isInteger(maxProcesses) || maxProcesses < 1 || maxProcesses > 256) {
     throw new RangeError("maxProcesses must be between 1 and 256");
   }
-  const sandbox = normalizeSandboxAdapter(sandboxAdapter);
+  const defaultSandbox = normalizeSandboxAdapter(sandboxAdapter);
   const records = new Map();
 
   function prune() {
@@ -66,6 +100,8 @@ export function createProcessManager({
     return {
       processId: record.id,
       status: record.status,
+      kind: record.kind,
+      metadata: record.metadata,
       argv: record.argv,
       cwd: record.cwd,
       pty: record.pty,
@@ -77,11 +113,15 @@ export function createProcessManager({
     };
   }
 
-  async function start({ argv, cwd = ".", env = {}, pty = false, cols = 120, rows = 30 } = {}, trustedContext = {}) {
+  async function start({ argv, cwd = ".", env = {}, pty = false, cols = 120, rows = 30 } = {}, trustedContext = {}, rawExecutionOptions = {}) {
     prune();
     if ([...records.values()].filter((record) => record.status === "running").length >= maxProcesses) {
       return { status: "capacity_reached", maxProcesses };
     }
+    const executionOptions = normalizeExecutionOptions(rawExecutionOptions);
+    const sandbox = executionOptions.sandboxAdapter === undefined
+      ? defaultSandbox
+      : normalizeSandboxAdapter(executionOptions.sandboxAdapter);
     const basePolicy = classifyCommand(argv);
     const policy = effectiveCommandPolicy(basePolicy, sandbox);
     const sandboxInfo = sandboxSummary(sandbox);
@@ -90,15 +130,36 @@ export function createProcessManager({
     const validatedEnv = validateCommandEnvironment(env);
     const { root, cwd: resolvedCwd } = resolveModelWorkspaceCwd(workspace, cwd, { platform });
     const normalizedCwd = relativeCwd(root, resolvedCwd);
-    const childEnv = buildCommandEnvironment(resolvedCwd, validatedEnv, platform);
     let platformCommand;
     try {
       platformCommand = resolvePlatformArgv(argv, { env: process.env, platform });
+      if (executionOptions.platformRuntimeStager) {
+        platformCommand = executionOptions.platformRuntimeStager(platformCommand, {
+          workspace: resolvedCwd,
+          platform,
+        });
+      }
     } catch (error) {
       return { status: "platform_error", error: error instanceof Error ? error.message : String(error), policy, sandbox: sandboxInfo };
     }
     if (!platformCommand.resolved) {
       return { status: "spawn_error", error: `executable '${argv[0]}' was not found on the trusted PATH`, policy, sandbox: sandboxInfo };
+    }
+
+    let trustedRuntimePathEntries;
+    try {
+      trustedRuntimePathEntries = normalizeTrustedRuntimePathEntries(
+        platformCommand.trustedPathEntries ?? [],
+        resolvedCwd,
+        platform,
+      );
+    } catch (error) {
+      return { status: "platform_error", error: error instanceof Error ? error.message : String(error), policy, sandbox: sandboxInfo };
+    }
+    const childEnv = buildCommandEnvironment(resolvedCwd, validatedEnv, platform);
+    if (trustedRuntimePathEntries.length > 0) {
+      const delimiter = platform === "win32" ? ";" : path.delimiter;
+      childEnv.PATH = [...trustedRuntimePathEntries, childEnv.PATH].filter(Boolean).join(delimiter);
     }
 
     let approvalRequest = null;
@@ -139,6 +200,8 @@ export function createProcessManager({
     const id = randomUUID();
     const record = {
       id,
+      kind: executionOptions.kind,
+      metadata: executionOptions.metadata,
       argv: [...argv],
       resolvedArgv: [...platformCommand.argv],
       cwd: normalizedCwd,
@@ -180,7 +243,7 @@ export function createProcessManager({
       } catch (error) {
         records.delete(id);
         const message = error instanceof Error ? error.message : String(error);
-        audit(auditLogger, { type: "managed_process_spawn_error", processId: id, pty: true, error: message });
+        audit(auditLogger, { type: "managed_process_spawn_error", processId: id, kind: record.kind, pty: true, error: message });
         try { designIssueRecorder?.({ module: "process-manager", category: "pty-lifecycle", symptom: message, suggestion: "Verify node-pty native compatibility and keep failed starts terminal.", relatedTest: "test/process-manager.test.js" }); } catch {}
         return { status: "spawn_error", error: message, policy, sandbox: sandboxInfo };
       }
@@ -193,7 +256,7 @@ export function createProcessManager({
         record.exitCode = exitCode;
         record.signal = signal;
         record.updatedAt = Date.now();
-        audit(auditLogger, { type: "managed_process_exit", processId: id, exitCode, signal });
+        audit(auditLogger, { type: "managed_process_exit", processId: id, kind: record.kind, exitCode, signal });
       });
     } else {
       const child = spawn(executionArgv[0], executionArgv.slice(1), {
@@ -216,13 +279,15 @@ export function createProcessManager({
         record.exitCode = code;
         record.signal = signal;
         record.updatedAt = Date.now();
-        audit(auditLogger, { type: "managed_process_exit", processId: id, exitCode: code, signal });
+        audit(auditLogger, { type: "managed_process_exit", processId: id, kind: record.kind, exitCode: code, signal });
       });
     }
 
     audit(auditLogger, {
       type: "managed_process_start",
       processId: id,
+      kind: record.kind,
+      metadata: record.metadata,
       argv,
       resolvedArgv: platformCommand.argv,
       cwd: normalizedCwd,
@@ -275,7 +340,7 @@ export function createProcessManager({
     if (record.terminal) record.terminal.write(data);
     else if (record.stdin?.writable) record.stdin.write(data);
     else return { status: "stdin_unavailable", ...summary(record) };
-    audit(auditLogger, { type: "managed_process_input", processId, bytes: Buffer.byteLength(data) });
+    audit(auditLogger, { type: "managed_process_input", processId, kind: record.kind, bytes: Buffer.byteLength(data) });
     return { status: "written", processId, bytes: Buffer.byteLength(data) };
   }
 
@@ -289,7 +354,7 @@ export function createProcessManager({
     } else if (record.child) {
       killed = await killProcessTree(record.child, { platform, force });
     }
-    audit(auditLogger, { type: "managed_process_kill", processId, force, killed });
+    audit(auditLogger, { type: "managed_process_kill", processId, kind: record.kind, force, killed });
     return { ...summary(record), status: killed ? "kill_requested" : "kill_failed" };
   }
 

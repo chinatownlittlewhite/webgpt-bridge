@@ -163,7 +163,7 @@ function normalizeSandboxAccessPaths(paths = [], label) {
   }))].sort();
 }
 
-function normalizeTrustedRuntimePathEntries(entries = [], root, platform = process.platform) {
+export function normalizeTrustedRuntimePathEntries(entries = [], root, platform = process.platform) {
   if (!Array.isArray(entries) || entries.length > 16) {
     throw new TypeError("trustedPathEntries must be an array with at most 16 trusted-host directories");
   }
@@ -198,6 +198,19 @@ function normalizeTrustedRuntimePathEntries(entries = [], root, platform = proce
   return normalized;
 }
 
+function normalizeAbortSignal(signal) {
+  if (signal === undefined || signal === null) return null;
+  if (
+    typeof signal !== "object" ||
+    typeof signal.aborted !== "boolean" ||
+    typeof signal.addEventListener !== "function" ||
+    typeof signal.removeEventListener !== "function"
+  ) {
+    throw new TypeError("signal must be an AbortSignal-like trusted context value");
+  }
+  return signal;
+}
+
 export function createCommandRunner({
   workspace,
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -225,9 +238,11 @@ export function createCommandRunner({
     cwd = ".",
     env = {},
     requestApproval,
+    signal,
     sandboxExtraReadPaths = [],
     sandboxExtraWritePaths = [],
   } = {}) {
+    const abortSignal = normalizeAbortSignal(signal);
     const basePolicy = classifyCommand(argv);
     const policy = effectiveCommandPolicy(basePolicy, sandbox);
     const sandboxInfo = sandboxSummary(sandbox);
@@ -356,8 +371,30 @@ export function createCommandRunner({
       sandbox: sandboxInfo,
     });
 
+    if (abortSignal?.aborted) {
+      const result = {
+        status: "canceled",
+        exitCode: null,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        durationMs: Date.now() - startedAt,
+        cwd: normalizedCwd,
+        platform: platformCommand.platform,
+        resolvedArgv: [...platformCommand.argv],
+        policy,
+        sandbox: sandboxInfo,
+        approvalRequest,
+        error: null,
+      };
+      audit(auditLogger, { type: "command_result", ...result, argv });
+      return result;
+    }
+
     return await new Promise((resolve) => {
-      let timedOut = false;
+      let terminationReason = null;
       let spawnError = null;
       const child = spawn(executionArgv[0], executionArgv.slice(1), {
         cwd: resolvedCwd,
@@ -374,19 +411,25 @@ export function createCommandRunner({
         spawnError = error;
       });
 
-      const timer = setTimeout(() => {
-        timedOut = true;
+      const terminate = (reason) => {
+        if (terminationReason !== null) return;
+        terminationReason = reason;
         void killProcessTree(child, { platform, force: true, env: childEnv });
-      }, timeoutMs);
+      };
+      const onAbort = () => terminate("canceled");
+      const timer = setTimeout(() => terminate("timed_out"), timeoutMs);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+      if (abortSignal?.aborted) onAbort();
 
-      child.on("close", (code, signal) => {
+      child.on("close", (code, childSignal) => {
         clearTimeout(timer);
+        abortSignal?.removeEventListener("abort", onAbort);
         const out = stdout.result();
         const err = stderr.result();
         const result = {
-          status: spawnError ? "spawn_error" : timedOut ? "timed_out" : "completed",
+          status: spawnError ? "spawn_error" : terminationReason ?? "completed",
           exitCode: code,
-          signal,
+          signal: childSignal,
           stdout: out.text,
           stderr: err.text,
           stdoutTruncated: out.truncated,
