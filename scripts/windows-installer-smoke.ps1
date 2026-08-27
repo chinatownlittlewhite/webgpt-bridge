@@ -12,9 +12,22 @@ if (-not (Test-Path $SourcePrep -PathType Leaf)) { throw "source host-prep helpe
 if (Test-Path $InstallRoot) { throw "pre-existing WebGPT Bridge custom installation would invalidate installer smoke" }
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw "pre-existing SYSTEM host-preparation task would invalidate installer smoke" }
 
+function Get-PathSizeBytes([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { throw "required size target was not found: $Path" }
+  $item = Get-Item -LiteralPath $Path -Force
+  if (-not $item.PSIsContainer) { return [int64]$item.Length }
+  $sum = (Get-ChildItem -LiteralPath $Path -File -Recurse -Force | Measure-Object -Property Length -Sum).Sum
+  if ($null -eq $sum) { return [int64]0 }
+  return [int64]$sum
+}
+
 $protectedHostRoot = Join-Path $env:ProgramFiles "WebGPT Bridge Host"
 $installedPrep = Join-Path $protectedHostRoot "lpc-windows-host.exe"
 $installedTaskXml = Join-Path $InstallRoot "resources\windows-host-prep-task.xml"
+$resourcesRoot = Join-Path $InstallRoot "resources"
+$unpackedRoot = Join-Path $resourcesRoot "app.asar.unpacked"
+$agentRuntimeRoot = Join-Path $unpackedRoot "agent-runtime"
+$agentNativeRoot = Join-Path $agentRuntimeRoot "native\windows-host\bin\release"
 
 try {
   & $SourcePrep host-prep --remove
@@ -64,6 +77,17 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "installed host-prep check failed with exit $LASTEXITCODE" }
   $installed = $installedJson | ConvertFrom-Json
   if ($installed.status -ne "ready") { throw "installed host preparation is not ready: $installedJson" }
+
+  $sizeReport = [ordered]@{
+    installerBytes = Get-PathSizeBytes $installer.FullName
+    installRootBytes = Get-PathSizeBytes $InstallRoot
+    resourcesBytes = Get-PathSizeBytes $resourcesRoot
+    appAsarUnpackedBytes = Get-PathSizeBytes $unpackedRoot
+    agentRuntimeBytes = Get-PathSizeBytes $agentRuntimeRoot
+    packagedNativeHostBytes = Get-PathSizeBytes $agentNativeRoot
+    protectedNativeHostBytes = Get-PathSizeBytes $installedPrep
+  }
+  Write-Host ("WINDOWS_INSTALL_SIZE_JSON=" + ($sizeReport | ConvertTo-Json -Compress))
 
   & $SourcePrep host-prep --remove
   if ($LASTEXITCODE -ne 0) { throw "scheduled-task execution precondition remove failed with exit $LASTEXITCODE" }
