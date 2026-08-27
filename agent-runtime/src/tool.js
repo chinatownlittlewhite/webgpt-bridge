@@ -1,4 +1,4 @@
-import { createDependencySyncRunner } from "./dependency.js";
+import { discoverDependencySync } from "./dependency.js";
 import {
   applyStructuredPatch,
   deleteWorkspaceFile,
@@ -15,7 +15,7 @@ import {
   searchWorkspaceText,
 } from "./inspection.js";
 import { sandboxPreparationDiagnostic, WINDOWS_NULL_DEVICE_CAPABILITY_NAME } from "./native-sandbox.js";
-import { normalizedPlatform } from "./platform.js";
+import { normalizedPlatform, stageWindowsNodeCliRuntime } from "./platform.js";
 import { createProcessManager } from "./process-manager.js";
 import { createProjectTaskRunner } from "./project-task.js";
 import { createCommandRunner } from "./runner.js";
@@ -429,7 +429,7 @@ export function createRunCommandTool({ workspace, defaultTimeoutMs = 120_000, sa
         };
       }
       const run = createCommandRunner({ workspace, timeoutMs: input.timeoutMs ?? defaultTimeoutMs, sandboxAdapter, platform, auditLogger });
-      return await run({ argv: input.argv, cwd: input.cwd ?? ".", env: input.env ?? {}, requestApproval: trustedContext.requestApproval });
+      return await run({ argv: input.argv, cwd: input.cwd ?? ".", env: input.env ?? {}, requestApproval: trustedContext.requestApproval, signal: trustedContext.signal });
     },
   };
 }
@@ -441,7 +441,7 @@ export function createRunProjectTaskTool({ workspace, defaultTimeoutMs = 120_000
     inputSchema: runProjectTaskInputSchema,
     async invoke(input, trustedContext = {}) {
       const run = createProjectTaskRunner({ workspace, timeoutMs: defaultTimeoutMs, sandboxAdapter, platform, auditLogger });
-      return await run({ task: input.task, cwd: input.cwd ?? ".", env: input.env ?? {}, requestApproval: trustedContext.requestApproval });
+      return await run({ task: input.task, cwd: input.cwd ?? ".", env: input.env ?? {}, requestApproval: trustedContext.requestApproval, signal: trustedContext.signal });
     },
   };
 }
@@ -489,7 +489,7 @@ export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAd
   };
 }
 
-export function createDependencySyncTool({ workspace, networkSandboxAdapter, networkSandboxState, sandboxAdapter, platform = process.platform, auditLogger } = {}) {
+export function createDependencySyncTool({ workspace, networkSandboxAdapter, networkSandboxState, processManager, platform = process.platform } = {}) {
   return {
     name: "dependency_sync",
     description: "Synchronize project dependencies using a structured package-manager command. Network access uses the dedicated network sandbox and always remains approval-controlled.",
@@ -503,8 +503,22 @@ export function createDependencySyncTool({ workspace, networkSandboxAdapter, net
           diagnostic,
         };
       }
-      const run = createDependencySyncRunner({ workspace, sandboxAdapter: networkSandboxAdapter, platform, auditLogger });
-      return await run(input, trustedContext);
+      if (!processManager || typeof processManager.start !== "function") {
+        return { status: "platform_error", error: "shared process manager is unavailable for dependency synchronization" };
+      }
+      const allowScripts = input.allowScripts === true;
+      const discovered = discoverDependencySync({ workspace, cwd: input.cwd ?? ".", allowScripts });
+      const result = await processManager.start(
+        { argv: discovered.argv, cwd: input.cwd ?? ".", env: { CI: "1" } },
+        trustedContext,
+        {
+          sandboxAdapter: networkSandboxAdapter,
+          platformRuntimeStager: stageWindowsNodeCliRuntime,
+          kind: "dependency_sync",
+          metadata: { ecosystem: discovered.ecosystem, allowScripts },
+        },
+      );
+      return { ...result, ecosystem: discovered.ecosystem, allowScripts };
     },
   };
 }
@@ -813,7 +827,7 @@ export function createCoreTools(options = {}) {
     createRunCommandTool(options),
     createRunProjectTaskTool(options),
     createGitTool(options),
-    createDependencySyncTool(options),
+    createDependencySyncTool({ ...options, processManager }),
     createGitHubTool(options),
     ...createProcessTools(processManager),
     createReadFileTool(options),

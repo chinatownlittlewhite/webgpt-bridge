@@ -34,6 +34,22 @@ export function isNestedWindowsAppContainer({
   return path.win32.resolve(userProfile).toLowerCase() === expected.toLowerCase();
 }
 
+export function isNestedMacOSManagedRunner({
+  platform = process.platform,
+  home = process.env.HOME,
+  tmpdir = process.env.TMPDIR,
+  cwd = process.cwd(),
+} = {}) {
+  if (
+    platform !== "darwin" ||
+    typeof home !== "string" || home.length === 0 ||
+    typeof tmpdir !== "string" || tmpdir.length === 0
+  ) return false;
+  const resolvedCwd = path.resolve(cwd);
+  return path.resolve(home) === resolvedCwd
+    && path.resolve(tmpdir) === path.join(resolvedCwd, INTERNAL_STATE_DIR, "tmp");
+}
+
 async function runStandardSuite() {
   const child = spawn(process.execPath, ["--test"], {
     cwd: root,

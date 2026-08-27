@@ -49,6 +49,23 @@ function isLoopbackHost(host) {
   return host === "127.0.0.1" || host === "::1" || host === "localhost";
 }
 
+function isAbortSignalLike(value) {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    typeof value.aborted === "boolean" &&
+    typeof value.addEventListener === "function" &&
+    typeof value.removeEventListener === "function"
+  );
+}
+
+export function trustedContextFromMcp(ctx, hostApproval) {
+  const trusted = {};
+  if (typeof hostApproval === "function") trusted.requestApproval = hostApproval;
+  const signal = ctx?.mcpReq?.signal;
+  if (isAbortSignalLike(signal)) trusted.signal = signal;
+  return Object.freeze(trusted);
+}
 
 function boundedAgentText(text, maxBytes = 48_000) {
   const value = String(text ?? "");
@@ -105,6 +122,12 @@ function toolResultText(toolName, result) {
       ? { tool: "process_poll", arguments: { processId: result.processId, cursor: 0 } }
       : null;
     return boundedAgentText(`process_start: status=${result.status} processId=${result.processId ?? "-"} pid=${result.pid ?? "-"}${nextActionText(next)}`);
+  }
+
+  if (toolName === "dependency_sync" && result.status === "running") {
+    return boundedAgentText(
+      `dependency_sync: status=running ecosystem=${result.ecosystem ?? "-"} processId=${result.processId ?? "-"} pid=${result.pid ?? "-"}${nextActionText(result.nextAction)}`,
+    );
   }
 
   if (["run_command", "run_project_task", "git", "dependency_sync", "github"].includes(toolName)) {
@@ -246,9 +269,9 @@ function buildMcpServer({ tools, auditLogger, instructions, hostApproval }) {
         inputSchema: fromJsonSchema(tool.inputSchema),
         annotations: toolAnnotations(tool.name),
       },
-      async (args) => {
+      async (args, ctx) => {
         try {
-          const trustedContext = typeof hostApproval === "function" ? { requestApproval: hostApproval } : {};
+          const trustedContext = trustedContextFromMcp(ctx, hostApproval);
           const result = await tool.invoke(args, trustedContext);
           return callToolResult(tool.name, result);
         } catch (error) {
@@ -433,9 +456,6 @@ export async function startProductionServer(options = {}) {
       });
       return;
     }
-    // This server has no OAuth authorization server. RFC 9728 discovery must
-    // therefore return an empty 404 instead of a JSON error object that an
-    // eager client could mistake for malformed OAuth metadata.
     if (requestPath === "/.well-known/oauth-protected-resource" || requestPath === "/.well-known/oauth-protected-resource/mcp" || requestPath === "/.well-known/oauth-authorization-server") {
       writeEmpty(res, 404);
       return;

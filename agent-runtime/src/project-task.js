@@ -90,9 +90,7 @@ export function discoverProjectTask({ workspace, cwd = ".", task } = {}) {
 
   if (fs.existsSync(path.join(projectRoot, "Cargo.toml"))) {
     if (task === "test") return { argv: ["cargo", "test"], ecosystem: "rust" };
-    if (task === "check" || task === "typecheck") {
-      return { argv: ["cargo", "check"], ecosystem: "rust" };
-    }
+    if (task === "check" || task === "typecheck") return { argv: ["cargo", "check"], ecosystem: "rust" };
   }
 
   if (fs.existsSync(path.join(projectRoot, "go.mod")) && task === "test") {
@@ -113,15 +111,10 @@ export function createProjectTaskRunner({
   platform = process.platform,
   auditLogger,
 } = {}) {
-  return async function runProjectTask({ task, cwd = ".", env = {}, requestApproval } = {}) {
+  return async function runProjectTask({ task, cwd = ".", env = {}, requestApproval, signal } = {}) {
     const discovered = discoverProjectTask({ workspace, cwd, task });
     const run = createCommandRunner({ workspace, timeoutMs, sandboxAdapter, platform, auditLogger });
-    const result = await run({
-      argv: discovered.argv,
-      cwd,
-      env,
-      requestApproval,
-    });
+    const result = await run({ argv: discovered.argv, cwd, env, requestApproval, signal });
     const diagnosed = appendProjectTaskFailureDiagnostic(result);
     return { ...diagnosed, task, ecosystem: discovered.ecosystem };
   };
