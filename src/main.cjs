@@ -17,6 +17,7 @@ const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { buildTrustedCommandPath, preferredNodeCandidates, selectSupportedNode } = require("./host-path.cjs");
 const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
 const { createUpdateService } = require("./update-service.cjs");
+const { trayIconDataUrl } = require("./tray-icon.cjs");
 const { autoUpdater } = require("electron-updater");
 const packageMetadata = require("../package.json");
 
@@ -432,8 +433,8 @@ async function startLocalBroker(settings, runtime, { githubCliPath = "" } = {}) 
 }
 
 function trayIcon() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><g fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"><path d="M2.5 11a3.5 3.5 0 0 1 3.5-3.5h3"/><path d="M15.5 7a3.5 3.5 0 0 1-3.5 3.5H9"/></g><circle cx="2.5" cy="11" r="1.5" fill="#000"/><circle cx="15.5" cy="7" r="1.5" fill="#000"/></svg>`;
-  const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
+  const image = nativeImage.createFromDataURL(trayIconDataUrl(process.platform));
+  if (image.isEmpty()) throw new Error("无法创建系统托盘图标。");
   if (process.platform === "darwin") image.setTemplateImage(true);
   return image;
 }
