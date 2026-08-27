@@ -52,7 +52,7 @@ function createBuilderConfig(env = process.env) {
       category: "public.app-category.developer-tools",
       target: ["dmg", "zip"],
       mergeASARs: false,
-      x64ArchFiles: "**/node-pty/prebuilds/darwin-*/{pty.node,spawn-helper}",
+      x64ArchFiles: "**/{node-pty/prebuilds/darwin-*/pty.node,node-pty/prebuilds/darwin-*/spawn-helper,node-pty-helper/darwin-*/spawn-helper}",
       hardenedRuntime: true,
       gatekeeperAssess: false,
     },
