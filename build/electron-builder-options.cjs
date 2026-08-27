@@ -1,7 +1,17 @@
+const path = require("node:path");
+const { normalizeNodePtyMacPayload } = require("../scripts/node-pty-macos-payload.cjs");
+
 function required(env, name) {
   const value = String(env[name] || "").trim();
   if (!value) throw new Error(`Missing formal release configuration: ${name}`);
   return value;
+}
+
+async function normalizeMacNodePtyAfterPack(context) {
+  if (context.electronPlatformName !== "darwin") return;
+  const productFilename = context.packager.appInfo.productFilename;
+  const appRoot = path.join(context.appOutDir, `${productFilename}.app`);
+  normalizeNodePtyMacPayload(appRoot);
 }
 
 function createBuilderConfig(env = process.env) {
@@ -11,6 +21,7 @@ function createBuilderConfig(env = process.env) {
   }
 
   const config = {
+    afterPack: normalizeMacNodePtyAfterPack,
     appId: "com.localagenthost.desktop",
     productName: "WebGPT Bridge",
     artifactName: "WebGPT-Bridge-${version}-${os}-${arch}.${ext}",
