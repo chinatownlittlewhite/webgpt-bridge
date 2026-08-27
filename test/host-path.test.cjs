@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildTrustedCommandPath, selectSupportedNode } = require("../src/host-path.cjs");
+const { buildTrustedCommandPath, selectSupportedNode, windowsNodeCandidates } = require("../src/host-path.cjs");
 
 test("macOS Agent PATH includes Homebrew and the selected Node directory", () => {
   const knownDirectories = new Set([
@@ -47,4 +47,30 @@ test("Node selection skips candidates older than Node 20", () => {
   );
   assert.equal(selectSupportedNode(["node20"], () => "v20.0.0"), "node20");
   assert.equal(selectSupportedNode(["broken"], () => "not-a-version"), "");
+});
+
+test("Windows Node discovery covers version-manager and per-user installs without inherited PATH", () => {
+  assert.equal(typeof windowsNodeCandidates, "function");
+  const candidates = windowsNodeCandidates({
+    env: {
+      ProgramFiles: "C:\\Program Files",
+      LOCALAPPDATA: "C:\\Users\\ck\\AppData\\Local",
+      USERPROFILE: "C:\\Users\\ck",
+      NVM_SYMLINK: "C:\\nvm4w\\nodejs",
+      NVM_HOME: "C:\\Users\\ck\\AppData\\Roaming\\nvm",
+      VOLTA_HOME: "C:\\Users\\ck\\AppData\\Local\\Volta",
+      SCOOP: "C:\\Users\\ck\\scoop",
+      PATH: "",
+    },
+  });
+
+  assert.deepEqual(candidates, [
+    "C:\\nvm4w\\nodejs\\node.exe",
+    "C:\\Users\\ck\\AppData\\Roaming\\nvm\\node.exe",
+    "C:\\Users\\ck\\AppData\\Local\\Volta\\bin\\node.exe",
+    "C:\\Program Files\\nodejs\\node.exe",
+    "C:\\Users\\ck\\AppData\\Local\\Programs\\nodejs\\node.exe",
+    "C:\\Users\\ck\\scoop\\apps\\nodejs-lts\\current\\node.exe",
+    "C:\\Users\\ck\\scoop\\apps\\nodejs\\current\\node.exe",
+  ]);
 });
