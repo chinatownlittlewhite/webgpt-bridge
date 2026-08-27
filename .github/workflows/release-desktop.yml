@@ -90,7 +90,7 @@ jobs:
           if (($removedJson | ConvertFrom-Json).status -ne "capability_ace_missing") { throw "host-prep remained unexpectedly ready after remove: $removedJson" }
           & $prep host-prep --apply
           if ($LASTEXITCODE -ne 0) { throw "host-prep repair apply failed with exit $LASTEXITCODE" }
-          $repairedJson = & $prep --check --json
+          $repairedJson = & $prep host-prep --check --json
           if ($LASTEXITCODE -ne 0) { throw "host-prep repair check failed with exit $LASTEXITCODE" }
           if (($repairedJson | ConvertFrom-Json).status -ne "ready") { throw "host-prep repair did not return to ready: $repairedJson" }
       - name: Run Windows acceptance as standard user
