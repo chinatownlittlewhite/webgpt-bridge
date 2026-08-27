@@ -1,20 +1,8 @@
 const path = require("node:path");
-const { inspectNodePtyMacPayload } = require("./node-pty-macos-payload.cjs");
-
-function invalid(message) {
-  const error = new Error(message);
-  error.code = "NATIVE_PTY_PAYLOAD_INVALID";
-  return error;
-}
+const { inspectPackagedNodePtyMacPayload } = require("./node-pty-macos-payload.cjs");
 
 function verifyMacNativeArtifact(appRoot) {
-  const inspected = inspectNodePtyMacPayload(appRoot);
-  for (const helper of inspected.helpers) {
-    if ((helper.mode & 0o111) !== 0o111) {
-      throw invalid(`final macOS artifact spawn-helper is not executable: ${helper.path}`);
-    }
-  }
-  return inspected;
+  return inspectPackagedNodePtyMacPayload(appRoot);
 }
 
 if (require.main === module) {
@@ -25,10 +13,13 @@ if (require.main === module) {
   }
   try {
     const result = verifyMacNativeArtifact(path.resolve(appRoot));
-    const modes = result.helpers
+    const originalModes = result.helpers
       .map((item) => `${path.basename(path.dirname(item.path))}:${item.mode.toString(8)}`)
       .join(", ");
-    console.log(`macOS native PTY artifact OK (${modes})`);
+    const shortModes = result.shortHelpers
+      .map((item) => `${path.basename(path.dirname(item.path))}:${item.mode.toString(8)}`)
+      .join(", ");
+    console.log(`macOS native PTY artifact OK (original=${originalModes}; short=${shortModes})`);
   } catch (error) {
     console.error(`${error.code || "NATIVE_PTY_PAYLOAD_INVALID"}: ${error.message}`);
     process.exit(1);
