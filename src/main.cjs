@@ -14,7 +14,7 @@ const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, nor
 const { createLocalFileBroker } = require("./local-file-broker.cjs");
 const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
-const { buildTrustedCommandPath } = require("./host-path.cjs");
+const { buildTrustedCommandPath, selectSupportedNode } = require("./host-path.cjs");
 const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
 const { createUpdateService } = require("./update-service.cjs");
 const { autoUpdater } = require("electron-updater");
@@ -155,11 +155,16 @@ function processIsLive(child) {
   return Boolean(child && child.exitCode === null);
 }
 
-function commandExists(candidate) {
-  if (!candidate) return false;
-  if (candidate.includes(path.sep) || candidate.includes("/")) return fs.existsSync(candidate);
-  const result = spawnSync(candidate, ["--version"], { stdio: "ignore", shell: false, timeout: 4000 });
-  return !result.error;
+function nodeVersion(candidate) {
+  if (!candidate) return "";
+  const result = spawnSync(candidate, ["--version"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    shell: false,
+    timeout: 4000,
+    windowsHide: true,
+  });
+  return result.error || result.status !== 0 ? "" : result.stdout;
 }
 
 function nvmNodeCandidates() {
@@ -185,7 +190,7 @@ function preferredNode(settings) {
     ...nvmNodeCandidates(),
     "node",
   ];
-  return candidates.find(commandExists) || "";
+  return selectSupportedNode(candidates, nodeVersion);
 }
 
 function assertDirectory(value, label) {
