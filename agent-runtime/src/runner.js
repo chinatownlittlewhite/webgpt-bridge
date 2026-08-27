@@ -10,6 +10,7 @@ import { normalizeSandboxAdapter, sandboxSummary, wrapWithSandbox } from "./sand
 import { createWorkspaceTemp, INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+const MAX_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const SAFE_ENV_KEYS = new Set(["CI", "NODE_ENV", "NO_COLOR", "FORCE_COLOR"]);
 
@@ -207,8 +208,8 @@ export function createCommandRunner({
   trustedExecutablePaths = {},
   platformRuntimeStager = stageWindowsNodeCliRuntime,
 } = {}) {
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > DEFAULT_TIMEOUT_MS) {
-    throw new RangeError(`timeoutMs must be between 1 and ${DEFAULT_TIMEOUT_MS}`);
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMEOUT_MS) {
+    throw new RangeError(`timeoutMs must be between 1 and ${MAX_TIMEOUT_MS}`);
   }
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new RangeError("maxOutputBytes must be a positive integer");
