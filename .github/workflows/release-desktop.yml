@@ -196,6 +196,8 @@ jobs:
             exit 1
           fi
           APP="$(find release -type d -name 'WebGPT Bridge.app' -print -quit)"
+          npm run verify:mac-native-artifact -- "$APP"
+          npm run verify:mac-packaged-pty -- "$APP"
           APP_BIN="$APP/Contents/MacOS/WebGPT Bridge"
           TUNNEL_BIN="$APP/Contents/Resources/tunnel-client/tunnel-client"
           CLOUDFLARED_BIN="$APP/Contents/Resources/tunnel-client/cloudflared"
