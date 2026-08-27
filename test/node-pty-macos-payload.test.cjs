@@ -30,7 +30,10 @@ function makeFixture() {
   return root;
 }
 
-test("normalizer makes both packaged Darwin spawn-helper files executable without changing bytes", () => {
+test("normalizer makes both packaged Darwin spawn-helper files executable without changing bytes", (t) => {
+  if (process.platform === "win32") {
+    return t.skip("POSIX execute-bit semantics are not portable on Windows CI");
+  }
   const root = makeFixture();
   try {
     const before = inspectNodePtyMacPayload(root);
@@ -62,7 +65,7 @@ test("payload inspection fails closed when one architecture is missing", () => {
 });
 
 test("payload inspection rejects symlinked helpers", (t) => {
-  if (process.platform === "win32") t.skip("symlink fixture is not portable on Windows CI");
+  if (process.platform === "win32") return t.skip("symlink fixture is not portable on Windows CI");
   const root = makeFixture();
   try {
     const helper = path.join(root, "Contents", "Resources", "app.asar.unpacked", "agent-runtime", "node_modules", "node-pty", "prebuilds", "darwin-arm64", "spawn-helper");
