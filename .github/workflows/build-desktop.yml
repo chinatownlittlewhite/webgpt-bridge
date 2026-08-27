@@ -153,6 +153,7 @@ jobs:
             release/WebGPT-Bridge-*-win-x64.exe
             release/*.blockmap
             release/latest.yml
+            release/windows-install-size.json
       - name: Cleanup Windows host preparation
         if: always()
         shell: pwsh
