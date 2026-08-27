@@ -70,6 +70,13 @@ test("macOS afterPack normalizes both staged Darwin spawn-helper files", async (
   }
 });
 
+test("macOS universal merge rule covers original node-pty payload and staged short helpers", () => {
+  const rule = createBuilderConfig({}).mac.x64ArchFiles;
+  assert.equal(typeof rule, "string");
+  assert.match(rule, /node-pty\/prebuilds\/darwin-/);
+  assert.match(rule, /node-pty-helper\/darwin-/);
+});
+
 test("afterPack ignores non-macOS contexts", async () => {
   const fixture = makePackFixture({ includePayload: false });
   try {
