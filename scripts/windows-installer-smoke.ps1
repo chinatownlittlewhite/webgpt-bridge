@@ -25,6 +25,7 @@ $protectedHostRoot = Join-Path $env:ProgramFiles "WebGPT Bridge Host"
 $installedPrep = Join-Path $protectedHostRoot "lpc-windows-host.exe"
 $installedTaskXml = Join-Path $InstallRoot "resources\windows-host-prep-task.xml"
 $resourcesRoot = Join-Path $InstallRoot "resources"
+$bundledNode = Join-Path $resourcesRoot "node-runtime\node.exe"
 $unpackedRoot = Join-Path $resourcesRoot "app.asar.unpacked"
 $agentRuntimeRoot = Join-Path $unpackedRoot "agent-runtime"
 $agentNativeRoot = Join-Path $agentRuntimeRoot "native\windows-host\bin\release"
@@ -58,6 +59,10 @@ try {
   }
   if (-not (Test-Path $installedPrep -PathType Leaf)) { throw "protected combined Windows host was not found under Program Files" }
   if (-not (Test-Path (Join-Path $InstallRoot "WebGPT Bridge.exe") -PathType Leaf)) { throw "application was not installed at the requested custom directory: $InstallRoot" }
+  if (-not (Test-Path $bundledNode -PathType Leaf)) { throw "bundled Node runtime was not installed: $bundledNode" }
+  $bundledNodeVersion = (& $bundledNode --version | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw "bundled Node runtime failed --version with exit $LASTEXITCODE" }
+  if ($bundledNodeVersion -ne "v22.23.2") { throw "bundled Node runtime has unexpected version: $bundledNodeVersion" }
 
   $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   if (-not $task) { throw "installed SYSTEM host-preparation task was not registered" }
@@ -86,6 +91,7 @@ try {
     agentRuntimeBytes = Get-PathSizeBytes $agentRuntimeRoot
     packagedNativeHostBytes = Get-PathSizeBytes $agentNativeRoot
     protectedNativeHostBytes = Get-PathSizeBytes $installedPrep
+    bundledNodeBytes = Get-PathSizeBytes $bundledNode
   }
   $sizeReportJson = $sizeReport | ConvertTo-Json -Compress
   Write-Host ("WINDOWS_INSTALL_SIZE_JSON=" + $sizeReportJson)
@@ -123,6 +129,9 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "post-repair host-prep check failed with exit $LASTEXITCODE" }
   $repaired = $repairedJson | ConvertFrom-Json
   if ($repaired.status -ne "ready") { throw "post-repair host preparation is not ready: $repairedJson" }
+  if (-not (Test-Path $bundledNode -PathType Leaf)) { throw "bundled Node runtime was not restored by repair" }
+  $repairedNodeVersion = (& $bundledNode --version | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $repairedNodeVersion -ne "v22.23.2") { throw "post-repair bundled Node runtime is not usable: $repairedNodeVersion" }
 
   $uninstaller = Get-ChildItem -Path $InstallRoot -Filter "Uninstall*.exe" -File | Select-Object -First 1
   if (-not $uninstaller) { throw "installed NSIS uninstaller was not found" }
@@ -130,6 +139,7 @@ try {
   if ($uninstall.ExitCode -ne 0) { throw "silent NSIS uninstall failed with exit $($uninstall.ExitCode)" }
   if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw "SYSTEM host-preparation task remained after uninstall" }
   if (Test-Path $installedPrep) { throw "installed host-prep payload remained after uninstall" }
+  if (Test-Path $bundledNode) { throw "bundled Node runtime remained after uninstall" }
 
   $removedJson = & $SourcePrep host-prep --check --json
   if ($LASTEXITCODE -ne 0) { throw "post-uninstall host-prep check failed with exit $LASTEXITCODE" }
