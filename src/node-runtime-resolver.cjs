@@ -1,4 +1,6 @@
 const { spawn } = require("node:child_process");
+const { createHash } = require("node:crypto");
+const { createReadStream } = require("node:fs");
 const { preferredNodeCandidates } = require("./host-path.cjs");
 const { fileIdentityKey, readFileIdentity } = require("./file-identity.cjs");
 
@@ -65,6 +67,39 @@ function probeNodeVersion(candidate, options = {}) {
   });
 }
 
+function hashFileSha256(candidate, options = {}) {
+  const signal = options.signal;
+  const createStream = typeof options.createReadStream === "function" ? options.createReadStream : createReadStream;
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason || runtimeError("NODE_MANIFEST_VERIFY_ABORTED", "Bundled Node verification aborted"));
+      return;
+    }
+
+    const hash = createHash("sha256");
+    const stream = createStream(candidate);
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onAbort = () => {
+      const error = signal.reason || runtimeError("NODE_MANIFEST_VERIFY_ABORTED", "Bundled Node verification aborted");
+      stream.destroy?.(error);
+      finish(error);
+    };
+
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+    stream.on?.("data", (chunk) => hash.update(chunk));
+    stream.once?.("error", (error) => finish(error));
+    stream.once?.("end", () => finish(null, hash.digest("hex")));
+  });
+}
+
 function candidateSource(candidate, { configuredPath, lpcNodePath, bundledPath }) {
   if (configuredPath && candidate === configuredPath) return "settings";
   if (lpcNodePath && candidate === lpcNodePath) return "env";
@@ -82,6 +117,7 @@ function createNodeRuntimeResolver(deps = {}) {
     : preferredNodeCandidates;
   const fileIdentity = typeof deps.fileIdentity === "function" ? deps.fileIdentity : readFileIdentity;
   const probeVersion = typeof deps.probeVersion === "function" ? deps.probeVersion : probeNodeVersion;
+  const hashFile = typeof deps.hashFile === "function" ? deps.hashFile : hashFileSha256;
   const timeoutMs = Number.isFinite(deps.timeoutMs) ? Math.max(1, deps.timeoutMs) : 4000;
   const cache = new Map();
 
@@ -117,8 +153,21 @@ function createNodeRuntimeResolver(deps = {}) {
       if (cached) return cached;
 
       let version = "";
-      if (source === "bundled" && bundledManifest?.version && sameIdentity(frozenIdentity, bundledManifest.identity)) {
+      const manifestMatchesCandidate = Boolean(bundledPath && candidate === bundledPath && bundledManifest?.version);
+      if (manifestMatchesCandidate && sameIdentity(frozenIdentity, bundledManifest.identity)) {
         version = String(bundledManifest.version).trim();
+      } else if (manifestMatchesCandidate && String(bundledManifest.nodeSha256 || "").trim()) {
+        try {
+          const expectedDigest = String(bundledManifest.nodeSha256).trim().toLowerCase();
+          const actualDigest = String(await hashFile(candidate, { signal: input.signal })).trim().toLowerCase();
+          if (!actualDigest || actualDigest !== expectedDigest) {
+            throw runtimeError("NODE_BUNDLED_RUNTIME_DIGEST_MISMATCH", `Bundled Node runtime digest mismatch: ${candidate}`);
+          }
+          version = String(bundledManifest.version).trim();
+        } catch (error) {
+          if (explicit) throw runtimeError("NODE_CONFIGURED_RUNTIME_INVALID", `Configured Node runtime could not be verified: ${candidate}`, error);
+          continue;
+        }
       } else {
         try {
           version = String(await probeVersion(candidate, { signal: input.signal, timeoutMs })).trim();
@@ -150,4 +199,4 @@ function resolveNodeRuntime(input) {
   return defaultResolver.resolve(input);
 }
 
-module.exports = { createNodeRuntimeResolver, probeNodeVersion, resolveNodeRuntime };
+module.exports = { createNodeRuntimeResolver, hashFileSha256, probeNodeVersion, resolveNodeRuntime };
