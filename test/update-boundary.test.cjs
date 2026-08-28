@@ -21,10 +21,20 @@ test("renderer update IPC has no URL repository path or installer arguments", ()
   assert.doesNotMatch(preload, /setFeedURL|feedURL|installerPath|repository|publisherName/);
 });
 
-test("update installation marks quit intent before electron-updater closes windows", () => {
-  assert.match(main, /setQuitting:\s*\(value\)\s*=>\s*\{\s*isQuitting\s*=\s*Boolean\(value\)/s);
-  assert.match(main, /createUpdateService/);
-  assert.match(main, /autoUpdater/);
+test("main process routes quit and update install through AppLifecycleCoordinator", () => {
+  assert.match(main, /createAppLifecycleCoordinator/);
+  assert.match(main, /appLifecycle\s*=\s*createAppLifecycleCoordinator\s*\(\s*\{[\s\S]*?supervisor:\s*runtimeSupervisor[\s\S]*?disposeHostServices:/);
+
+  const updateStart = main.indexOf("updateService = createUpdateService");
+  const updateEnd = main.indexOf("});", updateStart);
+  const updateBlock = main.slice(updateStart, updateEnd);
+  assert.match(updateBlock, /prepareForInstall:\s*\(\)\s*=>\s*appLifecycle\.prepareForUpdateInstall\(\)/);
+  assert.doesNotMatch(updateBlock, /stopRuntime|setQuitting/);
+
+  assert.match(main, /app\.on\("before-quit",\s*\(event\)\s*=>\s*\{?[^}]*appLifecycle\.handleBeforeQuit\(event\)/s);
+  assert.match(main, /appLifecycle\.requestQuit\("tray-quit"\)/);
+  assert.match(main, /appLifecycle\.nativeQuitAllowed\(\)/);
+  assert.doesNotMatch(main, /let isQuitting\b/);
 });
 
 test("main process does not expose host-prep mutation through update IPC", () => {
