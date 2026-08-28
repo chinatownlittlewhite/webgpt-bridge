@@ -278,6 +278,11 @@ test("platform dist scripts enforce desktop tests and native Agent acceptance be
   }
 });
 
+test("root package exposes standard safe test and lint entrypoints for project verification", () => {
+  assert.equal(packageJson.scripts.test, "npm run verify:desktop");
+  assert.equal(packageJson.scripts.lint, "npm --prefix agent-runtime run lint");
+});
+
 test("hidden macOS title bar provides a draggable header while controls remain interactive", () => {
   const css = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "styles.css"), "utf8");
   assert.match(css, /\.app-header[^}]*-webkit-app-region:\s*drag/s);

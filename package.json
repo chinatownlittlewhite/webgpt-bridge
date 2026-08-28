@@ -8,6 +8,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
+    "test": "npm run verify:desktop",
+    "lint": "npm --prefix agent-runtime run lint",
     "build:icon": "node scripts/build-icon.cjs",
     "prepare:tunnel-client:mac": "node scripts/launch-tunnel-client-prepare.cjs darwin-universal",
     "prepare:tunnel-client:win": "node scripts/launch-tunnel-client-prepare.cjs windows-amd64",
