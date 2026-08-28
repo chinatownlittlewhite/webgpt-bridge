@@ -255,6 +255,57 @@ export function createGoalController(options = {}) {
     return failure ?? result;
   }
 
+  async function pause(input = {}) {
+    const sessionId = input?.sessionId;
+    if (typeof sessionId !== "string") return core.pause(input);
+    if (state.failedClosedSessions.has(sessionId)) return alreadyFailed(sessionId);
+    const current = core.status(sessionId);
+    if (current.status !== "active") return core.pause(input);
+
+    beginTrackedOperation(state, sessionId);
+    if (!persistMutationIntent(store, state, sessionId, "goal_pause", input)) {
+      const failure = persistenceFailure(
+        sessionId,
+        finishTrackedOperation(state, store, sessionId),
+        "Goal pause",
+      );
+      return failure ?? persistenceErrorResult({ status }, sessionId, "Goal pause mutation intent could not be durably persisted");
+    }
+
+    const result = await core.pause(input);
+    const tracking = finishTrackedOperation(state, store, sessionId);
+    if (tracking.saveFailed) {
+      const reason = tracking.durableUncertain
+        ? "Goal pause performed process cleanup but its paused state could not be durably persisted; the session failed closed to prevent replaying uncertain cleanup"
+        : "Goal pause state could not be durably persisted; pause was not reported as committed";
+      return failClosedPersistence({ status }, state, sessionId, reason);
+    }
+    state.failedClosedSessions.delete(sessionId);
+    return result;
+  }
+
+  async function resume(sessionId) {
+    if (typeof sessionId !== "string") return core.resume(sessionId);
+    if (state.failedClosedSessions.has(sessionId)) return alreadyFailed(sessionId);
+    const current = core.status(sessionId);
+    if (current.status !== "paused") return core.resume(sessionId);
+
+    beginTrackedOperation(state, sessionId);
+    const result = await core.resume(sessionId);
+    const failure = persistenceFailure(
+      sessionId,
+      finishTrackedOperation(state, store, sessionId),
+      "Goal resume",
+    );
+    if (failure) return failure;
+    state.failedClosedSessions.delete(sessionId);
+    return result;
+  }
+
+  function list(input = {}) {
+    return core.list(input);
+  }
+
   async function cancel(sessionId) {
     if (typeof sessionId !== "string") return core.cancel(sessionId);
     const current = core.status(sessionId);
@@ -283,6 +334,9 @@ export function createGoalController(options = {}) {
     start: core.start,
     step,
     finish,
+    pause,
+    resume,
+    list,
     status,
     cancel,
   });

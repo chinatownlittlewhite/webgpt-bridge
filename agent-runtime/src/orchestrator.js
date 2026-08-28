@@ -28,6 +28,14 @@ function normalizeDecision(decision) {
   if (decision.type === "user_input_required") {
     return { type: "user_input_required", reason: String(decision.reason ?? "user input required") };
   }
+  if (decision.type === "pause") {
+    return {
+      type: "pause",
+      ...(typeof decision.summary === "string" ? { summary: decision.summary } : {}),
+      ...(typeof decision.nextAction === "string" ? { nextAction: decision.nextAction } : {}),
+      ...(typeof decision.reason === "string" ? { reason: decision.reason } : {}),
+    };
+  }
   if (decision.type === "cancel") return { type: "cancel" };
   throw new TypeError(`unsupported orchestrator decision type: ${String(decision.type)}`);
 }
@@ -46,7 +54,9 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
   const goalFinish = byName.get("goal_finish");
   const goalStatus = byName.get("goal_status");
   const goalCancel = byName.get("goal_cancel");
-  if (![goalMode, goalStep, goalFinish, goalStatus, goalCancel].every(Boolean)) {
+  const goalPause = byName.get("goal_pause");
+  const goalResume = byName.get("goal_resume");
+  if (![goalMode, goalStep, goalFinish, goalStatus, goalCancel, goalPause, goalResume].every(Boolean)) {
     throw new Error("external orchestrator requires the explicit Goal Mode tool family");
   }
   const actionTools = [...byName.keys()].filter((name) => !name.startsWith("goal_") && name !== "get_capabilities");
@@ -79,6 +89,10 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
     if (currentSessionId) {
       state = goalStatus.invoke({ sessionId: currentSessionId });
       if (state.status === "not_found") return completeRun(state, 0);
+      if (state.status === "paused") {
+        state = await goalResume.invoke({ sessionId: currentSessionId });
+        if (state.status !== "active" || state.mustContinue !== true) return completeRun(state, 0);
+      }
     } else {
       state = goalMode.invoke({
         goal,
@@ -125,6 +139,14 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
       if (decision.type === "cancel") {
         return completeRun(await goalCancel.invoke({ sessionId: currentSessionId }), turn);
       }
+      if (decision.type === "pause") {
+        return completeRun(await goalPause.invoke({
+          sessionId: currentSessionId,
+          ...(decision.summary ? { summary: decision.summary } : {}),
+          ...(decision.nextAction ? { nextAction: decision.nextAction } : {}),
+          ...(decision.reason ? { reason: decision.reason } : {}),
+        }), turn);
+      }
 
       const trustedContext = {
         ...(typeof requestApproval === "function" ? { requestApproval } : {}),
@@ -144,11 +166,13 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
       }
     }
 
-    return completeRun({
-      status: "orchestrator_budget_exhausted",
-      mustContinue: false,
+    const pauseReason = `external orchestrator model-turn budget (${maxModelTurns}) exhausted`;
+    const paused = await goalPause.invoke({
       sessionId: currentSessionId,
-      reason: `external orchestrator model-turn budget (${maxModelTurns}) exhausted`,
-    }, maxModelTurns);
+      summary: "External orchestrator reached its current model-turn boundary before Goal completion.",
+      nextAction: "Resume this exact Goal session explicitly before continuing work.",
+      reason: pauseReason,
+    });
+    return completeRun(paused, maxModelTurns);
   };
 }

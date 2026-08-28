@@ -14,7 +14,7 @@ const MAX_HISTORY_EVENTS = 80;
 const MAX_EVENT_BYTES = 32_000;
 const MAX_VERIFICATION_DIAGNOSTIC_BYTES = 4_096;
 const TERMINAL = new Set(["completed", "canceled", "budget_exhausted", "stalled", "failed"]);
-const STORED_STATUSES = new Set([...TERMINAL, "active", "blocked_approval"]);
+const STORED_STATUSES = new Set([...TERMINAL, "active", "paused", "blocked_approval"]);
 
 function hash(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -102,12 +102,13 @@ function sessionView(session, includeHistory = false) {
     cwd: session.cwd,
     acceptanceCriteria: session.acceptanceCriteria,
     status: session.status,
-    mustContinue: !TERMINAL.has(session.status) && !session.status.startsWith("blocked_"),
+    mustContinue: session.status === "active",
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     verified: session.verified,
     budget: budget(session),
     lastFeedback: session.lastFeedback,
+    pause: session.pause ?? null,
     ...(includeHistory ? {
         history: session.history.slice(-20),
         historyOmitted: Math.max(0, session.history.length - 20),
@@ -246,6 +247,32 @@ function boundedStoredTimestamp(value, now) {
   return Number.isFinite(value) && value > 0 ? Math.min(value, now) : now;
 }
 
+function optionalPauseText(value, name, maxLength) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.trim().length === 0 || value.trim().length > maxLength) {
+    throw new TypeError(`${name} must be a non-empty string up to ${maxLength} characters when supplied`);
+  }
+  return value.trim();
+}
+
+function normalizePauseInput(input = {}) {
+  return Object.freeze({
+    summary: optionalPauseText(input.summary, "goal_pause summary", 32_768),
+    nextAction: optionalPauseText(input.nextAction, "goal_pause nextAction", 8_192),
+    reason: optionalPauseText(input.reason, "goal_pause reason", 8_192),
+  });
+}
+
+function normalizeStoredPause(value, now) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return Object.freeze({
+    summary: typeof value.summary === "string" ? value.summary.slice(0, 32_768) : null,
+    nextAction: typeof value.nextAction === "string" ? value.nextAction.slice(0, 8_192) : null,
+    reason: typeof value.reason === "string" ? value.reason.slice(0, 8_192) : null,
+    pausedAt: boundedStoredTimestamp(value.pausedAt, now),
+  });
+}
+
 function normalizeStoredHistory(history) {
   if (!Array.isArray(history)) return [];
   return history
@@ -294,6 +321,7 @@ function hydrateStoredSession(raw, workspace) {
       history: normalizeStoredHistory(raw.history),
       lastFeedback:
         typeof raw.lastFeedback === "string" ? raw.lastFeedback.slice(0, 8_192) : null,
+      pause: normalizeStoredPause(raw.pause, now),
       repeatedActionHash:
         typeof raw.repeatedActionHash === "string" && /^[a-f0-9]{64}$/i.test(raw.repeatedActionHash)
           ? raw.repeatedActionHash
@@ -437,6 +465,7 @@ export function createGoalController({
       activeElapsedMs: 0,
       history: [],
       lastFeedback: null,
+      pause: null,
       repeatedActionHash: null,
       repeatedActionCount: 0,
       pendingApprovalHash: null,
@@ -467,6 +496,7 @@ export function createGoalController({
     const session = find(sessionId);
     if (!session) return { status: "not_found", mustContinue: false, sessionId };
     if (TERMINAL.has(session.status)) return { status: "already_terminal", mustContinue: false, session: sessionView(session) };
+    if (session.status === "paused") return { status: "paused", mustContinue: false, session: sessionView(session) };
     const mutationBlock = beginMutation(session);
     if (mutationBlock) return mutationBlock;
     try {
@@ -631,6 +661,7 @@ export function createGoalController({
     const session = find(sessionId);
     if (!session) return { status: "not_found", mustContinue: false, sessionId };
     if (TERMINAL.has(session.status)) return { status: "already_terminal", mustContinue: false, session: sessionView(session) };
+    if (session.status === "paused") return { status: "paused", mustContinue: false, session: sessionView(session) };
     const mutationBlock = beginMutation(session);
     if (mutationBlock) return mutationBlock;
     try {
@@ -807,6 +838,163 @@ export function createGoalController({
     }
   }
 
+  async function reclaimOwnedProcesses(session) {
+    const processList = availableTools.get("process_list");
+    const processKill = availableTools.get("process_kill");
+    if (!processList || !processKill) {
+      return {
+        status: "not_available",
+        runningFound: 0,
+        attempted: 0,
+        killed: 0,
+        failed: 0,
+        failures: [],
+      };
+    }
+
+    const goalTrustedContext = Object.freeze({
+      goalSessionId: session.id,
+      goalCwd: session.cwd,
+    });
+    try {
+      const listed = await processList.invoke({}, goalTrustedContext);
+      const running = (Array.isArray(listed?.processes) ? listed.processes : [])
+        .filter((record) => record && record.status === "running" && typeof record.processId === "string")
+        .slice(0, 256);
+      const failures = [];
+      let killed = 0;
+      for (const record of running) {
+        let result;
+        try {
+          result = await processKill.invoke({ processId: record.processId, force: true }, goalTrustedContext);
+        } catch {
+          result = { status: "tool_error" };
+        }
+        if (result?.status === "kill_requested" || result?.status === "already_terminal") {
+          killed += 1;
+        } else {
+          failures.push({ processId: record.processId, status: result?.status ?? "tool_error" });
+        }
+      }
+      return {
+        status: failures.length > 0 ? "partial" : "completed",
+        runningFound: running.length,
+        attempted: running.length,
+        killed,
+        failed: failures.length,
+        failures,
+      };
+    } catch {
+      return {
+        status: "partial",
+        runningFound: 0,
+        attempted: 0,
+        killed: 0,
+        failed: 1,
+        failures: [{ processId: "process_list", status: "list_failed" }],
+      };
+    }
+  }
+
+  async function pause(input = {}) {
+    const sessionId = input?.sessionId;
+    const session = find(sessionId);
+    if (!session) return { status: "not_found", mustContinue: false, sessionId };
+    if (TERMINAL.has(session.status)) return terminalSessionResult(session);
+    if (session.status === "paused") {
+      return { status: "already_paused", mustContinue: false, session: sessionView(session, true) };
+    }
+    if (session.status !== "active") {
+      return { status: "not_active", mustContinue: false, session: sessionView(session, true) };
+    }
+    const mutationBlock = beginMutation(session);
+    if (mutationBlock) return mutationBlock;
+    try {
+      const recovery = normalizePauseInput(input);
+      const processCleanup = await reclaimOwnedProcesses(session);
+      if (processCleanup.status === "partial") {
+        session.status = "active";
+        session.updatedAt = Date.now();
+        session.lastFeedback = "goal_pause could not safely reclaim every owned running process";
+        addEvent(session, { type: "goal_pause_cleanup_failed", processCleanup });
+        return {
+          status: "continue_required",
+          mustContinue: true,
+          sessionId: session.id,
+          feedback: session.lastFeedback,
+          processCleanup,
+          budget: budget(session),
+        };
+      }
+
+      const pausedAt = Date.now();
+      session.status = "paused";
+      session.updatedAt = pausedAt;
+      session.lastFeedback = null;
+      session.pause = Object.freeze({ ...recovery, pausedAt });
+      addEvent(session, { type: "goal_paused", pause: session.pause, processCleanup });
+      return Object.freeze({ ...sessionView(session, true), processCleanup });
+    } finally {
+      mutatingSessions.delete(session.id);
+      persistSession(session);
+    }
+  }
+
+  async function resume(sessionId) {
+    const session = find(sessionId);
+    if (!session) return { status: "not_found", mustContinue: false, sessionId };
+    if (TERMINAL.has(session.status)) return terminalSessionResult(session);
+    if (session.status !== "paused") {
+      return {
+        status: "not_paused",
+        mustContinue: session.status === "active",
+        session: sessionView(session, true),
+      };
+    }
+    const mutationBlock = beginMutation(session);
+    if (mutationBlock) return mutationBlock;
+    try {
+      session.status = "active";
+      session.updatedAt = Date.now();
+      session.lastFeedback = null;
+      addEvent(session, { type: "goal_resumed", pause: session.pause });
+      return sessionView(session, true);
+    } finally {
+      mutatingSessions.delete(session.id);
+      persistSession(session);
+    }
+  }
+
+  function list({ cwd, limit = 20 } = {}) {
+    pruneExpired();
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      throw new RangeError("goal_list limit must be between 1 and 50");
+    }
+    let scopedCwd = null;
+    if (cwd !== undefined) {
+      if (typeof cwd !== "string" || cwd.length === 0 || cwd.length > 4_096 || cwd.includes("\0")) {
+        throw new TypeError("goal_list cwd must be a non-empty string up to 4096 characters without NUL bytes");
+      }
+      scopedCwd = workspace ? validateGoalCwd(workspace, cwd) : cwd;
+    }
+    const ordered = [...sessions.values()]
+      .filter((session) => session.status === "paused" && (scopedCwd === null || session.cwd === scopedCwd))
+      .sort((a, b) => (b.updatedAt - a.updatedAt) || a.id.localeCompare(b.id));
+    const bounded = ordered.slice(0, limit).map((session) => Object.freeze({
+      sessionId: session.id,
+      status: "paused",
+      cwd: session.cwd,
+      updatedAt: session.updatedAt,
+      goal: session.goal.length <= 512 ? session.goal : `${session.goal.slice(0, 509)}...`,
+    }));
+    return Object.freeze({
+      status: "completed",
+      mustContinue: false,
+      sessions: bounded,
+      hasMore: ordered.length > bounded.length,
+    });
+  }
+
   function status(sessionId) {
     const session = find(sessionId);
     return session ? sessionView(session, true) : { status: "not_found", mustContinue: false, sessionId };
@@ -821,68 +1009,14 @@ export function createGoalController({
     session.updatedAt = Date.now();
     session.lastFeedback = "goal session canceled";
 
-    const processList = availableTools.get("process_list");
-    const processKill = availableTools.get("process_kill");
-    let processCleanup = {
-      status: "not_available",
-      runningFound: 0,
-      attempted: 0,
-      killed: 0,
-      failed: 0,
-      failures: [],
-    };
-
-    if (processList && processKill) {
-      const goalTrustedContext = Object.freeze({
-        goalSessionId: session.id,
-        goalCwd: session.cwd,
-      });
-      try {
-        const listed = await processList.invoke({}, goalTrustedContext);
-        const running = (Array.isArray(listed?.processes) ? listed.processes : [])
-          .filter((record) => record && record.status === "running" && typeof record.processId === "string")
-          .slice(0, 256);
-        const failures = [];
-        let killed = 0;
-        for (const record of running) {
-          let result;
-          try {
-            result = await processKill.invoke({ processId: record.processId, force: true }, goalTrustedContext);
-          } catch {
-            result = { status: "tool_error" };
-          }
-          if (result?.status === "kill_requested" || result?.status === "already_terminal") {
-            killed += 1;
-          } else {
-            failures.push({ processId: record.processId, status: result?.status ?? "tool_error" });
-          }
-        }
-        processCleanup = {
-          status: failures.length > 0 ? "partial" : "completed",
-          runningFound: running.length,
-          attempted: running.length,
-          killed,
-          failed: failures.length,
-          failures,
-        };
-      } catch {
-        processCleanup = {
-          status: "partial",
-          runningFound: 0,
-          attempted: 0,
-          killed: 0,
-          failed: 1,
-          failures: [{ processId: "process_list", status: "list_failed" }],
-        };
-      }
-    }
+    const processCleanup = await reclaimOwnedProcesses(session);
 
     addEvent(session, { type: "goal_canceled", processCleanup });
     persistSession(session);
     return Object.freeze({ ...sessionView(session), processCleanup });
   }
 
-  return Object.freeze({ start, step, finish, status, cancel });
+  return Object.freeze({ start, step, finish, pause, resume, list, status, cancel });
 }
 
 export const goalControllerDefaults = Object.freeze({

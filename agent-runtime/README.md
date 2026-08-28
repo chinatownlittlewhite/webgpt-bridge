@@ -4,7 +4,7 @@ Safety-first local coding-agent runtime designed for ChatGPT/MCP and external ag
 
 ## Release status
 
-Current version: **v0.9.1 Final Acceptance Candidate**.
+Current version: **v0.9.2 Final Acceptance Candidate**.
 
 The machine-verifiable release matrix and sign-off rules are recorded in `FINAL_ACCEPTANCE.md`.
 
@@ -24,7 +24,7 @@ The final-acceptance targets are:
 
 ## Frozen MCP tool surface
 
-The v0.9 MCP server exposes these 23 tools. The final three inspection primitives were added before acceptance freeze so an agent never needs command execution merely to inspect source code:
+The v0.9.2 MCP server exposes these 26 tools. Bounded inspection primitives remain available so an agent never needs command execution merely to inspect source code:
 
 ```text
 run_command
@@ -49,6 +49,9 @@ goal_step
 goal_finish
 goal_status
 goal_cancel
+goal_pause
+goal_resume
+goal_list
 get_capabilities
 ```
 
@@ -280,6 +283,8 @@ Processes started inside a Goal session are owned by that goal. Other goal sessi
 
 `goal_cancel` enumerates only processes visible to the canceled session and force-requests termination for each running owned process. Sibling Goal processes remain invisible and untouched. Cleanup failures do not reactivate the Goal: cancellation stays terminal and returns a bounded `processCleanup` summary with `partial` status when necessary.
 
+`goal_pause` uses the same ownership boundary but is deliberately non-terminal. A pause is reported only after Goal-owned running processes are reclaimed; if cleanup is partial, the Goal stays `active` with `mustContinue=true` instead of pretending that it is safe to end the assistant turn.
+
 Normal MCP server shutdown calls the process manager cleanup path. Native/parent guards provide additional crash cleanup for sandboxed children.
 
 ## Goal Mode
@@ -297,9 +302,12 @@ with:
 ```text
 goal_status
 goal_cancel
+goal_pause
+goal_resume
+goal_list
 ```
 
-A started goal returns an opaque `sessionId` plus `mustContinue: true`.
+A started goal returns an opaque `sessionId` plus `mustContinue: true`. `goal_pause` transitions an active Goal to durable `paused` with `mustContinue: false` and bounded `summary` / `nextAction` / `reason` recovery metadata. `goal_resume` accepts only the exact paused `sessionId`, keeps the original Goal/cwd/acceptance criteria/history/budget usage, and returns to `active` with `mustContinue: true`. `goal_list` returns only a bounded newest-first list of paused Goals in the current Bridge workspace and supports an exact cwd filter; it does not depend on a ChatGPT conversation id.
 
 ### Completion behavior
 
@@ -344,11 +352,11 @@ Production runtime enables file-backed Goal persistence by default under:
 .webgpt-bridge/goals
 ```
 
-Persisted JSON is treated as untrusted input and is revalidated on load. Path scope, budgets, history bounds, timestamps, and status are normalized again. Bounded project instructions are reloaded from the validated Goal cwd on restore rather than trusted from persisted JSON, and `goal_status` hands that context back to external orchestrators.
+Persisted JSON is treated as untrusted input and is revalidated on load. Path scope, budgets, history bounds, timestamps, active/paused/terminal status, and pause recovery metadata are normalized again. Existing version-1 session files without pause metadata remain readable. Bounded project instructions are reloaded from the validated Goal cwd on restore rather than trusted from persisted JSON, and `goal_status` hands that context back to external orchestrators.
 
 Cancellation remains terminal even when an in-flight Goal tool or completion verifier resolves later. Trusted completion-verifier errors fail closed as bounded `continue_required` diagnostics instead of escaping the Goal boundary. `goal_step` and `goal_finish` are single-writer per Goal session: an overlapping mutation returns bounded `operation_in_progress`, while `goal_cancel` remains allowed to preempt the in-flight action.
 
-The external orchestrator preserves Goal startup failures such as capacity exhaustion and writes a bounded terminal `orchestrator_result` audit event without copying model summaries or evidence. Arbitrary Goal tools are not automatically retried because side-effecting operations must remain explicit and approval/policy controlled.
+The external orchestrator preserves Goal startup failures such as capacity exhaustion and writes a bounded `orchestrator_result` audit event without copying model summaries or evidence. At its own model-turn boundary it calls `goal_pause` instead of abandoning an active Goal; a later orchestrator call with that exact paused `sessionId` resumes it before continuing. Arbitrary Goal tools are not automatically retried because side-effecting operations must remain explicit and approval/policy controlled.
 
 The final acceptance harness explicitly starts a Goal, restarts the built MCP server, and verifies that the same session can be recovered and completed.
 
@@ -363,6 +371,10 @@ user asks once
   -> goal_step
   -> goal_finish
   -> continue_required => continue goal_step/goal_finish in the same assistant turn
+  -> if the assistant turn must end before completion: goal_pause => paused / mustContinue=false
+later: user explicitly invokes @macmini again
+  -> goal_resume with the exact paused sessionId
+  -> continue goal_step/goal_finish
   -> completed => emit one final answer
 ```
 
@@ -374,9 +386,11 @@ Critical behavior:
 If mustContinue=true or status=continue_required,
 do not finalize and do not ask the user to type "continue".
 Continue the goal tool loop in the same assistant turn.
+If a real assistant-turn/context/tool boundary prevents more work, call goal_pause first and end only after paused/mustContinue=false.
+On a later turn require an explicit @macmini reconnect, then goal_resume the exact session; never rely on a bare "continue" to recover a paused Goal.
 ```
 
-Once ChatGPT has already ended an assistant turn, an MCP server cannot independently create a new turn. Persistent Goal sessions preserve state, but guaranteed autonomous continuation across completed assistant turns requires an external host/orchestrator.
+Once ChatGPT has already ended an assistant turn, an MCP server cannot independently create a new turn. Persistent paused Goal sessions preserve state safely across that boundary, but the next ChatGPT turn still needs an explicit tool-enabled `@macmini` invocation before the exact Goal can be resumed.
 
 ## External autonomous orchestration
 
@@ -505,7 +519,7 @@ The full acceptance harness is designed to verify the **built** runtime and incl
 - real native sandbox discovery/verification
 - built MCP server startup
 - modern MCP client connection using protocol revision `2026-07-28`
-- exact 23-tool discovery
+- exact 26-tool discovery
 - bounded inspection primitives and concise-vs-structured MCP result shaping
 - automatic bounded project-instruction context
 - `get_capabilities` v0.9 contract

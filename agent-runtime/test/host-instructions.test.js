@@ -9,7 +9,7 @@ test("web host instructions require same-turn continuation for active goals", ()
   assert.match(goalModeHostInstructions, /same assistant turn/i);
   assert.match(goalModeHostInstructions, /DO NOT ask the user to type "continue"/);
   assert.match(goalModeHostInstructions, /goal_finish/);
-  assert.equal(goalModeWebIntegrationNotes.continuationModel, "same-assistant-turn-tool-loop");
+  assert.equal(goalModeWebIntegrationNotes.continuationModel, "same-assistant-turn-tool-loop-with-explicit-pause");
   assert.equal(goalModeWebIntegrationNotes.requiresNewUserMessageForNormalProgress, false);
 });
 

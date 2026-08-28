@@ -34,7 +34,7 @@ function packageAvailable(name, required = true) {
 }
 
 const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
-check("project version", packageJson.version === "0.9.1", packageJson.version, true);
+check("project version", packageJson.version === "0.9.2", packageJson.version, true);
 check("Node >=20", Number(process.versions.node.split(".")[0]) >= 20, process.version, true);
 packageAvailable("@modelcontextprotocol/server", true);
 packageAvailable("@modelcontextprotocol/node", true);

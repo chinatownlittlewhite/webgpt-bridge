@@ -8,13 +8,13 @@ import { fileURLToPath } from "node:url";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { resolvePlatformArgv } from "../src/platform.js";
 
-const VERSION = "0.9.1";
+const VERSION = "0.9.2";
 const EXPECTED_TOOLS = [
   "run_command", "run_project_task", "git", "dependency_sync", "github",
   "process_start", "process_poll", "process_input", "process_kill", "process_list",
   "read_file", "list_dir", "search_text", "search_files",
   "apply_patch", "delete_file", "move_file",
-  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel",
+  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "goal_pause", "goal_resume", "goal_list",
   "get_capabilities",
 ].sort();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -490,7 +490,7 @@ try {
     arguments: {
       goal: "Final acceptance persistence and verification smoke test",
       cwd: ".",
-      acceptanceCriteria: ["The persisted Goal session is restored after MCP server restart"],
+      acceptanceCriteria: ["The paused Goal session is restored and resumed after MCP server restart"],
       maxSteps: 20,
       maxToolCalls: 40,
     },
@@ -501,6 +501,19 @@ try {
   assert.ok(started.structuredContent.projectContext.files.some((entry) => entry.path === "AGENTS.md"));
   assert.match(started.content[0].text, /Project instructions:/);
   assert.match(sessionId, /^[A-Za-z0-9_-]{1,128}$/);
+
+  const paused = await clientBundle.client.callTool({
+    name: "goal_pause",
+    arguments: {
+      sessionId,
+      summary: "Acceptance checkpoint before a full MCP server restart",
+      nextAction: "Rediscover this paused Goal and resume the exact session after restart",
+      reason: "acceptance cross-turn persistence probe",
+    },
+  });
+  assert.equal(paused.structuredContent.status, "paused");
+  assert.equal(paused.structuredContent.mustContinue, false);
+  assert.equal(paused.structuredContent.sessionId, sessionId);
 
   await closeClient(clientBundle.client, clientBundle.transport);
   clientBundle = null;
@@ -520,8 +533,23 @@ try {
     name: "goal_status",
     arguments: { sessionId },
   });
-  assert.equal(restored.structuredContent.status, "active");
+  assert.equal(restored.structuredContent.status, "paused");
+  assert.equal(restored.structuredContent.mustContinue, false);
   assert.equal(restored.structuredContent.sessionId, sessionId);
+
+  const pausedGoals = await clientBundle.client.callTool({
+    name: "goal_list",
+    arguments: { cwd: ".", limit: 20 },
+  });
+  assert.ok(pausedGoals.structuredContent.sessions.some((entry) => entry.sessionId === sessionId));
+
+  const resumed = await clientBundle.client.callTool({
+    name: "goal_resume",
+    arguments: { sessionId },
+  });
+  assert.equal(resumed.structuredContent.status, "active");
+  assert.equal(resumed.structuredContent.mustContinue, true);
+  assert.equal(resumed.structuredContent.sessionId, sessionId);
 
   if (skipNative) {
     await clientBundle.client.callTool({ name: "goal_cancel", arguments: { sessionId } });
@@ -532,12 +560,12 @@ try {
         name: "goal_finish",
         arguments: {
           sessionId,
-          summary: "The final acceptance Goal session survived restart and project checks completed.",
-          evidence: ["MCP server restarted and goal_status restored the same session id"],
+          summary: "The final acceptance paused Goal survived restart, resumed exactly, and project checks completed.",
+          evidence: ["MCP server restarted, goal_status restored paused state, goal_list rediscovered it, and goal_resume reactivated the same session id"],
           criteriaEvidence: [{
-            criterion: "The persisted Goal session is restored after MCP server restart",
+            criterion: "The paused Goal session is restored and resumed after MCP server restart",
             satisfied: true,
-            evidence: "goal_status returned active for the same sessionId after a full server restart",
+            evidence: "goal_status returned paused, goal_list returned the same sessionId, and goal_resume returned active for that exact session after restart",
           }],
         },
       },

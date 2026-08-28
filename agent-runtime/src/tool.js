@@ -312,6 +312,27 @@ export const goalSessionInputSchema = Object.freeze({
   },
 });
 
+export const goalPauseInputSchema = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  required: ["sessionId"],
+  properties: {
+    sessionId: { type: "string", minLength: 1, maxLength: 128 },
+    summary: { type: "string", minLength: 1, maxLength: 32_768 },
+    nextAction: { type: "string", minLength: 1, maxLength: 8_192 },
+    reason: { type: "string", minLength: 1, maxLength: 8_192 },
+  },
+});
+
+export const goalListInputSchema = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    cwd: cwdSchema,
+    limit: { type: "integer", minimum: 1, maximum: 50, default: 20 },
+  },
+});
+
 export const goalStepInputSchema = Object.freeze({
   type: "object",
   additionalProperties: false,
@@ -645,6 +666,33 @@ export function createGoalCancelTool(goalController) {
   return { name: "goal_cancel", description: "Cancel a non-terminal goal session and reclaim its owned running managed processes.", inputSchema: goalSessionInputSchema, invoke: (input) => goalController.cancel(input.sessionId) };
 }
 
+export function createGoalPauseTool(goalController) {
+  return {
+    name: "goal_pause",
+    description: "Safely pause an active Goal for a later explicit assistant turn. Persists recovery metadata, reclaims Goal-owned running processes, and returns mustContinue=false only after a durable safe pause.",
+    inputSchema: goalPauseInputSchema,
+    invoke: (input) => goalController.pause(input),
+  };
+}
+
+export function createGoalResumeTool(goalController) {
+  return {
+    name: "goal_resume",
+    description: "Resume exactly one paused Goal by sessionId. Only paused sessions can resume; the original Goal state and budget are retained and mustContinue becomes true.",
+    inputSchema: goalSessionInputSchema,
+    invoke: (input) => goalController.resume(input.sessionId),
+  };
+}
+
+export function createGoalListTool(goalController) {
+  return {
+    name: "goal_list",
+    description: "List a bounded, deterministic set of recent paused Goals for this Bridge workspace, optionally restricted to an exact cwd. Use the returned sessionId with goal_resume.",
+    inputSchema: goalListInputSchema,
+    invoke: (input) => goalController.list(input),
+  };
+}
+
 export function createReadFileTool({ workspace } = {}) {
   return {
     name: "read_file",
@@ -720,7 +768,7 @@ const V09_TOOLS = Object.freeze([
   "process_start", "process_poll", "process_input", "process_kill", "process_list",
   "read_file", "list_dir", "search_text", "search_files",
   "apply_patch", "delete_file", "move_file",
-  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "get_capabilities",
+  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "goal_pause", "goal_resume", "goal_list", "get_capabilities",
 ]);
 const LOCAL_BROKER_TOOL_NAMES = Object.freeze([
   "local_list", "local_read", "local_request_sensitive_access", "local_stage_changes", "local_confirm_batch", "local_run_command",
@@ -747,7 +795,7 @@ export function createCapabilitiesTool({
       const sandbox = sandboxSummary(sandboxAdapter);
       const networkSandbox = resolveNetworkSandboxState({ networkSandboxState, networkSandboxAdapter, platform });
       return {
-        version: "0.9.1",
+        version: "0.9.2",
         releaseStage: "final-acceptance-candidate",
         platform: normalizedPlatform(platform),
         tools: [...V09_TOOLS, ...(typeof localBrokerSocket === "string" && localBrokerSocket ? LOCAL_BROKER_TOOL_NAMES : [])],
@@ -795,6 +843,11 @@ export function createCapabilitiesTool({
           trackedActionsUseGoalStep: true,
           goalCwdScoped: typeof workspace === "string" && workspace.length > 0,
           cancelReclaimsOwnedProcesses: true,
+          safeCrossTurnPause: true,
+          pausedGoalsReturnMustContinueFalse: true,
+          explicitResumeRequired: true,
+          listPausedSessions: true,
+          pauseReclaimsOwnedProcesses: true,
           acceptanceCriteriaGate: true,
           externalOrchestratorCompatible: true,
         },
@@ -809,6 +862,7 @@ export function createCapabilitiesTool({
           goalModeCannotRunUnbounded: true,
           goalSessionMutationsSingleWriter: true,
           goalCancelReclaimsOwnedProcesses: true,
+          goalPauseReclaimsOwnedProcesses: true,
         },
       };
     },
@@ -862,6 +916,9 @@ export function createCoreTools(options = {}) {
     createGoalFinishTool(goalController),
     createGoalStatusTool(goalController),
     createGoalCancelTool(goalController),
+    createGoalPauseTool(goalController),
+    createGoalResumeTool(goalController),
+    createGoalListTool(goalController),
     createCapabilitiesTool({ ...options, goalSessionStore, localBrokerSocket: options.localBrokerSocket }),
   ];
 }

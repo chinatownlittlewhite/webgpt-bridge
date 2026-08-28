@@ -10,7 +10,7 @@ const EXPECTED_TOOLS = [
   "process_start", "process_poll", "process_input", "process_kill", "process_list",
   "read_file", "list_dir", "search_text", "search_files",
   "apply_patch", "delete_file", "move_file",
-  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel",
+  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "goal_pause", "goal_resume", "goal_list",
   "get_capabilities",
 ];
 const FORBIDDEN_MODEL_KEYS = new Set([
@@ -75,6 +75,9 @@ try {
   assert.equal(capabilities.workspaceInspection.boundedReadFile, true);
   assert.equal(capabilities.workspaceInspection.executableContinuationHints, true);
   assert.match(goalModeHostInstructions, /mustContinue=true/);
+  assert.match(goalModeHostInstructions, /goal_pause/);
+  assert.match(goalModeHostInstructions, /goal_resume/);
+  assert.match(goalModeHostInstructions, /@macmini/);
   assert.match(goalModeHostInstructions, /read_file/);
   assert.match(goalModeHostInstructions, /Do not bypass Goal Mode budgets/);
 

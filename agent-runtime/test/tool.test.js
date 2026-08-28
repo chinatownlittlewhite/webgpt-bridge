@@ -12,7 +12,9 @@ import {
   gitInputSchema,
   githubInputSchema,
   goalFinishInputSchema,
+  goalListInputSchema,
   goalModeInputSchema,
+  goalPauseInputSchema,
   goalSessionInputSchema,
   goalStepInputSchema,
   processInputInputSchema,
@@ -49,6 +51,9 @@ const EXPECTED_TOOLS = [
   "goal_finish",
   "goal_status",
   "goal_cancel",
+  "goal_pause",
+  "goal_resume",
+  "goal_list",
   "get_capabilities",
 ];
 
@@ -69,6 +74,8 @@ test("trusted execution controls cannot be supplied through model-facing schemas
     goalModeInputSchema,
     goalStepInputSchema,
     goalFinishInputSchema,
+    goalPauseInputSchema,
+    goalListInputSchema,
     goalSessionInputSchema,
   ]) {
     assert.equal(Object.hasOwn(schema.properties, "approvalGranted"), false);
@@ -168,7 +175,7 @@ test("goal tools use an explicit session handle and inject bounded project instr
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("core tool set exposes the frozen v0.9 final-acceptance surface", () => {
+test("core tool set exposes the v0.9.2 final-acceptance surface", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-tools-"));
   const names = createCoreTools({ workspace: root }).map((tool) => tool.name);
   assert.deepEqual(names, EXPECTED_TOOLS);
@@ -178,7 +185,7 @@ test("core tool set exposes the frozen v0.9 final-acceptance surface", () => {
 
 test("capabilities report final-acceptance guarantees without overclaiming inactive sandbox", () => {
   const report = createCapabilitiesTool().invoke({});
-  assert.equal(report.version, "0.9.1");
+  assert.equal(report.version, "0.9.2");
   assert.equal(report.releaseStage, "final-acceptance-candidate");
   assert.deepEqual(report.tools, EXPECTED_TOOLS);
   assert.equal(report.sandbox.enforced, false);
