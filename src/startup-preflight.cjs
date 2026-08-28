@@ -4,6 +4,7 @@ const { validateDevelopmentRuntime } = require("./host-config.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { resolveNodeRuntime } = require("./node-runtime-resolver.cjs");
 const { resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { ensureTunnelProfile } = require("./tunnel-profile-manager.cjs");
 
 const PROFILE_PATTERN = /^[a-zA-Z0-9._-]{1,64}$/;
 
@@ -25,6 +26,7 @@ function createStartupPreflight(deps = {}) {
   const isFile = typeof deps.isFile === "function" ? deps.isFile : existingFile;
   const resolveTunnelClient = typeof deps.resolveTunnelClient === "function" ? deps.resolveTunnelClient : resolveTunnelClientPath;
   const resolveNode = typeof deps.resolveNodeRuntime === "function" ? deps.resolveNodeRuntime : resolveNodeRuntime;
+  const ensureProfile = typeof deps.ensureTunnelProfile === "function" ? deps.ensureTunnelProfile : ensureTunnelProfile;
   const readRuntimeKey = typeof deps.readRuntimeKey === "function"
     ? deps.readRuntimeKey
     : async (input) => String(input?.runtimeKey || "");
@@ -70,6 +72,17 @@ function createStartupPreflight(deps = {}) {
     const runtimeKey = String(await readRuntimeKey({ settings, signal: input.signal, runtimeKey: input.runtimeKey }) || "");
     if (!runtimeKey) throw new Error("请先保存此电脑专用的 OpenAI Tunnel 运行时密钥。");
 
+    const tunnelProfile = await ensureProfile({
+      clientPath: tunnelClient,
+      profileDir: String(valueOf(deps.tunnelProfileDir, input) || input.tunnelProfileDir || "").trim(),
+      profile: settings.profile,
+      tunnelId: settings.tunnelId,
+      mcpServerUrl: String(valueOf(deps.mcpServerUrl, input) || input.mcpServerUrl || "").trim(),
+      healthListenAddr: String(valueOf(deps.tunnelHealthListenAddr, input) || input.tunnelHealthListenAddr || "127.0.0.1:8080").trim(),
+      runtimeKeyRef: "env:CONTROL_PLANE_API_KEY",
+      signal: input.signal,
+    });
+
     const appToolsBin = String(valueOf(deps.appToolsBin, input) || input.appToolsBin || "");
     const githubCliPath = resolveGitHubCli({ appToolsBin });
 
@@ -79,6 +92,7 @@ function createStartupPreflight(deps = {}) {
       nodeRuntime,
       runtime: freezeRecord(runtime),
       tunnelClient,
+      tunnelProfile,
       runtimeKey,
       appToolsBin,
       githubCliPath,
