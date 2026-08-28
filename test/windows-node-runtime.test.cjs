@@ -29,11 +29,14 @@ test("Windows distribution prepares and ships a pinned Node 22 runtime", () => {
   assert.match(prepare, /LICENSE/);
 });
 
-test("packaged Windows host considers its bundled Node runtime", () => {
+test("packaged Windows host routes its bundled Node manifest through StartupPreflight", () => {
   const mainSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
   assert.match(mainSource, /defaultBundledNodePath/);
   assert.match(mainSource, /node-runtime/);
-  assert.match(mainSource, /preferredNodeCandidates/);
+  assert.match(mainSource, /BUNDLED_SOURCE\.json/);
+  assert.match(mainSource, /nodeSha256/);
+  assert.match(mainSource, /bundledNodeManifest:\s*\(\)\s*=>\s*loadBundledNodeManifest\(\)/);
+  assert.match(mainSource, /startupPreflight\.prepare/);
 });
 
 test("Windows installer smoke proves the installed bundled Node actually runs", () => {
