@@ -133,6 +133,62 @@ test("shutdown is terminal and blocks new start or restart", async () => {
   assert.equal(starts, 1);
 });
 
+test("stop plus quit shares one teardown and makes shutdown terminal", async () => {
+  const tunnelReleaseStarted = deferred();
+  const releaseGate = deferred();
+  const stopped = [];
+  const supervisor = createRuntimeSupervisor(baseDeps({
+    stopResource: async (_resource, meta) => {
+      stopped.push(meta.kind);
+      if (meta.kind === "tunnel") {
+        tunnelReleaseStarted.resolve();
+        await releaseGate.promise;
+      }
+    },
+  }));
+  await supervisor.start();
+
+  const stopping = supervisor.stop("user");
+  await tunnelReleaseStarted.promise;
+  const shuttingDown = supervisor.shutdown("quit");
+  releaseGate.resolve();
+  await Promise.all([stopping, shuttingDown]);
+
+  assert.deepEqual(stopped, ["tunnel", "agent", "broker"]);
+  assert.equal(supervisor.getStatus().state, "stopped");
+  await assert.rejects(() => supervisor.start(), (error) => error?.code === "APP_SHUTTING_DOWN");
+});
+
+test("restart plus quit cancels reacquisition and ends in terminal shutdown", async () => {
+  const tunnelReleaseStarted = deferred();
+  const releaseGate = deferred();
+  let agentStarts = 0;
+  const supervisor = createRuntimeSupervisor(baseDeps({
+    startAgent: async () => {
+      agentStarts += 1;
+      return resource("agent", agentStarts);
+    },
+    stopResource: async (_resource, meta) => {
+      if (meta.kind === "tunnel") {
+        tunnelReleaseStarted.resolve();
+        await releaseGate.promise;
+      }
+    },
+  }));
+  await supervisor.start();
+
+  const restarting = supervisor.restart("ui");
+  await tunnelReleaseStarted.promise;
+  const shuttingDown = supervisor.shutdown("quit");
+  releaseGate.resolve();
+
+  await assert.rejects(restarting, (error) => error?.code === "APP_SHUTTING_DOWN");
+  await shuttingDown;
+  assert.equal(agentStarts, 1, "restart must not acquire a second agent after quit intent");
+  assert.equal(supervisor.getStatus().state, "stopped");
+  await assert.rejects(() => supervisor.start(), (error) => error?.code === "APP_SHUTTING_DOWN");
+});
+
 test("unexpected agent exit immediately leaves connected and tears down dependent tunnel", async () => {
   const stopped = [];
   const agent = resource("agent", 1);
