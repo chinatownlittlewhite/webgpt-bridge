@@ -551,9 +551,9 @@ export function createGitHubTool({ workspace, networkSandboxAdapter, networkSand
     inputSchema: githubInputSchema,
     async invoke(input, trustedContext = {}) {
       const githubCli = resolveGitHubCliState(githubCliState);
-      if (githubCli.status === "missing" || githubCli.status === "broken") {
+      if (githubCli.status === "missing" || githubCli.status === "broken" || githubCli.status === "unauthenticated") {
         return {
-          status: githubCli.status === "missing" ? "github_cli_missing" : "github_cli_broken",
+          status: githubCli.status === "missing" ? "github_cli_missing" : githubCli.status === "broken" ? "github_cli_broken" : "github_auth_required",
           error: `GitHub CLI is unavailable: ${githubCli.reason}`,
           githubCli,
         };
@@ -771,8 +771,15 @@ const V09_TOOLS = Object.freeze([
   "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "goal_pause", "goal_resume", "goal_list", "get_capabilities",
 ]);
 const LOCAL_BROKER_TOOL_NAMES = Object.freeze([
-  "local_list", "local_read", "local_request_sensitive_access", "local_stage_changes", "local_confirm_batch", "local_run_command",
+  "local_list", "local_read", "local_list_known_folder", "local_read_known_folder", "local_probe_health",
+  "local_request_sensitive_access", "local_stage_changes", "local_confirm_batch", "local_run_command",
 ]);
+
+function runtimeToolNames(localBrokerSocket) {
+  if (typeof localBrokerSocket !== "string" || !localBrokerSocket) return [...V09_TOOLS];
+  const goalIndex = V09_TOOLS.indexOf("goal_mode");
+  return [...V09_TOOLS.slice(0, goalIndex), ...LOCAL_BROKER_TOOL_NAMES, ...V09_TOOLS.slice(goalIndex)];
+}
 
 export function createCapabilitiesTool({
   sandboxAdapter,
@@ -795,10 +802,10 @@ export function createCapabilitiesTool({
       const sandbox = sandboxSummary(sandboxAdapter);
       const networkSandbox = resolveNetworkSandboxState({ networkSandboxState, networkSandboxAdapter, platform });
       return {
-        version: "0.9.2",
-        releaseStage: "final-acceptance-candidate",
+        version: "0.9.3",
+        releaseStage: "stable",
         platform: normalizedPlatform(platform),
-        tools: [...V09_TOOLS, ...(typeof localBrokerSocket === "string" && localBrokerSocket ? LOCAL_BROKER_TOOL_NAMES : [])],
+        tools: runtimeToolNames(localBrokerSocket),
         sandbox,
         networkSandbox: {
           ...networkSandbox,

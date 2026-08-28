@@ -1,5 +1,7 @@
 # Desktop Auto-Update, Release, and Signing Implementation Plan
 
+> **Historical / superseded signing plan.** The current public distribution policy intentionally does not require external signing/notarization credentials. Use `docs/release-signing.md` for the authoritative current release workflow; this plan remains for implementation history only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add user-controlled in-app updates for Windows and macOS, publish only fully signed/notarized GitHub Releases, produce a real Universal macOS build, and preserve the existing Windows AppContainer host-preparation lifecycle during upgrades.

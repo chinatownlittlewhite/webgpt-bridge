@@ -22,6 +22,16 @@ function defaultVersionProbe(executable) {
   return { ok: true, version: match?.[1] ?? firstLine, detail: firstLine };
 }
 
+function defaultAuthProbe(executable) {
+  const result = spawnSync(executable, ["auth", "status"], {
+    encoding: "utf8",
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000,
+  });
+  return { authenticated: !result.error && result.status === 0 };
+}
+
 function windowsCandidates(env) {
   const candidates = [];
   if (env.ProgramFiles) candidates.push(path.win32.join(env.ProgramFiles, "GitHub CLI", "gh.exe"));
@@ -39,6 +49,7 @@ export function resolveGitHubCli({
   exists = fs.existsSync,
   findInPath = (name) => findExecutableInPath(name, { env, platform }),
   runVersion = defaultVersionProbe,
+  runAuth = defaultAuthProbe,
 } = {}) {
   const candidates = unique([
     explicitPath,
@@ -59,11 +70,25 @@ export function resolveGitHubCli({
       });
     }
     const version = probe.version ?? probe.detail ?? "unknown";
+    const auth = runAuth(candidate);
+    if (auth?.authenticated !== true) {
+      return Object.freeze({
+        status: "unauthenticated",
+        resolvedPath: candidate,
+        version,
+        authStatus: "unauthenticated",
+        usable: false,
+        reason: `GitHub CLI ${version} is installed but not authenticated`,
+        remediation: "Run gh auth login for this desktop user, then restart WebGPT Bridge.",
+      });
+    }
     return Object.freeze({
       status: "ready",
       resolvedPath: candidate,
       version,
-      reason: `GitHub CLI ${version} is available`,
+      authStatus: "authenticated",
+      usable: true,
+      reason: `GitHub CLI ${version} is available and authenticated`,
       remediation: null,
     });
   }

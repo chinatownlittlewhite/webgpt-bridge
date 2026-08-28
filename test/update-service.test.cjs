@@ -237,6 +237,22 @@ test("non-packaged service does not schedule or query public updates", () => {
   assert.equal(state.errorCode, "unsupported_environment");
 });
 
+test("dispose prevents in-flight update checks from emitting or mutating later state", async () => {
+  const updater = fakeUpdater({ deferredCheck: true });
+  const emissions = [];
+  const service = createUpdateService(baseOptions({ updater, emitState: (state) => emissions.push(state) }));
+  const pending = service.checkForUpdates();
+  assert.equal(service.getState().status, "checking");
+  const beforeDisposeEmissions = emissions.length;
+  service.dispose();
+
+  updater.resolveCheck({ isUpdateAvailable: false, updateInfo: { version: "0.3.4" } });
+  await pending;
+
+  assert.equal(emissions.length, beforeDisposeEmissions);
+  assert.equal(service.getState().status, "checking");
+});
+
 test("retry from error rechecks metadata instead of downloading stale state", async () => {
   const updater = fakeUpdater();
   const service = createUpdateService(baseOptions({ updater }));

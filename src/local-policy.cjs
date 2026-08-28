@@ -232,8 +232,8 @@ function classifyHostCommandApproval(request, approvalMode) {
 
   if (request?.policy?.decision === "deny") return { decision: "deny", reason: "命令策略已拒绝该操作。" };
   if (hasExpandedSandboxAccess(request?.sandboxAccess)) return { decision: "confirm", reason: "扩大沙箱访问范围需要确认。", rememberKey: sandboxAccessPermissionKey(request.sandboxAccess) };
-  if (mode === "full_control") return { decision: "allow", reason: "完全控制模式自动批准普通 Host 请求。" };
   if (!isVerifiedSandboxRequest(request)) return { decision: "confirm", reason: "只有已验证的系统沙箱命令可以自动审批。", rememberKey: `host:unverified-execution:${command || rule}` };
+  if (mode === "full_control") return { decision: "allow", reason: "完全控制模式自动批准已验证沙箱内的普通 Host 请求。" };
   if (rule === "runtime-execution" || isProjectPackageScript(argv)) return { decision: "allow", reason: "受验证沙箱内的项目运行不再要求执行确认。" };
   if (request?.policy?.decision === "allow") return { decision: "allow", reason: "命令分类器已确认该操作为低风险。" };
   if (isGitTrustedSync(argv)) return { decision: "allow", reason: "已验证沙箱内的受控 Git 同步自动批准。" };

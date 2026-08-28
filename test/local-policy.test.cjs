@@ -139,4 +139,5 @@ test("auto-approves low-risk verified Agent commands while preserving high-risk 
   assert.equal(classifyHostCommandApproval(request(["docker", "run", "x"], "sensitive-command"), "full_control").decision, "allow");
   assert.equal(classifyHostCommandApproval(request(["osascript", "-e", "return 1"], "default-ask"), "full_control").decision, "allow");
   assert.equal(classifyHostCommandApproval(request(["node", "script.mjs"], "runtime-execution", { sandboxAccess: { read: ["/outside"], write: [] } }), "full_control").decision, "confirm");
+  assert.equal(classifyHostCommandApproval(request(["node", "script.mjs"], "runtime-execution", { sandbox: { enforced: true, autoRunSafe: false } }), "full_control").decision, "confirm");
 });

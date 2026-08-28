@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { resolvePlatformArgv } from "../src/platform.js";
 
-const VERSION = "0.9.2";
+const VERSION = "0.9.3";
 const EXPECTED_TOOLS = [
   "run_command", "run_project_task", "git", "dependency_sync", "github",
   "process_start", "process_poll", "process_input", "process_kill", "process_list",
@@ -433,7 +433,7 @@ try {
   assert.doesNotMatch(readResult.content[0].text, /^\s*\{/);
   const searchResult = await clientBundle.client.callTool({
     name: "search_text",
-    arguments: { query: "Final Acceptance Candidate", path: ".", glob: "README.md", maxResults: 10 },
+    arguments: { query: "Stable", path: ".", glob: "README.md", maxResults: 10 },
   });
   assert.ok(searchResult.structuredContent.matchCount >= 1);
   const listResult = await clientBundle.client.callTool({
@@ -446,7 +446,7 @@ try {
   const capsResult = await clientBundle.client.callTool({ name: "get_capabilities", arguments: {} });
   const caps = capsResult.structuredContent;
   assert.equal(caps.version, VERSION);
-  assert.equal(caps.releaseStage, "final-acceptance-candidate");
+  assert.equal(caps.releaseStage, "stable");
   assert.deepEqual([...caps.tools].sort(), EXPECTED_TOOLS);
   assert.equal(caps.mcp.protocolRevision, "2026-07-28");
   assert.equal(caps.guarantees.modelCannotSelfApprove, true);

@@ -34,6 +34,24 @@ test("normalization keeps older bundled settings compatible", () => {
   });
 });
 
+test("normalization drops unknown settings and bounds persisted strings", () => {
+  const { normalizeSettings } = api();
+  const settings = normalizeSettings({
+    workspacePath: "/work",
+    runtimePath: "/runtime",
+    profile: "p".repeat(5000),
+    tunnelId: "t".repeat(5000),
+    unexpected: "do-not-persist",
+    nested: { secret: true },
+  });
+  assert.equal(Object.hasOwn(settings, "unexpected"), false);
+  assert.equal(Object.hasOwn(settings, "nested"), false);
+  assert.ok(settings.profile.length <= 512);
+  assert.ok(settings.tunnelId.length <= 512);
+  assert.equal(settings.workspacePath, "/work");
+  assert.equal(settings.runtimePath, "/runtime");
+});
+
 test("normalization persists only known local approval modes", () => {
   const { normalizeSettings } = api();
   assert.equal(normalizeSettings({ approvalMode: "auto" }).approvalMode, "auto");

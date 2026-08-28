@@ -137,6 +137,17 @@ function fileBatchPresentation(request, mode) {
   };
 }
 
+function knownFolderPresentation(request) {
+  const labels = { desktop: "桌面", downloads: "下载", documents: "文档" };
+  const folder = ["desktop", "downloads", "documents"].includes(request.folder) ? request.folder : "documents";
+  const operation = request.operation === "list" ? "list" : "read";
+  return {
+    message: `允许访问本机${labels[folder]}文件？`,
+    detail: `范围：${labels[folder]}\n权限：${operation === "list" ? "查看目录" : "读取文件"}\n仅在本次连接内记住此权限`,
+    rememberKey: `known-folder:${operation}:${folder}`,
+  };
+}
+
 function sensitivePresentation(request) {
   const sensitiveRoot = shortSensitivePath(request.path).split("/")[0] || "sensitive";
   return {
@@ -149,6 +160,7 @@ function sensitivePresentation(request) {
 function approvalPrompt(request, approvalMode = "cautious") {
   if (request?.kind === "terminal-command") return terminalPresentation(request, approvalMode);
   if (request?.kind === "local-file-batch") return fileBatchPresentation(request, approvalMode);
+  if (request?.kind === "known-folder-access") return knownFolderPresentation(request);
   return sensitivePresentation(request || {});
 }
 

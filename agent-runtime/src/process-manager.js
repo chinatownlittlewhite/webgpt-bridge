@@ -23,6 +23,13 @@ function relativeCwd(root, cwd) {
   return path.relative(root, cwd) || ".";
 }
 
+function sanitizePtyOutput(value) {
+  return String(value)
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b[@-_]/g, "");
+}
+
 function normalizeProcessKind(value) {
   if (value === undefined) return "process";
   if (typeof value !== "string" || !/^[a-z0-9_-]{1,64}$/.test(value)) {
@@ -172,6 +179,7 @@ export function createProcessManager({
         env: validatedEnv,
         policy,
         sandbox,
+        execution: { pty: pty === true },
       });
       const approval = await requestHostApproval(trustedContext.requestApproval, approvalRequest);
       if (approval.status !== "approved") {
@@ -250,7 +258,10 @@ export function createProcessManager({
       record.terminal = terminal;
       record.pid = terminal.pid;
       record.status = "running";
-      terminal.onData((data) => push(record, "pty", data));
+      terminal.onData((data) => {
+        const sanitized = sanitizePtyOutput(data);
+        if (sanitized) push(record, "pty", sanitized);
+      });
       terminal.onExit(({ exitCode, signal }) => {
         record.status = "exited";
         record.exitCode = exitCode;

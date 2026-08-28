@@ -96,6 +96,42 @@ test("process manager close terminates all running children", async () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("PTY output strips terminal control sequences and OSC titles before reaching the model", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-process-pty-sanitize-"));
+  const manager = createProcessManager({
+    workspace: root,
+    sandboxAdapter: verifiedSandbox,
+    maxProcesses: 4,
+    ptyLoader: async () => ({
+      spawn() {
+        const terminal = {
+          pid: 4242,
+          onData(callback) {
+            queueMicrotask(() => callback("\u001b[?9001h\u001b[2Jhello\r\n\u001b]0;C:\\Secret\\helper.exe\u0007\u001b[?25h"));
+          },
+          onExit(callback) {
+            queueMicrotask(() => callback({ exitCode: 0, signal: 0 }));
+          },
+          write() {},
+          kill() {},
+        };
+        return terminal;
+      },
+    }),
+  });
+  const started = await manager.start(
+    { argv: ["node", "--version"], pty: true },
+    { requestApproval: () => true },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const polled = manager.poll({ processId: started.processId, cursor: 0 });
+  const text = polled.chunks.map((chunk) => chunk.text).join("");
+  assert.match(text, /hello/);
+  assert.doesNotMatch(text, /\u001b|Secret|helper\.exe/);
+  await manager.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("PTY spawn failure returns a terminal error without leaving a starting record", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-process-pty-failure-"));
   const manager = createProcessManager({

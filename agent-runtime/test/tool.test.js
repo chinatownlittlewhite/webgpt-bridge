@@ -175,7 +175,7 @@ test("goal tools use an explicit session handle and inject bounded project instr
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("core tool set exposes the v0.9.2 final-acceptance surface", () => {
+test("core tool set exposes the v0.9.3 final-acceptance surface", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-tools-"));
   const names = createCoreTools({ workspace: root }).map((tool) => tool.name);
   assert.deepEqual(names, EXPECTED_TOOLS);
@@ -183,10 +183,21 @@ test("core tool set exposes the v0.9.2 final-acceptance surface", () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("broker-enabled capabilities tool list exactly matches the actual runtime surface", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-broker-capabilities-"));
+  const tools = createCoreTools({ workspace: root, localBrokerSocket: path.join(root, "broker.sock") });
+  const report = tools.find((tool) => tool.name === "get_capabilities").invoke({});
+  assert.deepEqual(report.tools, tools.map((tool) => tool.name));
+  assert.ok(report.tools.includes("local_list_known_folder"));
+  assert.ok(report.tools.includes("local_read_known_folder"));
+  assert.ok(report.tools.includes("local_probe_health"));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("capabilities report final-acceptance guarantees without overclaiming inactive sandbox", () => {
   const report = createCapabilitiesTool().invoke({});
-  assert.equal(report.version, "0.9.2");
-  assert.equal(report.releaseStage, "final-acceptance-candidate");
+  assert.equal(report.version, "0.9.3");
+  assert.equal(report.releaseStage, "stable");
   assert.deepEqual(report.tools, EXPECTED_TOOLS);
   assert.equal(report.sandbox.enforced, false);
   assert.equal(report.sandbox.autoRunSafe, false);

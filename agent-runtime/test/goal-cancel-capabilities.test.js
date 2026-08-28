@@ -10,7 +10,7 @@ const expectedTools = [
   "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "goal_pause", "goal_resume", "goal_list", "get_capabilities",
 ].sort();
 
-test("goal lifecycle cleanup is advertised on the 26-tool v0.9.2 surface", () => {
+test("goal lifecycle cleanup is advertised on the 26-tool v0.9.3 surface", () => {
   const tools = createCoreTools();
   assert.deepEqual(tools.map((tool) => tool.name).sort(), expectedTools);
   assert.equal(tools.length, 26);

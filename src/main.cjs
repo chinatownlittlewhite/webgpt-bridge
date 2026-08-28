@@ -14,7 +14,7 @@ const { createApprovalSession } = require("./approval-session.cjs");
 const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
 const { createLocalFileBroker } = require("./local-file-broker.cjs");
 const { createKnownFolderAccess } = require("./known-folder-access.cjs");
-const { createLoopbackHealthProbe } = require("./loopback-health-probe.cjs");
+const { createLoopbackHealthProbe, defaultTcpProbe } = require("./loopback-health-probe.cjs");
 const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
 const { validateSshCommand } = require("./ssh-policy.cjs");
 const { resolveSystemProxyEnvironment } = require("./system-proxy.cjs");
@@ -308,7 +308,8 @@ async function confirmHostCommandApproval(params) {
 }
 
 async function confirmLocalOperation(request) {
-  if (localApprovalMode === "full_control") {
+  const explicitConsent = request?.kind === "sensitive-access" || request?.kind === "known-folder-access";
+  if (!explicitConsent && localApprovalMode === "full_control") {
     appendLog("local-broker", "完全控制模式：自动批准本机权限请求");
     return true;
   }
@@ -421,8 +422,33 @@ async function startLocalBroker(settings, runtime, { githubCliPath = "", proxyEn
       documents: app.getPath("documents"),
     },
     fileBroker: localFileBroker,
+    authorize: (request) => confirmLocalOperation({ kind: "known-folder-access", ...request }),
   });
-  localHealthProbe = createLoopbackHealthProbe();
+  localHealthProbe = createLoopbackHealthProbe({
+    targets: {
+      agent: { kind: "http", host: MCP_HOST, port: MCP_PORT, path: "/healthz" },
+      tunnel: { kind: "http", host: TUNNEL_HEALTH_HOST, port: TUNNEL_HEALTH_PORT, path: "/readyz" },
+    },
+    githubProbe: async () => {
+      const connectivity = await defaultTcpProbe({ host: "github.com", port: 443 });
+      if (!githubCliPath) {
+        return { ok: false, connectivity: connectivity.ok === true, binaryReady: false, authenticated: false };
+      }
+      const auth = spawnSync(githubCliPath, ["auth", "status"], {
+        shell: false,
+        windowsHide: true,
+        timeout: 10_000,
+        stdio: "ignore",
+      });
+      const authenticated = !auth.error && auth.status === 0;
+      return {
+        ok: connectivity.ok === true && authenticated,
+        connectivity: connectivity.ok === true,
+        binaryReady: true,
+        authenticated,
+      };
+    },
+  });
   const sshExecutable = settings.sshEnabled && process.platform !== "win32" ? "/usr/bin/ssh" : "";
   const trustedExecutables = {
     ...(githubCliPath ? { gh: githubCliPath } : {}),

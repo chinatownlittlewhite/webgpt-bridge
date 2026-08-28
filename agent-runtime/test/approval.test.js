@@ -39,6 +39,7 @@ test("approval id changes when original/resolved argv, platform, cwd, env, or sa
   assert.notEqual(createApprovalRequest({ ...base, env: { NODE_ENV: "production" } }).id, original);
   assert.notEqual(createApprovalRequest({ ...base, sandboxAccess: { read: ["/runtime"], write: [] } }).id, original);
   assert.notEqual(createApprovalRequest({ ...base, sandboxAccess: { read: [], write: ["/managed"] } }).id, original);
+  assert.notEqual(createApprovalRequest({ ...base, execution: { pty: true } }).id, original);
 });
 
 test("approval request snapshots are immutable", () => {

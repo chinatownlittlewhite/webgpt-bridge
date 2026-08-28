@@ -31,10 +31,13 @@ test("known project checks are allowed", () => {
   assert.equal(classifyCommand(["cargo", "check"]).decision, "allow");
 });
 
-test("privilege escalation and remote file-transfer commands are denied", () => {
+test("privilege escalation, shells, and remote file-transfer commands are denied", () => {
   assert.equal(classifyCommand(["sudo", "echo", "x"]).decision, "deny");
   assert.equal(classifyCommand(["scp", "a", "host:b"]).decision, "deny");
   assert.equal(classifyCommand(["sftp", "host"]).decision, "deny");
+  for (const shell of ["sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"]) {
+    assert.equal(classifyCommand([shell, "-c", "echo x"]).decision, "deny", `${shell} must remain outside the model command surface`);
+  }
 });
 
 test("unknown commands ask by default", () => {

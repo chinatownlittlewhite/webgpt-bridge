@@ -37,7 +37,15 @@ export function ensureHandoffBundle({ workspace, cwd = ".", version = "" } = {})
   const initial = defaults(version);
   for (const [name, content] of Object.entries(initial)) {
     const file = path.join(dir, name);
-    if (!fs.existsSync(file)) atomicWrite(file, content);
+    if (!fs.existsSync(file)) {
+      atomicWrite(file, content);
+      continue;
+    }
+    if (name === "CONTEXT.md" && version) {
+      const existing = fs.readFileSync(file, "utf8");
+      const refreshed = existing.replace(/^- Runtime version: .*$/m, `- Runtime version: ${version}`);
+      if (refreshed !== existing) atomicWrite(file, refreshed);
+    }
   }
   const manifest = {
     schemaVersion: 1,

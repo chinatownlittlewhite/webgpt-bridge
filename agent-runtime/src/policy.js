@@ -1,7 +1,11 @@
 import path from "node:path";
 
 const SAFE_NPM_RUN_SCRIPTS = new Set(["test", "lint", "build", "typecheck", "check"]);
-const ALWAYS_DENY = new Set(["sudo", "su", "scp", "sftp"]);
+const ALWAYS_DENY = new Set([
+  "sudo", "su", "scp", "sftp",
+  "sh", "bash", "zsh", "fish",
+  "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe",
+]);
 const APPROVAL_COMMANDS = new Set([
   "curl",
   "wget",

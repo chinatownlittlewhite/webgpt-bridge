@@ -26,6 +26,26 @@ test("handoff bundle creates the fixed six-document project package and project 
   }
 });
 
+test("handoff upgrade refreshes generated runtime metadata without overwriting user context", () => {
+  const root = fixture();
+  try {
+    ensureHandoffBundle({ workspace: root, cwd: ".", version: "0.9.1" });
+    const contextPath = path.join(root, ".webgpt-handoff", "CONTEXT.md");
+    fs.appendFileSync(contextPath, "\nUser note: keep this architecture decision.\n", "utf8");
+
+    ensureHandoffBundle({ workspace: root, cwd: ".", version: "0.9.3" });
+
+    const context = fs.readFileSync(contextPath, "utf8");
+    assert.match(context, /Runtime version: 0\.9\.3/);
+    assert.doesNotMatch(context, /Runtime version: 0\.9\.1/);
+    assert.match(context, /User note: keep this architecture decision/);
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, ".webgpt-handoff", "MANIFEST.json"), "utf8"));
+    assert.equal(manifest.runtimeVersion, "0.9.3");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("design issue journal is disabled by default and redacts secrets when enabled", () => {
   const root = fixture();
   try {

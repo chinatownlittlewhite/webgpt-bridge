@@ -94,9 +94,11 @@ function createUpdateService(options) {
   let downloadPromise = null;
   let startupTimer = null;
   let periodicTimer = null;
+  let disposed = false;
   const handlers = new Map();
 
   function publish(next) {
+    if (disposed) return snapshot(state);
     state = makeState(next.status, { ...state, ...next, currentVersion });
     const value = snapshot(state);
     emitState(value);
@@ -244,7 +246,7 @@ function createUpdateService(options) {
   }
 
   function start() {
-    if (!isPackaged || startupTimer) return;
+    if (disposed || !isPackaged || startupTimer) return;
     startupTimer = setTimeoutFn(() => {
       void checkForUpdates();
       periodicTimer = setIntervalFn(() => { void checkForUpdates(); }, PERIODIC_CHECK_MS);
@@ -254,6 +256,7 @@ function createUpdateService(options) {
   }
 
   function dispose() {
+    disposed = true;
     if (startupTimer) clearTimeoutFn(startupTimer);
     if (periodicTimer) clearIntervalFn(periodicTimer);
     startupTimer = null;

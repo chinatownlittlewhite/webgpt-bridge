@@ -33,6 +33,7 @@ export function createApprovalRequest({
   policy,
   sandbox,
   sandboxAccess = {},
+  execution = {},
 } = {}) {
   if (!Array.isArray(argv) || argv.length === 0) {
     throw new TypeError("approval argv must be a non-empty array");
@@ -57,6 +58,9 @@ export function createApprovalRequest({
       read: stablePaths(sandboxAccess.read),
       write: stablePaths(sandboxAccess.write),
     },
+    execution: {
+      pty: execution?.pty === true,
+    },
   };
   const id = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
   return Object.freeze({
@@ -72,6 +76,7 @@ export function createApprovalRequest({
       read: Object.freeze([...payload.sandboxAccess.read]),
       write: Object.freeze([...payload.sandboxAccess.write]),
     }),
+    execution: Object.freeze(payload.execution),
   });
 }
 

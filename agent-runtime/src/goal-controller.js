@@ -235,6 +235,8 @@ export function createGoalController(options = {}) {
       return alreadyFailed(sessionId);
     }
     if (typeof sessionId !== "string") return core.finish(input, trustedContext);
+    const current = core.status(sessionId);
+    if (!RECOVERABLE_STATUSES.has(current.status)) return core.finish(input, trustedContext);
 
     beginTrackedOperation(state, sessionId);
     if (!persistMutationIntent(store, state, sessionId, "goal_finish", input)) {

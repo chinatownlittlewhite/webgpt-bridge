@@ -1,5 +1,7 @@
 # WebGPT Bridge Desktop Auto-Update, Release, and Signing Design
 
+> **Historical / superseded signing design.** The current public distribution policy intentionally does not require external code-signing or Apple notarization credentials. Use `docs/release-signing.md` as the authoritative current release policy; this document is retained as design history.
+
 Date: 2026-08-26
 Status: Written specification approved; implementation planning in progress
 

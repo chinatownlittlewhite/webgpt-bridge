@@ -25,7 +25,7 @@ import { createHostApprovalClient } from "./local-broker-client.js";
 import { createCoreTools } from "./tool.js";
 import { resolveWorkspace } from "./workspace.js";
 
-const VERSION = "0.9.2";
+const VERSION = "0.9.3";
 const DEFAULT_PORT = 8787;
 
 function envBool(value, fallback = false) {

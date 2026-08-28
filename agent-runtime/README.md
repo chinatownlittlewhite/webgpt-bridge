@@ -4,7 +4,7 @@ Safety-first local coding-agent runtime designed for ChatGPT/MCP and external ag
 
 ## Release status
 
-Current version: **v0.9.2 Final Acceptance Candidate**.
+Current version: **v0.9.3 Stable**.
 
 The machine-verifiable release matrix and sign-off rules are recorded in `FINAL_ACCEPTANCE.md`.
 
@@ -24,7 +24,7 @@ The final-acceptance targets are:
 
 ## Frozen MCP tool surface
 
-The v0.9.2 MCP server exposes these 26 tools. Bounded inspection primitives remain available so an agent never needs command execution merely to inspect source code:
+The v0.9.3 MCP server exposes these 26 tools. Bounded inspection primitives remain available so an agent never needs command execution merely to inspect source code:
 
 ```text
 run_command

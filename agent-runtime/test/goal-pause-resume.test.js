@@ -114,6 +114,33 @@ test("active goal can pause and resume without losing identity, history, budget,
   assert.ok(resumed.history.some((event) => event.type === "goal_resumed"));
 });
 
+test("goal_finish cannot turn a safely paused Goal into a persistence failure", async () => {
+  const store = createMemoryGoalSessionStore();
+  const controller = createGoalController({ tools: [], sessionStore: store, verificationTasks: [] });
+  const started = controller.start({ goal: "Pause wins over a stale finish" });
+  const paused = await controller.pause({ sessionId: started.sessionId, reason: "turn boundary" });
+  assert.equal(paused.status, "paused");
+
+  const staleFinish = await controller.finish({ sessionId: started.sessionId, summary: "stale completion" });
+
+  assert.equal(staleFinish.status, "paused");
+  assert.equal(staleFinish.mustContinue, false);
+  assert.equal(controller.status(started.sessionId).status, "paused");
+  assert.equal(store.loadAll().find((entry) => entry.id === started.sessionId)?.status, "paused");
+});
+
+test("goal_finish preserves already-terminal semantics instead of reporting persistence_error", async () => {
+  const controller = createGoalController({ tools: [], verificationTasks: [] });
+  const started = controller.start({ goal: "Terminal finish stays terminal" });
+  await controller.cancel(started.sessionId);
+
+  const result = await controller.finish({ sessionId: started.sessionId, summary: "stale finish" });
+
+  assert.equal(result.status, "already_terminal");
+  assert.equal(result.mustContinue, false);
+  assert.equal(result.session.status, "canceled");
+});
+
 test("goal_resume only accepts paused sessions", async () => {
   const controller = createGoalController({ tools: [], verificationTasks: [] });
   const active = controller.start({ goal: "still active" });
@@ -346,4 +373,52 @@ test("goal_resume preserves terminal and blocked compatibility for non-paused st
   assert.equal(blocked.status, "not_paused");
   assert.equal(blocked.mustContinue, false);
   assert.equal(controller.status("blocked").status, "blocked_approval");
+});
+
+test("cross-turn Goal views have a strict response budget even when history and project instructions are large", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-goal-public-budget-"));
+  try {
+    fs.writeFileSync(path.join(workspace, "AGENTS.md"), `# Instructions\n${"x".repeat(31_000)}\n`, "utf8");
+    const noisy = makeTool("noisy", {
+      type: "object",
+      additionalProperties: false,
+      required: ["index"],
+      properties: { index: { type: "integer", minimum: 0 } },
+    }, async () => ({
+      status: "completed",
+      payload: "y".repeat(15_000),
+    }));
+    const controller = createGoalController({ workspace, tools: [noisy], verificationTasks: [] });
+    const started = controller.start({
+      goal: `large recovery goal ${"g".repeat(12_000)}`,
+      acceptanceCriteria: Array.from({ length: 12 }, (_, index) => `criterion-${index}-${"c".repeat(2_000)}`),
+      maxSteps: 40,
+      maxToolCalls: 40,
+    });
+    for (let index = 0; index < 20; index += 1) {
+      const stepped = await controller.step({ sessionId: started.sessionId, tool: "noisy", input: { index } });
+      assert.equal(stepped.status, "continue_required");
+    }
+
+    const status = controller.status(started.sessionId);
+    assert.ok(Buffer.byteLength(JSON.stringify(status)) <= 64_000, "goal_status must stay below the cross-turn response budget");
+    assert.ok(status.historyOmitted >= 0);
+    assert.ok(status.history.length <= 12);
+    assert.ok(Buffer.byteLength(status.projectContext.instructions) <= 8_500);
+
+    const paused = await controller.pause({
+      sessionId: started.sessionId,
+      summary: "s".repeat(20_000),
+      nextAction: "n".repeat(8_000),
+      reason: "r".repeat(8_000),
+    });
+    assert.equal(paused.status, "paused");
+    assert.ok(Buffer.byteLength(JSON.stringify(paused)) <= 64_000, "goal_pause must stay below the cross-turn response budget");
+
+    const resumed = await controller.resume(started.sessionId);
+    assert.equal(resumed.status, "active");
+    assert.ok(Buffer.byteLength(JSON.stringify(resumed)) <= 64_000, "goal_resume must stay below the cross-turn response budget");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });

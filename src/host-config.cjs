@@ -25,20 +25,43 @@ function normalizeHttpsProxy(value = "") {
   return `${parsed.protocol}//${parsed.host}`;
 }
 
+function boundedString(value, fallback = "", maxLength = 4096) {
+  const selected = value == null ? fallback : value;
+  if (selected == null) return "";
+  if (typeof selected !== "string") throw new TypeError("设置值必须是字符串。");
+  return selected.slice(0, maxLength);
+}
+
+function selected(input, defaults, key) {
+  return Object.hasOwn(input, key) ? input[key] : defaults[key];
+}
+
+function copyOptionalString(result, input, defaults, key, maxLength = 4096) {
+  if (!Object.hasOwn(input, key) && !Object.hasOwn(defaults, key)) return;
+  result[key] = boundedString(selected(input, defaults, key), "", maxLength);
+}
+
 function normalizeSettings(input = {}, defaults = {}) {
-  const proxyValue = Object.hasOwn(input, "httpsProxy") ? input.httpsProxy : defaults.httpsProxy;
-  const sshHostsValue = Object.hasOwn(input, "sshAllowedHosts") ? input.sshAllowedHosts : defaults.sshAllowedHosts;
-  return {
-    ...defaults,
-    ...input,
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("设置必须是对象。");
+  if (!defaults || typeof defaults !== "object" || Array.isArray(defaults)) throw new TypeError("默认设置必须是对象。");
+  const proxyValue = selected(input, defaults, "httpsProxy");
+  const sshHostsValue = selected(input, defaults, "sshAllowedHosts");
+  const result = {
     agentMode: "bundled",
     developmentPath: "",
     httpsProxy: normalizeHttpsProxy(proxyValue),
-    sshEnabled: input.sshEnabled === true,
+    sshEnabled: selected(input, defaults, "sshEnabled") === true,
     sshAllowedHosts: normalizeSshAllowedHosts(sshHostsValue),
-    approvalMode: ["cautious", "development", "auto", "full_control"].includes(input.approvalMode) ? input.approvalMode : "development",
-    designIssueJournal: input.designIssueJournal === true,
+    approvalMode: ["cautious", "development", "auto", "full_control"].includes(selected(input, defaults, "approvalMode"))
+      ? selected(input, defaults, "approvalMode")
+      : "development",
+    designIssueJournal: selected(input, defaults, "designIssueJournal") === true,
   };
+  for (const key of ["workspacePath", "runtimePath", "tunnelClientPath", "nodePath"]) {
+    copyOptionalString(result, input, defaults, key, 4096);
+  }
+  for (const key of ["tunnelId", "profile"]) copyOptionalString(result, input, defaults, key, 512);
+  return result;
 }
 
 function validateDevelopmentRuntime(settings) {

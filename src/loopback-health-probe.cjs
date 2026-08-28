@@ -2,8 +2,8 @@ const http = require("node:http");
 const net = require("node:net");
 
 const HEALTH_TARGETS = Object.freeze({
-  agent: Object.freeze({ kind: "http", host: "127.0.0.1", port: 8765, path: "/health" }),
-  tunnel: Object.freeze({ kind: "http", host: "127.0.0.1", port: 8766, path: "/health" }),
+  agent: Object.freeze({ kind: "http", host: "127.0.0.1", port: 8787, path: "/healthz" }),
+  tunnel: Object.freeze({ kind: "http", host: "127.0.0.1", port: 8080, path: "/readyz" }),
   github: Object.freeze({ kind: "tcp", host: "github.com", port: 443 }),
 });
 
@@ -34,10 +34,14 @@ function defaultTcpProbe(target, timeoutMs = 2_000) {
   });
 }
 
-function createLoopbackHealthProbe({ httpProbe = defaultHttpProbe, tcpProbe = defaultTcpProbe } = {}) {
+function createLoopbackHealthProbe({ targets = {}, httpProbe = defaultHttpProbe, tcpProbe = defaultTcpProbe, githubProbe } = {}) {
+  const definitions = Object.freeze({ ...HEALTH_TARGETS, ...targets, github: HEALTH_TARGETS.github });
   async function probe({ target } = {}) {
-    if (!Object.hasOwn(HEALTH_TARGETS, target)) throw new TypeError("health target 只能是 agent、tunnel 或 github。");
-    const definition = HEALTH_TARGETS[target];
+    if (!Object.hasOwn(definitions, target)) throw new TypeError("health target 只能是 agent、tunnel 或 github。");
+    if (target === "github" && typeof githubProbe === "function") {
+      return Object.freeze({ target, ...await githubProbe() });
+    }
+    const definition = definitions[target];
     const request = definition.kind === "http"
       ? { host: definition.host, port: definition.port, path: definition.path }
       : { host: definition.host, port: definition.port };

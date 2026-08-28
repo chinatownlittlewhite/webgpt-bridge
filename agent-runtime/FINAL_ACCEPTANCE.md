@@ -1,14 +1,14 @@
-# WebGPT Bridge Agent v0.9.2 — Final Acceptance
+# WebGPT Bridge Agent v0.9.3 — Final Acceptance
 
 ## Status
 
-**Release stage:** Final Acceptance Candidate
+**Release stage:** Stable
 
 Do not relabel this release as “Final Accepted” until the full acceptance command exits `0` independently on the required real target operating systems.
 
 ## Frozen release contract
 
-- Version: `0.9.2`
+- Version: `0.9.3`
 - MCP protocol target: `2026-07-28`
 - Model-facing MCP tools: exactly 26
 - Default raw command network policy: denied by the normal native sandbox
@@ -80,7 +80,7 @@ The full acceptance harness must exit non-zero if any required item fails:
 15. Tool discovery returns exactly the frozen 26 tools.
 16. `read_file`, `list_dir`, and `search_text` work through the built MCP server with bounded results.
 17. Agent-facing MCP `content` is concise rather than a JSON mirror of `structuredContent`, and pageable inspection/process results expose continuation metadata.
-18. `get_capabilities` returns version `0.9.2` and release stage `final-acceptance-candidate`.
+18. `get_capabilities` returns version `0.9.3` and release stage `stable`.
 19. The health endpoint reports the correct version/tool count.
 20. A paused persistent Goal survives a full MCP server restart, appears in bounded `goal_list`, resumes by the exact session id, and retains bounded project instruction context when applicable.
 21. `goal_finish` executes real project verification and returns `completed` with `verified=true`.
@@ -146,7 +146,7 @@ After local platform acceptance passes:
 3. For non-loopback deployment, configure a strong `LPC_MCP_TOKEN` and explicit `LPC_ALLOWED_HOSTS`; optionally configure hostname-only `LPC_ALLOWED_ORIGINS`.
 4. Expose the endpoint using the approved deployment/tunnel method.
 5. Refresh/rescan the ChatGPT custom app tools.
-6. Confirm ChatGPT sees all 26 v0.9.2 tools, including `goal_pause`, `goal_resume`, `goal_list`, `read_file`, `list_dir`, and `search_text`, and `run_project_task` includes `cwd`.
+6. Confirm ChatGPT sees all 26 v0.9.3 tools, including `goal_pause`, `goal_resume`, `goal_list`, `read_file`, `list_dir`, and `search_text`, and `run_project_task` includes `cwd`.
 7. Run a Goal Mode task from one user message and verify that normal `continue_required` responses remain in the same assistant turn without asking the user to type “continue”; then pause it, reconnect with an explicit `@macmini` turn, and resume the exact paused session.
 8. Verify a real approval-required action pauses for the platform/user approval instead of bypassing it.
 
@@ -155,11 +155,11 @@ After local platform acceptance passes:
 Only after the required operating-system rows above are `PASS` may the release stage be changed from:
 
 ```text
-final-acceptance-candidate
+stable
 ```
 
 to a final accepted/release status in code and documentation.
 
 Until then, the accurate description is:
 
-> v0.9.2 implementation and release harness complete; native final acceptance pending real target-OS execution.
+> v0.9.3 implementation and release harness complete; native final acceptance pending real target-OS execution.

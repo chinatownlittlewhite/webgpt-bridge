@@ -12,12 +12,85 @@ const DEFAULT_MAX_SESSIONS = 100;
 const DEFAULT_TTL_MS = 24 * 60 * 60_000;
 const MAX_HISTORY_EVENTS = 80;
 const MAX_EVENT_BYTES = 32_000;
+const MAX_PUBLIC_HISTORY_EVENTS = 8;
+const MAX_PUBLIC_EVENT_BYTES = 1_500;
+const MAX_PUBLIC_GOAL_BYTES = 6_000;
+const MAX_PUBLIC_CRITERIA_BYTES = 6_000;
+const MAX_PUBLIC_FEEDBACK_BYTES = 2_000;
+const MAX_PUBLIC_PAUSE_SUMMARY_BYTES = 4_000;
+const MAX_PUBLIC_PAUSE_ACTION_BYTES = 3_000;
+const MAX_PUBLIC_PAUSE_REASON_BYTES = 2_000;
+const MAX_PUBLIC_PROJECT_INSTRUCTIONS_BYTES = 6_000;
 const MAX_VERIFICATION_DIAGNOSTIC_BYTES = 4_096;
 const TERMINAL = new Set(["completed", "canceled", "budget_exhausted", "stalled", "failed"]);
 const STORED_STATUSES = new Set([...TERMINAL, "active", "paused", "blocked_approval"]);
 
 function hash(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function boundedPublicText(value, maxBytes) {
+  if (typeof value !== "string") return value;
+  const raw = Buffer.from(value, "utf8");
+  if (raw.length <= maxBytes) return value;
+  const suffix = "\n...[TRUNCATED]";
+  const suffixBytes = Buffer.byteLength(suffix);
+  return `${raw.subarray(0, Math.max(0, maxBytes - suffixBytes)).toString("utf8")}${suffix}`;
+}
+
+function boundedPublicCriteria(criteria) {
+  const result = [];
+  let used = 0;
+  for (const criterion of criteria ?? []) {
+    if (result.length >= 12) break;
+    const bounded = boundedPublicText(criterion, 1_000);
+    const bytes = Buffer.byteLength(JSON.stringify(bounded));
+    if (used + bytes > MAX_PUBLIC_CRITERIA_BYTES) break;
+    result.push(bounded);
+    used += bytes;
+  }
+  return Object.freeze(result);
+}
+
+function publicPause(pause) {
+  if (!pause) return null;
+  return Object.freeze({
+    summary: boundedPublicText(pause.summary, MAX_PUBLIC_PAUSE_SUMMARY_BYTES),
+    nextAction: boundedPublicText(pause.nextAction, MAX_PUBLIC_PAUSE_ACTION_BYTES),
+    reason: boundedPublicText(pause.reason, MAX_PUBLIC_PAUSE_REASON_BYTES),
+    pausedAt: pause.pausedAt,
+  });
+}
+
+function publicHistoryEvent(event) {
+  const serialized = JSON.stringify(event);
+  const bytes = Buffer.byteLength(serialized);
+  if (bytes <= MAX_PUBLIC_EVENT_BYTES) return event;
+  return Object.freeze({
+    type: event?.type ?? "unknown",
+    ...(typeof event?.tool === "string" ? { tool: event.tool } : {}),
+    ...(typeof event?.result?.status === "string" ? { status: event.result.status } : {}),
+    truncated: true,
+    sha256: hash(event),
+    bytes,
+  });
+}
+
+function publicProjectContext(context) {
+  if (!context) return null;
+  return Object.freeze({
+    cwd: boundedPublicText(context.cwd, 512),
+    files: Object.freeze((context.files ?? []).slice(0, 8).map((file) => Object.freeze({
+      path: boundedPublicText(file.path, 512),
+      bytes: file.bytes,
+      sha256: file.sha256,
+    }))),
+    nestedInstructionFiles: Object.freeze((context.nestedInstructionFiles ?? []).slice(0, 8).map((entry) => boundedPublicText(entry, 512))),
+    instructions: boundedPublicText(context.instructions ?? "", MAX_PUBLIC_PROJECT_INSTRUCTIONS_BYTES),
+    totalBytes: context.totalBytes,
+    truncated: context.truncated === true,
+    scanTruncated: context.scanTruncated === true,
+  });
 }
 
 function positiveInteger(value, name, max) {
@@ -96,23 +169,30 @@ function budget(session) {
 }
 
 function sessionView(session, includeHistory = false) {
+  const publicCriteria = boundedPublicCriteria(session.acceptanceCriteria);
+  const history = includeHistory
+    ? session.history.slice(-MAX_PUBLIC_HISTORY_EVENTS).map(publicHistoryEvent)
+    : null;
   return Object.freeze({
     sessionId: session.id,
-    goal: session.goal,
-    cwd: session.cwd,
-    acceptanceCriteria: session.acceptanceCriteria,
+    goal: boundedPublicText(session.goal, MAX_PUBLIC_GOAL_BYTES),
+    cwd: boundedPublicText(session.cwd, 1_024),
+    acceptanceCriteria: publicCriteria,
+    ...(publicCriteria.length < session.acceptanceCriteria.length ? {
+      acceptanceCriteriaOmitted: session.acceptanceCriteria.length - publicCriteria.length,
+    } : {}),
     status: session.status,
     mustContinue: session.status === "active",
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     verified: session.verified,
     budget: budget(session),
-    lastFeedback: session.lastFeedback,
-    pause: session.pause ?? null,
+    lastFeedback: boundedPublicText(session.lastFeedback, MAX_PUBLIC_FEEDBACK_BYTES),
+    pause: publicPause(session.pause),
     ...(includeHistory ? {
-        history: session.history.slice(-20),
-        historyOmitted: Math.max(0, session.history.length - 20),
-        projectContext: session.projectContext ?? null,
+        history,
+        historyOmitted: Math.max(0, session.history.length - history.length),
+        projectContext: publicProjectContext(session.projectContext),
       } : {}),
   });
 }
