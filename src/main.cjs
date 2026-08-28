@@ -16,6 +16,7 @@ const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { buildTrustedCommandPath, preferredNodeCandidates, selectSupportedNode } = require("./host-path.cjs");
 const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { createAppLifecycleCoordinator } = require("./app-lifecycle.cjs");
 const { createRuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { createUpdateService } = require("./update-service.cjs");
 const { trayIconDataUrl } = require("./tray-icon.cjs");
@@ -43,9 +44,9 @@ let localApprovalMode = "development";
 const approvalSession = createApprovalSession();
 const initializedTunnelPreflights = new WeakSet();
 let logLines = [];
-let isQuitting = false;
 let updateService;
 let runtimeSupervisor;
+let appLifecycle;
 
 function configPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -488,7 +489,9 @@ function updateTray() {
     { type: "separator" },
     {
       label: "退出 WebGPT Bridge",
-      click: () => { isQuitting = true; app.quit(); },
+      click: () => {
+        void appLifecycle.requestQuit("tray-quit").catch((error) => appendLog("host", `${error.code || "SHUTDOWN_FAILED"}：${error.message}`));
+      },
     },
   ]));
 }
@@ -641,6 +644,13 @@ runtimeSupervisor = createRuntimeSupervisor({
   stopResource: stopRuntimeResource,
 });
 runtimeSupervisor.subscribe(() => emit("status", getStatus()));
+appLifecycle = createAppLifecycleCoordinator({
+  app,
+  supervisor: runtimeSupervisor,
+  disposeHostServices: async () => {
+    updateService?.dispose();
+  },
+});
 
 function createWindow() {
   windowRef = new BrowserWindow({
@@ -659,7 +669,7 @@ function createWindow() {
   });
   windowRef.webContents.on("will-navigate", (event) => event.preventDefault());
   windowRef.on("close", (event) => {
-    if (isQuitting) return;
+    if (appLifecycle.nativeQuitAllowed()) return;
     event.preventDefault();
     windowRef.hide();
   });
@@ -673,8 +683,7 @@ app.whenReady().then(() => {
     updater: autoUpdater,
     currentVersion: app.getVersion(),
     isPackaged: app.isPackaged,
-    stopRuntime: () => runtimeSupervisor.stop("update-install"),
-    setQuitting: (value) => { isQuitting = Boolean(value); },
+    prepareForInstall: () => appLifecycle.prepareForUpdateInstall(),
     emitState: (state) => {
       windowRef?.webContents?.send("update:state", state);
       updateTray();
@@ -718,8 +727,10 @@ app.whenReady().then(() => {
   app.on("activate", showWindow);
 });
 
-app.on("before-quit", () => {
-  isQuitting = true;
-  updateService?.dispose();
-  void runtimeSupervisor.stop("before-quit");
+app.on("before-quit", (event) => {
+  const nativeAllowed = appLifecycle.nativeQuitAllowed();
+  appLifecycle.handleBeforeQuit(event);
+  if (!nativeAllowed) {
+    void appLifecycle.whenSettled().catch((error) => appendLog("host", `${error.code || "SHUTDOWN_FAILED"}：${error.message}`));
+  }
 });
