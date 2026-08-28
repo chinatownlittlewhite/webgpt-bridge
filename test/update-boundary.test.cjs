@@ -46,6 +46,26 @@ test("main process delegates runtime preparation to StartupPreflight without syn
   assert.doesNotMatch(main, /spawnSync\([^\n]*\["--version"\]/);
 });
 
+test("tunnel startup reuses Host-owned profiles and connected waits for readyz", () => {
+  assert.match(main, /ensureTunnelProfile/);
+  assert.match(main, /tunnelProfileDir/);
+  assert.doesNotMatch(main, /initializedTunnelPreflights/);
+
+  const startIndex = main.indexOf("async function startRuntimeTunnel");
+  const readyIndex = main.indexOf("async function waitRuntimeTunnelReady", startIndex);
+  const stopIndex = main.indexOf("async function stopRuntimeResource", readyIndex);
+  const startBlock = main.slice(startIndex, readyIndex);
+  const readyBlock = main.slice(readyIndex, stopIndex);
+
+  assert.match(startBlock, /tunnelProfile/);
+  assert.match(startBlock, /"run"/);
+  assert.match(startBlock, /"--profile-dir"/);
+  assert.doesNotMatch(startBlock, /"init"|--force/);
+  assert.match(readyBlock, /\/readyz/);
+  assert.match(readyBlock, /statusCode\s*===\s*200/);
+  assert.doesNotMatch(readyBlock, /return\s+processIsLive\(tunnel\)/);
+});
+
 test("main process does not expose host-prep mutation through update IPC", () => {
   const updateSection = main.slice(main.indexOf("update:get-state"));
   assert.doesNotMatch(updateSection, /windows-host-prep|--apply|--remove|schtasks/i);
