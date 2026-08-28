@@ -39,7 +39,6 @@ async function fetchBytesWithRetry(url, {
       timedOut = true;
       controller.abort(createTimeoutError(url, requestTimeoutMs));
     }, requestTimeoutMs);
-    if (typeof timer.unref === "function") timer.unref();
 
     try {
       const response = await fetchImpl(url, { redirect: "follow", signal: controller.signal });

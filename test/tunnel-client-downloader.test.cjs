@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const root = path.join(__dirname, "..");
 const helperPath = path.join(root, "scripts", "tunnel-client-download.cjs");
@@ -82,6 +83,26 @@ test("downloader retries transient HTTP and network failures with bounded determ
   assert.deepEqual(attempts.map((entry) => entry.options.redirect), ["follow", "follow", "follow"]);
   assert.ok(attempts.every((entry) => entry.options.signal instanceof AbortSignal), "every fetch attempt must carry an abort signal");
   assert.deepEqual(delays, [250, 750]);
+});
+
+test("downloader timeout keeps a standalone process alive until the stalled request is aborted", () => {
+  const script = `
+    const { fetchBytesWithRetry } = require(${JSON.stringify(helperPath)});
+    fetchBytesWithRetry("https://example.test/stalled.zip", {
+      fetchImpl: async (_url, options) => await new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason || new Error("aborted")), { once: true });
+      }),
+      sleep: async () => {},
+      maxAttempts: 1,
+      requestTimeoutMs: 10,
+    }).then(
+      () => { console.error("unexpected success"); process.exitCode = 2; },
+      (error) => { console.log(error.message); if (!/timed out after 10 ms/i.test(error.message)) process.exitCode = 3; },
+    );
+  `;
+  const result = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /timed out after 10 ms/i, "timeout must fire even when it is the only event-loop handle");
 });
 
 test("downloader aborts a stalled request after the bounded per-attempt timeout", async () => {
