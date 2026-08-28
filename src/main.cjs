@@ -7,15 +7,16 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { normalizeSettings, validateDevelopmentRuntime } = require("./host-config.cjs");
+const { normalizeSettings } = require("./host-config.cjs");
 const { approvalPrompt } = require("./approval-prompt.cjs");
 const { createApprovalSession } = require("./approval-session.cjs");
 const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
 const { createLocalFileBroker } = require("./local-file-broker.cjs");
 const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
-const { buildTrustedCommandPath, preferredNodeCandidates, selectSupportedNode } = require("./host-path.cjs");
-const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { buildTrustedCommandPath } = require("./host-path.cjs");
+const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { createStartupPreflight } = require("./startup-preflight.cjs");
 const { createAppLifecycleCoordinator } = require("./app-lifecycle.cjs");
 const { createRuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { createUpdateService } = require("./update-service.cjs");
@@ -30,7 +31,6 @@ app.setPath("userData", path.join(app.getPath("appData"), "local-agent-host"));
 const MCP_HOST = "127.0.0.1";
 const MCP_PORT = 8787;
 const MAX_LOG_LINES = 600;
-const PROFILE_PATTERN = /^[a-zA-Z0-9._-]{1,64}$/;
 
 let windowRef;
 let trayRef;
@@ -73,6 +73,20 @@ function defaultBundledNodePath() {
   if (process.platform !== "win32") return "";
   const resourcesRoot = app.isPackaged ? process.resourcesPath : path.join(__dirname, "..", "build");
   return path.join(resourcesRoot, "node-runtime", "node.exe");
+}
+
+function loadBundledNodeManifest() {
+  const nodePath = defaultBundledNodePath();
+  if (!nodePath) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(path.dirname(nodePath), "BUNDLED_SOURCE.json"), "utf8"));
+    const version = String(parsed?.version || "").trim();
+    const nodeSha256 = String(parsed?.nodeSha256 || "").trim().toLowerCase();
+    if (!version || !/^[a-f0-9]{64}$/.test(nodeSha256)) return null;
+    return Object.freeze({ path: nodePath, version, nodeSha256 });
+  } catch {
+    return null;
+  }
 }
 
 function defaultSettings() {
@@ -148,6 +162,14 @@ async function readRuntimeKey() {
   return migrateLegacyMacKey();
 }
 
+const startupPreflight = createStartupPreflight({
+  bundledTunnelClientPath: () => defaultBundledTunnelClientPath(),
+  bundledNodeManifest: () => loadBundledNodeManifest(),
+  readRuntimeKey: () => readRuntimeKey(),
+  appToolsBin: () => path.join(app.getPath("userData"), "tools", "bin"),
+  resolveDesktopGitHubCli,
+});
+
 function emit(type, value) {
   windowRef?.webContents.send("host:event", { type, value });
   if (type === "status") updateTray();
@@ -166,18 +188,6 @@ function processIsLive(child) {
   return Boolean(child && child.exitCode === null);
 }
 
-function nodeVersion(candidate) {
-  if (!candidate) return "";
-  const result = spawnSync(candidate, ["--version"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    shell: false,
-    timeout: 4000,
-    windowsHide: true,
-  });
-  return result.error || result.status !== 0 ? "" : result.stdout;
-}
-
 function nvmNodeCandidates() {
   const versions = path.join(os.homedir(), ".nvm", "versions", "node");
   try {
@@ -189,46 +199,6 @@ function nvmNodeCandidates() {
   } catch {
     return [];
   }
-}
-
-function preferredNode(settings) {
-  const candidates = preferredNodeCandidates({
-    settingsNodePath: settings.nodePath,
-    lpcNodePath: process.env.LPC_NODE_PATH,
-    bundledNodePath: defaultBundledNodePath(),
-    platform: process.platform,
-    env: process.env,
-    nvmCandidates: nvmNodeCandidates(),
-  });
-  return selectSupportedNode(candidates, nodeVersion);
-}
-
-function assertDirectory(value, label) {
-  if (!value || !path.isAbsolute(value) || !fs.statSync(value, { throwIfNoEntry: false })?.isDirectory()) {
-    throw new Error(`${label}必须是存在的绝对目录。`);
-  }
-}
-
-function validateSettings(settings) {
-  const runtime = validateDevelopmentRuntime(settings);
-  assertDirectory(runtime.workspacePath, "工作区");
-  assertDirectory(runtime.runtimePath, "Agent 运行时目录");
-  if (!fs.existsSync(path.join(runtime.runtimePath, "dist", "server.js"))) {
-    throw new Error("Agent 运行时目录中未找到 dist/server.js；请先在该项目运行 npm install 和 npm run build。");
-  }
-  const tunnelClient = resolveTunnelClientPath({
-    customPath: settings.tunnelClientPath,
-    bundledPath: defaultBundledTunnelClientPath(),
-    isFile: (value) => fs.statSync(value, { throwIfNoEntry: false })?.isFile() === true,
-  });
-  if (!tunnelClient) {
-    throw new Error("未找到应用内置的 OpenAI tunnel-client。请重新安装应用，或在高级设置中选择自定义 tunnel-client。");
-  }
-  if (!settings.tunnelId.startsWith("tunnel_")) throw new Error("Tunnel ID 应以 tunnel_ 开头。");
-  if (!PROFILE_PATTERN.test(settings.profile)) throw new Error("配置名称只能包含字母、数字、点、下划线和连字符。");
-  const node = preferredNode(settings);
-  if (!node) throw new Error("未找到 Node.js。请安装 Node.js 20+，或在设置中选择 node 可执行文件。");
-  return { node, runtime, tunnelClient };
 }
 
 function spawnLogged(command, args, options, label) {
@@ -544,20 +514,21 @@ async function stopChild(child, name) {
 
 async function prepareRuntime() {
   const settings = await loadSettings();
-  const { node, runtime, tunnelClient } = validateSettings(settings);
-  const runtimeKey = await readRuntimeKey();
-  if (!runtimeKey) throw new Error("请先保存此电脑专用的 OpenAI Tunnel 运行时密钥。");
+  const preflight = await startupPreflight.prepare({
+    settings,
+    env: process.env,
+    platform: process.platform,
+    nvmCandidates: nvmNodeCandidates(),
+  });
   logLines = [];
   emit("logs", logLines);
-  const appToolsBin = path.join(app.getPath("userData"), "tools", "bin");
-  const githubCliPath = resolveDesktopGitHubCli({ appToolsBin });
   appendLog(
     "host",
-    githubCliPath
-      ? `GitHub CLI：${githubCliPath}`
+    preflight.githubCliPath
+      ? `GitHub CLI：${preflight.githubCliPath}`
       : "未检测到 GitHub CLI；GitHub 工具会返回可修复诊断，其他本地工具不受影响。",
   );
-  return { settings, node, runtime, tunnelClient, runtimeKey, appToolsBin, githubCliPath };
+  return preflight;
 }
 
 async function startRuntimeBroker(preflight) {
