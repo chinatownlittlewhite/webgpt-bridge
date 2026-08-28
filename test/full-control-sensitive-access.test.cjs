@@ -4,7 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 test("full control cannot bypass the one-time sensitive-access confirmation", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
+  const windowsSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8").replace(/\r?\n/g, "\r\n");
+  const source = windowsSource.replace(/\r\n/g, "\n");
   const start = source.indexOf("async function confirmLocalOperation");
   const end = source.indexOf("\n}\n", start);
   assert.notEqual(start, -1);
