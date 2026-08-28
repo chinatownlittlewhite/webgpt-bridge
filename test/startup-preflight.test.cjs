@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
 
 const { createStartupPreflight } = require("../src/startup-preflight.cjs");
 
@@ -26,7 +27,7 @@ test("startup preflight returns one immutable validated snapshot", async () => {
       return { mode: "bundled", workspacePath: value.workspacePath, runtimePath: value.runtimePath };
     },
     isDirectory: (value) => value === "/workspace" || value === "/runtime",
-    isFile: (value) => value === "/runtime/dist/server.js" || value === "/tunnel-client",
+    isFile: (value) => value === path.join("/runtime", "dist", "server.js") || value === "/tunnel-client",
     resolveTunnelClient({ customPath, isFile }) {
       calls.tunnel += 1;
       return isFile(customPath) ? customPath : "";
