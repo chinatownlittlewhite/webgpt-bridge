@@ -37,6 +37,15 @@ test("main process routes quit and update install through AppLifecycleCoordinato
   assert.doesNotMatch(main, /let isQuitting\b/);
 });
 
+test("main process delegates runtime preparation to StartupPreflight without synchronous Node version probing", () => {
+  assert.match(main, /createStartupPreflight/);
+  assert.match(main, /startupPreflight\s*=\s*createStartupPreflight\s*\(/);
+  assert.match(main, /startupPreflight\.prepare\s*\(/);
+  assert.doesNotMatch(main, /function\s+nodeVersion\s*\(/);
+  assert.doesNotMatch(main, /selectSupportedNode\s*\(/);
+  assert.doesNotMatch(main, /spawnSync\([^\n]*\["--version"\]/);
+});
+
 test("main process does not expose host-prep mutation through update IPC", () => {
   const updateSection = main.slice(main.indexOf("update:get-state"));
   assert.doesNotMatch(updateSection, /windows-host-prep|--apply|--remove|schtasks/i);
