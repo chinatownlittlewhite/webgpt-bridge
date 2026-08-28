@@ -128,20 +128,20 @@ export async function runPackagedPtySmoke(appRoot, options = {}) {
       killAfterInput: false,
       ...common,
     });
-    const shellResult = await runPtyCase(manager, {
-      label: "shell",
+    const killResult = await runPtyCase(manager, {
+      label: "node-kill",
       argv: [
-        "zsh",
-        "-lc",
-        "printf 'SHELL_PTY_READY\\n'; IFS= read -r line; printf 'SHELL_PTY_INPUT:%s\\n' \"$line\"; sleep 30",
+        "node",
+        "-e",
+        "process.stdout.write('NODE_KILL_READY\\n'); process.stdin.once('data', (data) => { process.stdout.write('NODE_KILL_INPUT:' + data.toString().trim() + '\\n'); }); setInterval(() => {}, 1000);",
       ],
-      input: "shell-ok\n",
-      readyMarker: "SHELL_PTY_READY",
-      inputMarker: "SHELL_PTY_INPUT:shell-ok",
+      input: "kill-ok\n",
+      readyMarker: "NODE_KILL_READY",
+      inputMarker: "NODE_KILL_INPUT:kill-ok",
       killAfterInput: true,
       ...common,
     });
-    return { node: nodeResult, shell: shellResult };
+    return { node: nodeResult, kill: killResult };
   } finally {
     await manager.close();
     fs.rmSync(workspace, { recursive: true, force: true });
@@ -161,7 +161,7 @@ if (isMain) {
   }
   try {
     const result = await runPackagedPtySmoke(path.resolve(appRoot));
-    console.log(`packaged macOS PTY smoke OK (node=${result.node.snapshot.status}, shell=${result.shell.snapshot.status})`);
+    console.log(`packaged macOS PTY smoke OK (node=${result.node.snapshot.status}, kill=${result.kill.snapshot.status})`);
   } catch (error) {
     console.error(error instanceof Error ? error.stack || error.message : String(error));
     process.exit(1);

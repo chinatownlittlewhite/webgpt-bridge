@@ -72,6 +72,7 @@ test("Windows acceptance checks capability reporting for native and GitHub readi
   assert.match(source, /caps\.releaseAcceptance\.currentNativeSandboxVerified/);
   assert.match(source, /caps\.networkSandbox\.status/);
   assert.match(source, /caps\.githubCli\.status/);
+  assert.match(source, /unauthenticated/);
 });
 
 test("Goal finish acceptance gives bounded long-running verification enough client budget", () => {

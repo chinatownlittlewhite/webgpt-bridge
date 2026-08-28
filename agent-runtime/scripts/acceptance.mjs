@@ -457,7 +457,7 @@ try {
   if (process.platform === "win32" && !skipNative) {
     assert.equal(caps.networkSandbox.status, "ready");
     assert.equal(caps.networkSandbox.usableForStructuredNetworkTools, true);
-    assert.ok(["ready", "missing", "broken"].includes(caps.githubCli.status), `GitHub CLI capability must be actionable: ${JSON.stringify(caps.githubCli)}`);
+    assert.ok(["ready", "unauthenticated", "missing", "broken"].includes(caps.githubCli.status), `GitHub CLI capability must be actionable: ${JSON.stringify(caps.githubCli)}`);
     if (caps.githubCli.status === "ready") {
       assert.equal(typeof caps.githubCli.resolvedPath, "string");
       assert.ok(caps.githubCli.resolvedPath.length > 0);

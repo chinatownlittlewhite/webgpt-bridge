@@ -5,15 +5,15 @@ const path = require("node:path");
 
 const root = path.join(__dirname, "..");
 
-test("v0.4.9 desktop and v0.9.3 Agent versions are explicit and synchronized with runtime metadata", () => {
+test("v0.4.10 desktop and v0.9.3 Agent versions are explicit and synchronized with runtime metadata", () => {
   const desktop = require(path.join(root, "package.json"));
   const desktopLock = require(path.join(root, "package-lock.json"));
   const agent = require(path.join(root, "agent-runtime", "package.json"));
   const agentLock = require(path.join(root, "agent-runtime", "package-lock.json"));
   const server = fs.readFileSync(path.join(root, "agent-runtime", "src", "server.js"), "utf8");
-  assert.equal(desktop.version, "0.4.9");
-  assert.equal(desktopLock.version, "0.4.9");
-  assert.equal(desktopLock.packages[""].version, "0.4.9");
+  assert.equal(desktop.version, "0.4.10");
+  assert.equal(desktopLock.version, "0.4.10");
+  assert.equal(desktopLock.packages[""].version, "0.4.10");
   assert.equal(agent.version, "0.9.3");
   assert.equal(agentLock.version, "0.9.3");
   assert.equal(agentLock.packages[""].version, "0.9.3");

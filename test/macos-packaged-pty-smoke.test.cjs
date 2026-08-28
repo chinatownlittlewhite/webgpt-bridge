@@ -68,4 +68,5 @@ test("packaged smoke source imports the packaged process manager instead of dire
   const source = fs.readFileSync(path.join(__dirname, "..", "scripts", "macos-packaged-pty-smoke.mjs"), "utf8");
   assert.match(source, /app\.asar\.unpacked[\s\S]*agent-runtime[\s\S]*dist[\s\S]*process-manager\.js/);
   assert.doesNotMatch(source, /(?:from\s+|import\s*\()\s*["']node-pty["']/);
+  assert.doesNotMatch(source, /argv:\s*\[\s*["']zsh["']/);
 });
