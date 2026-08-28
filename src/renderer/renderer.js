@@ -1,5 +1,5 @@
 const api = window.localAgentHost;
-const ids = ["workspacePath", "runtimePath", "tunnelClientPath", "nodePath", "tunnelId", "profile", "httpsProxy", "approvalMode", "runtimeKey"];
+const ids = ["workspacePath", "runtimePath", "tunnelClientPath", "nodePath", "tunnelId", "profile", "httpsProxy", "sshAllowedHosts", "approvalMode", "runtimeKey"];
 const byId = (id) => document.getElementById(id);
 let updateState;
 
@@ -10,7 +10,13 @@ function message(text, error = false) {
 }
 
 function collect() {
-  return { ...Object.fromEntries(ids.map((id) => [id, byId(id).value.trim()])), designIssueJournal: byId("designIssueJournal").checked };
+  const sshAllowedHosts = byId("sshAllowedHosts").value.split(/[\n,]+/).map((host) => host.trim()).filter(Boolean);
+  return {
+    ...Object.fromEntries(ids.map((id) => [id, byId(id).value.trim()])),
+    designIssueJournal: byId("designIssueJournal").checked,
+    sshEnabled: byId("sshEnabled").checked,
+    sshAllowedHosts,
+  };
 }
 
 function renderStatus(status) {
@@ -121,8 +127,10 @@ api.onUpdateState(renderUpdate);
 
 (async () => {
   const settings = await api.loadSettings();
-  for (const id of ids) if (id !== "runtimeKey") byId(id).value = settings[id] || "";
+  for (const id of ids) if (id !== "runtimeKey" && id !== "sshAllowedHosts") byId(id).value = settings[id] || "";
   byId("designIssueJournal").checked = settings.designIssueJournal === true;
+  byId("sshEnabled").checked = settings.sshEnabled === true;
+  byId("sshAllowedHosts").value = Array.isArray(settings.sshAllowedHosts) ? settings.sshAllowedHosts.join("\n") : "";
   byId("keyStatus").textContent = settings.hasRuntimeKey ? "此电脑的密钥已安全保存" : "尚未保存运行时密钥";
   renderStatus(await api.status());
   renderLogs(await api.logs());

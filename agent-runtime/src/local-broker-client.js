@@ -5,11 +5,13 @@ import { validateJsonSchema } from "./schema-validate.js";
 const pathSchema = { type: "string", minLength: 1, maxLength: 4_096 };
 const shaSchema = { type: "string", pattern: "^[a-fA-F0-9]{64}$" };
 const accessIdSchema = { type: "string", minLength: 1, maxLength: 128 };
+const knownFolderSchema = { type: "string", enum: ["desktop", "downloads", "documents"] };
+const relativePathSchema = { type: "string", maxLength: 4_096, pattern: "^(?!/)(?![A-Za-z]:[\\/])(?!.*(?:^|[\\/])\.\.(?:[\\/]|$))[^\u0000]*$" };
 const safeExecutableSchema = {
   type: "string",
   minLength: 1,
   maxLength: 128,
-  pattern: "^(?!(?:sudo|su|doas|ssh|scp|sftp|sh|bash|zsh|fish|cmd(?:\\.exe)?|powershell|pwsh)$)[^/\\\\\\u0000]+$",
+  pattern: "^(?!(?:sudo|su|doas|scp|sftp|sh|bash|zsh|fish|cmd(?:\\.exe)?|powershell|pwsh)$)[^/\\\\\\u0000]+$",
 };
 const argvSchema = {
   type: "array",
@@ -27,6 +29,21 @@ export const localListInputSchema = Object.freeze({
 export const localReadInputSchema = Object.freeze({
   type: "object", additionalProperties: false, required: ["path"],
   properties: { path: pathSchema, startLine: { type: "integer", minimum: 1, maximum: 10_000_000, default: 1 }, maxLines: { type: "integer", minimum: 1, maximum: 500, default: 200 }, accessId: accessIdSchema },
+});
+
+export const localListKnownFolderInputSchema = Object.freeze({
+  type: "object", additionalProperties: false, required: ["folder"],
+  properties: { folder: knownFolderSchema, relativePath: relativePathSchema, depth: { type: "integer", minimum: 1, maximum: 4, default: 1 }, includeHidden: { type: "boolean", default: false } },
+});
+
+export const localReadKnownFolderInputSchema = Object.freeze({
+  type: "object", additionalProperties: false, required: ["folder"],
+  properties: { folder: knownFolderSchema, relativePath: relativePathSchema, startLine: { type: "integer", minimum: 1, maximum: 10_000_000, default: 1 }, maxLines: { type: "integer", minimum: 1, maximum: 500, default: 200 } },
+});
+
+export const localProbeHealthInputSchema = Object.freeze({
+  type: "object", additionalProperties: false, required: ["target"],
+  properties: { target: { type: "string", enum: ["agent", "tunnel", "github"] } },
 });
 
 export const localRequestSensitiveAccessInputSchema = Object.freeze({
@@ -138,6 +155,9 @@ export function createLocalBrokerTools({ socketPath } = {}) {
   return [
     tool("local_list", "List an allowed non-sensitive local directory through the App-owned broker; symlinks are not followed.", localListInputSchema, client),
     tool("local_read", "Read a bounded UTF-8 local file through the App-owned broker and receive its SHA-256.", localReadInputSchema, client),
+    tool("local_list_known_folder", "List desktop, downloads, or documents through a fixed known-folder root and relative path.", localListKnownFolderInputSchema, client),
+    tool("local_read_known_folder", "Read desktop, downloads, or documents through a fixed known-folder root and relative path.", localReadKnownFolderInputSchema, client),
+    tool("local_probe_health", "Probe only the fixed agent, tunnel, or github health targets through the App-owned broker.", localProbeHealthInputSchema, client),
     tool("local_request_sensitive_access", "Ask the desktop App for one-time native approval to list or read one sensitive path.", localRequestSensitiveAccessInputSchema, interactiveClient),
     tool("local_stage_changes", "Stage 1–20 SHA-bound non-sensitive file changes; this does not write files.", localStageChangesInputSchema, client),
     tool("local_confirm_batch", "Commit a previously staged local change batch. The App revalidates all SHA values and requests confirmation when required.", localConfirmBatchInputSchema, interactiveClient),

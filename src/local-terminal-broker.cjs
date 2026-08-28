@@ -3,9 +3,11 @@ const path = require("node:path");
 const { classifyLocalTerminalApproval, normalizeApprovalMode } = require("./local-policy.cjs");
 
 const BLOCKED_EXECUTABLES = new Set([
-  "sudo", "su", "doas", "ssh", "scp", "sftp",
+  "sudo", "su", "doas", "scp", "sftp",
   "sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "pwsh",
 ]);
+const NETWORK_GIT_SUBCOMMANDS = new Set(["clone", "fetch", "pull", "push", "ls-remote", "submodule"]);
+const NETWORK_PACKAGE_SUBCOMMANDS = new Set(["install", "i", "ci", "publish", "update", "outdated", "view", "info", "ping", "audit"]);
 const MAX_OUTPUT_BYTES = 256 * 1024;
 
 function assertArgv(argv) {
@@ -17,6 +19,20 @@ function assertArgv(argv) {
   if (BLOCKED_EXECUTABLES.has(argv[0].toLowerCase())) throw new Error(`${argv[0]} 不允许通过本机终端代理执行。`);
 }
 
+function logicalExecutable(value) {
+  return path.basename(value).toLowerCase().replace(/\.(exe|cmd|bat|com)$/i, "");
+}
+
+function isRecognizedNetworkCommand(argv) {
+  if (!Array.isArray(argv) || argv.length === 0) return false;
+  const command = logicalExecutable(argv[0]);
+  const subcommand = String(argv[1] || "").toLowerCase();
+  if (["curl", "wget", "gh", "npx"].includes(command)) return true;
+  if (command === "git") return NETWORK_GIT_SUBCOMMANDS.has(subcommand);
+  if (["npm", "pnpm", "yarn"].includes(command)) return NETWORK_PACKAGE_SUBCOMMANDS.has(subcommand);
+  return false;
+}
+
 function defaultSpawnCommand(argv, options) {
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
@@ -24,6 +40,7 @@ function defaultSpawnCommand(argv, options) {
       shell: false,
       windowsHide: true,
       detached: process.platform !== "win32",
+      ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
     });
     const stdout = [];
     const stderr = [];
@@ -97,13 +114,34 @@ function normalizeTrustedExecutables(bindings = {}) {
   return Object.freeze(normalized);
 }
 
-function createLocalTerminalBroker({ approvalMode = "cautious", classifyCommand, confirm = async () => false, spawnCommand = defaultSpawnCommand, pathPolicy, trustedExecutables = {} } = {}) {
+function normalizeNetworkEnv(networkEnv) {
+  if (networkEnv == null) return undefined;
+  if (typeof networkEnv !== "object" || Array.isArray(networkEnv)) throw new TypeError("networkEnv 必须是对象。");
+  const normalized = {};
+  for (const [name, value] of Object.entries(networkEnv)) {
+    if (typeof value !== "string") throw new TypeError(`networkEnv.${name} 必须是字符串。`);
+    normalized[name] = value;
+  }
+  return Object.freeze(normalized);
+}
+
+function createLocalTerminalBroker({ approvalMode = "cautious", classifyCommand, confirm = async () => false, spawnCommand = defaultSpawnCommand, pathPolicy, trustedExecutables = {}, networkEnv, sshPolicy } = {}) {
   if (typeof classifyCommand !== "function") throw new TypeError("本机终端代理需要现有 Agent 的命令分类器。");
   const trusted = normalizeTrustedExecutables(trustedExecutables);
+  const proxyEnv = normalizeNetworkEnv(networkEnv);
 
   async function run({ argv, cwd } = {}, executionContext = {}) {
     const mode = normalizeApprovalMode(approvalMode);
     assertArgv(argv);
+    const logicalCommand = logicalExecutable(argv[0]);
+    let validatedSsh;
+    if (logicalCommand === "ssh") {
+      if (typeof sshPolicy !== "function" || trusted.ssh !== "/usr/bin/ssh") {
+        throw new Error("SSH 默认关闭；只有启用受控 SSH 并固定使用 /usr/bin/ssh 后才能执行。");
+      }
+      validatedSsh = sshPolicy([...argv]);
+      if (!validatedSsh || !Array.isArray(validatedSsh.argv) || validatedSsh.argv[0] !== "ssh") throw new Error("SSH 安全策略返回了无效命令。");
+    }
     if (typeof cwd !== "string" || !path.isAbsolute(cwd)) throw new TypeError("cwd 必须是绝对目录路径。");
     if (pathPolicy) {
       const result = pathPolicy(cwd, { operation: "terminal" });
@@ -116,13 +154,22 @@ function createLocalTerminalBroker({ approvalMode = "cautious", classifyCommand,
     if (needsNativeConfirmation(argv, classification, mode) && !await confirm(request)) {
       throw new Error("用户取消了本机终端命令。 ");
     }
-    const logicalCommand = path.basename(argv[0]).toLowerCase().replace(/\.(exe|cmd|bat|com)$/i, "");
     const trustedExecutable = trusted[logicalCommand];
-    const spawnArgv = trustedExecutable ? [trustedExecutable, ...argv.slice(1)] : [...argv];
-    return spawnCommand(spawnArgv, { cwd, shell: false, windowsHide: true, signal: executionContext.signal, timeoutMs: 10 * 60_000 });
+    const spawnArgv = validatedSsh
+      ? [trusted.ssh, ...validatedSsh.argv.slice(1)]
+      : trustedExecutable ? [trustedExecutable, ...argv.slice(1)] : [...argv];
+    const commandEnv = proxyEnv && isRecognizedNetworkCommand(argv) ? proxyEnv : undefined;
+    return spawnCommand(spawnArgv, {
+      cwd,
+      shell: false,
+      windowsHide: true,
+      signal: executionContext.signal,
+      timeoutMs: 10 * 60_000,
+      ...(commandEnv ? { env: commandEnv } : {}),
+    });
   }
 
   return { run };
 }
 
-module.exports = { assertArgv, createLocalTerminalBroker, defaultSpawnCommand, needsNativeConfirmation, normalizeTrustedExecutables };
+module.exports = { assertArgv, createLocalTerminalBroker, defaultSpawnCommand, isRecognizedNetworkCommand, needsNativeConfirmation, normalizeNetworkEnv, normalizeTrustedExecutables };

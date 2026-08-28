@@ -31,9 +31,10 @@ test("known project checks are allowed", () => {
   assert.equal(classifyCommand(["cargo", "check"]).decision, "allow");
 });
 
-test("high-risk remote and privilege commands are denied", () => {
+test("privilege escalation and remote file-transfer commands are denied", () => {
   assert.equal(classifyCommand(["sudo", "echo", "x"]).decision, "deny");
-  assert.equal(classifyCommand(["ssh", "example.com"]).decision, "deny");
+  assert.equal(classifyCommand(["scp", "a", "host:b"]).decision, "deny");
+  assert.equal(classifyCommand(["sftp", "host"]).decision, "deny");
 });
 
 test("unknown commands ask by default", () => {

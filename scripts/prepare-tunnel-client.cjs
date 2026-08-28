@@ -3,6 +3,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const manifest = require("./tunnel-client-release.json");
+const { fetchBytesWithRetry } = require("./tunnel-client-download.cjs");
 
 const target = process.argv[2];
 const supportedTargets = new Set(["darwin-universal", "darwin-arm64", "windows-amd64"]);
@@ -26,15 +27,9 @@ function releaseUrl(file) {
   return `${manifest.baseUrl}/${file}`;
 }
 
-async function fetchBytes(file) {
-  const response = await fetch(releaseUrl(file), { redirect: "follow" });
-  if (!response.ok) throw new Error(`Download failed (${response.status}) for ${releaseUrl(file)}`);
-  return Buffer.from(await response.arrayBuffer());
-}
-
 async function downloadTo(file, destination) {
   fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.writeFileSync(destination, await fetchBytes(file));
+  fs.writeFileSync(destination, await fetchBytesWithRetry(releaseUrl(file)));
 }
 
 function sha256(file) {

@@ -7,12 +7,17 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { resolveDevelopmentRuntimeConfig } = require("./dev-runtime-config.cjs");
 const { normalizeSettings } = require("./host-config.cjs");
 const { approvalPrompt } = require("./approval-prompt.cjs");
 const { createApprovalSession } = require("./approval-session.cjs");
 const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
 const { createLocalFileBroker } = require("./local-file-broker.cjs");
+const { createKnownFolderAccess } = require("./known-folder-access.cjs");
+const { createLoopbackHealthProbe } = require("./loopback-health-probe.cjs");
 const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
+const { validateSshCommand } = require("./ssh-policy.cjs");
+const { resolveSystemProxyEnvironment } = require("./system-proxy.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { buildTrustedCommandPath } = require("./host-path.cjs");
 const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
@@ -26,13 +31,19 @@ const { autoUpdater } = require("electron-updater");
 const packageMetadata = require("../package.json");
 
 // Keep v0.1 settings and encrypted runtime keys when the product name changes
-// from Local Agent Host to WebGPT Bridge.
-app.setPath("userData", path.join(app.getPath("appData"), "local-agent-host"));
+// from Local Agent Host to WebGPT Bridge. Development smoke runs may override
+// this path and the fixed loopback ports, but packaged builds ignore those envs.
+const desktopRuntimeConfig = resolveDevelopmentRuntimeConfig({
+  isPackaged: app.isPackaged,
+  env: process.env,
+  defaultUserDataPath: path.join(app.getPath("appData"), "local-agent-host"),
+});
+app.setPath("userData", desktopRuntimeConfig.userDataPath);
 
 const MCP_HOST = "127.0.0.1";
-const MCP_PORT = 8787;
+const MCP_PORT = desktopRuntimeConfig.mcpPort;
 const TUNNEL_HEALTH_HOST = "127.0.0.1";
-const TUNNEL_HEALTH_PORT = 8080;
+const TUNNEL_HEALTH_PORT = desktopRuntimeConfig.tunnelHealthPort;
 const TUNNEL_HEALTH_LISTEN_ADDR = `${TUNNEL_HEALTH_HOST}:${TUNNEL_HEALTH_PORT}`;
 const MAX_LOG_LINES = 600;
 
@@ -43,6 +54,8 @@ let tunnelProcess;
 let localBrokerServer;
 let localBrokerSocket = "";
 let localFileBroker;
+let localKnownFolderAccess;
+let localHealthProbe;
 let localTerminalBroker;
 let localApprovalMode = "development";
 const approvalSession = createApprovalSession();
@@ -103,6 +116,8 @@ function defaultSettings() {
     tunnelId: "",
     profile: "webgpt-bridge",
     httpsProxy: "",
+    sshEnabled: false,
+    sshAllowedHosts: [],
     approvalMode: "development",
     designIssueJournal: false,
   };
@@ -331,6 +346,8 @@ async function stopLocalBroker() {
   localBrokerServer = undefined;
   localBrokerSocket = "";
   localFileBroker = undefined;
+  localKnownFolderAccess = undefined;
+  localHealthProbe = undefined;
   localTerminalBroker = undefined;
   if (server) await new Promise((resolve) => server.close(() => resolve()));
   if (socketPath && process.platform !== "win32") await fsp.rm(socketPath, { force: true }).catch(() => {});
@@ -340,6 +357,9 @@ function localBrokerDispatch(method, params, executionContext = {}) {
   const handlers = {
     local_list: () => localFileBroker.list(params),
     local_read: () => localFileBroker.read(params),
+    local_list_known_folder: () => localKnownFolderAccess.list(params),
+    local_read_known_folder: () => localKnownFolderAccess.read(params),
+    local_probe_health: () => localHealthProbe.probe(params),
     local_request_sensitive_access: () => localFileBroker.requestSensitiveAccess(params),
     local_stage_changes: () => localFileBroker.stage(params),
     local_confirm_batch: () => localFileBroker.confirmBatch(params),
@@ -386,7 +406,7 @@ function attachLocalBrokerConnection(socket) {
   });
 }
 
-async function startLocalBroker(settings, runtime, { githubCliPath = "" } = {}) {
+async function startLocalBroker(settings, runtime, { githubCliPath = "", proxyEnv = {} } = {}) {
   await stopLocalBroker();
   localApprovalMode = normalizeApprovalMode(settings.approvalMode);
   const policyOptions = { appDataRoots: [app.getPath("userData")] };
@@ -394,12 +414,28 @@ async function startLocalBroker(settings, runtime, { githubCliPath = "" } = {}) 
   const actionPolicy = (action) => classifyLocalAction({ ...action, approvalMode: settings.approvalMode });
   const policyModule = await import(pathToFileURL(path.join(runtime.runtimePath, "dist", "policy.js")).href);
   localFileBroker = createLocalFileBroker({ workspaceRoot: settings.workspacePath, policy: pathPolicy, actionPolicy, confirm: confirmLocalOperation, audit: (entry) => appendLog("local-broker", `${entry.action}：${entry.result}`) });
+  localKnownFolderAccess = createKnownFolderAccess({
+    roots: {
+      desktop: app.getPath("desktop"),
+      downloads: app.getPath("downloads"),
+      documents: app.getPath("documents"),
+    },
+    fileBroker: localFileBroker,
+  });
+  localHealthProbe = createLoopbackHealthProbe();
+  const sshExecutable = settings.sshEnabled && process.platform !== "win32" ? "/usr/bin/ssh" : "";
+  const trustedExecutables = {
+    ...(githubCliPath ? { gh: githubCliPath } : {}),
+    ...(sshExecutable ? { ssh: sshExecutable } : {}),
+  };
   localTerminalBroker = createLocalTerminalBroker({
     approvalMode: settings.approvalMode,
     classifyCommand: policyModule.classifyCommand,
     confirm: confirmLocalOperation,
     pathPolicy,
-    trustedExecutables: githubCliPath ? { gh: githubCliPath } : {},
+    trustedExecutables,
+    networkEnv: proxyEnv,
+    sshPolicy: sshExecutable ? (argv) => validateSshCommand(argv, { allowedHosts: settings.sshAllowedHosts }) : undefined,
   });
   localBrokerSocket = localBrokerSocketPath();
   if (process.platform !== "win32") await fsp.rm(localBrokerSocket, { force: true }).catch(() => {});
@@ -520,6 +556,11 @@ async function prepareRuntime() {
     platform: process.platform,
     nvmCandidates: nvmNodeCandidates(),
   });
+  const proxyEnv = resolveSystemProxyEnvironment({
+    explicitProxy: settings.httpsProxy,
+    platform: process.platform,
+    spawnSync,
+  });
   logLines = [];
   emit("logs", logLines);
   appendLog(
@@ -528,11 +569,11 @@ async function prepareRuntime() {
       ? `GitHub CLI：${preflight.githubCliPath}`
       : "未检测到 GitHub CLI；GitHub 工具会返回可修复诊断，其他本地工具不受影响。",
   );
-  return preflight;
+  return { ...preflight, proxyEnv };
 }
 
 async function startRuntimeBroker(preflight) {
-  return startLocalBroker(preflight.settings, preflight.runtime, { githubCliPath: preflight.githubCliPath });
+  return startLocalBroker(preflight.settings, preflight.runtime, { githubCliPath: preflight.githubCliPath, proxyEnv: preflight.proxyEnv });
 }
 
 async function startRuntimeAgent(preflight) {
@@ -565,11 +606,11 @@ async function waitRuntimeAgentReady() {
 }
 
 async function startRuntimeTunnel(preflight) {
-  const { settings, tunnelClient, tunnelProfile, runtimeKey } = preflight;
+  const { tunnelClient, tunnelProfile, runtimeKey, proxyEnv = {} } = preflight;
   const tunnelEnv = {
     ...process.env,
+    ...proxyEnv,
     CONTROL_PLANE_API_KEY: runtimeKey,
-    ...(settings.httpsProxy ? { HTTPS_PROXY: settings.httpsProxy, HTTP_PROXY: settings.httpsProxy } : {}),
   };
   tunnelProcess = spawnLogged(
     tunnelClient,

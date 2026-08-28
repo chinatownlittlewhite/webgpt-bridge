@@ -83,7 +83,8 @@ test("desktop host re-resolves GitHub CLI for every agent start and passes a tru
   const mainSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
   assert.match(mainSource, /resolveDesktopGitHubCli/);
   assert.match(mainSource, /LPC_GITHUB_CLI_PATH:\s*githubCliPath/);
-  assert.match(mainSource, /trustedExecutables:\s*githubCliPath\s*\?\s*\{\s*gh:\s*githubCliPath\s*\}/);
+  assert.match(mainSource, /const trustedExecutables = \{[\s\S]{0,260}githubCliPath \? \{ gh: githubCliPath \} : \{\}/);
+  assert.match(mainSource, /createLocalTerminalBroker\(\{[\s\S]{0,500}trustedExecutables,/);
   assert.match(mainSource, /additionalPaths:[\s\S]*path\.dirname\(githubCliPath\)/);
 });
 
@@ -112,7 +113,7 @@ test("bundled tunnel-client is the default and custom path is advanced-only", ()
 
   const manifest = require("../scripts/tunnel-client-release.json");
   assert.equal(manifest.version, "0.0.13");
-  assert.equal(packageJson.scripts["prepare:tunnel-client:mac"], "node scripts/prepare-tunnel-client.cjs darwin-universal");
+  assert.equal(packageJson.scripts["prepare:tunnel-client:mac"], "node scripts/launch-tunnel-client-prepare.cjs darwin-universal");
   for (const key of ["darwin-arm64", "windows-amd64"]) {
     assert.match(manifest.assets[key].sha256, /^[a-f0-9]{64}$/);
     assert.equal(manifest.assets[key].file, `tunnel-client-v0.0.13-${key}.zip`);

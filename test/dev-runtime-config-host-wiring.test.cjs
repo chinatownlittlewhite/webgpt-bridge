@@ -1,0 +1,13 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+test("desktop main process applies development isolation before userData and runtime port consumers", () => {
+  const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
+  assert.match(main, /require\("\.\/dev-runtime-config\.cjs"\)/);
+  assert.match(main, /resolveDevelopmentRuntimeConfig\(\{[\s\S]{0,400}isPackaged:\s*app\.isPackaged[\s\S]{0,400}env:\s*process\.env[\s\S]{0,400}defaultUserDataPath:/);
+  assert.match(main, /app\.setPath\("userData",\s*desktopRuntimeConfig\.userDataPath\)/);
+  assert.match(main, /const MCP_PORT = desktopRuntimeConfig\.mcpPort;/);
+  assert.match(main, /const TUNNEL_HEALTH_PORT = desktopRuntimeConfig\.tunnelHealthPort;/);
+});

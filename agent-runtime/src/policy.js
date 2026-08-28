@@ -1,7 +1,7 @@
 import path from "node:path";
 
 const SAFE_NPM_RUN_SCRIPTS = new Set(["test", "lint", "build", "typecheck", "check"]);
-const ALWAYS_DENY = new Set(["sudo", "su", "ssh", "scp", "sftp"]);
+const ALWAYS_DENY = new Set(["sudo", "su", "scp", "sftp"]);
 const APPROVAL_COMMANDS = new Set([
   "curl",
   "wget",
@@ -130,6 +130,14 @@ export function classifyCommand(argv) {
       decision: "deny",
       reason: `${command} is blocked by the default policy`,
       rule: "always-deny",
+    };
+  }
+
+  if (command === "ssh") {
+    return {
+      decision: "approval_required",
+      reason: "SSH requires App-owned host validation and approval",
+      rule: "ssh-network",
     };
   }
 
