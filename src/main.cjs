@@ -16,6 +16,7 @@ const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { buildTrustedCommandPath } = require("./host-path.cjs");
 const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { ensureTunnelProfile } = require("./tunnel-profile-manager.cjs");
 const { createStartupPreflight } = require("./startup-preflight.cjs");
 const { createAppLifecycleCoordinator } = require("./app-lifecycle.cjs");
 const { createRuntimeSupervisor } = require("./runtime-supervisor.cjs");
@@ -30,6 +31,9 @@ app.setPath("userData", path.join(app.getPath("appData"), "local-agent-host"));
 
 const MCP_HOST = "127.0.0.1";
 const MCP_PORT = 8787;
+const TUNNEL_HEALTH_HOST = "127.0.0.1";
+const TUNNEL_HEALTH_PORT = 8080;
+const TUNNEL_HEALTH_LISTEN_ADDR = `${TUNNEL_HEALTH_HOST}:${TUNNEL_HEALTH_PORT}`;
 const MAX_LOG_LINES = 600;
 
 let windowRef;
@@ -42,7 +46,6 @@ let localFileBroker;
 let localTerminalBroker;
 let localApprovalMode = "development";
 const approvalSession = createApprovalSession();
-const initializedTunnelPreflights = new WeakSet();
 let logLines = [];
 let updateService;
 let runtimeSupervisor;
@@ -165,6 +168,10 @@ async function readRuntimeKey() {
 const startupPreflight = createStartupPreflight({
   bundledTunnelClientPath: () => defaultBundledTunnelClientPath(),
   bundledNodeManifest: () => loadBundledNodeManifest(),
+  ensureTunnelProfile,
+  tunnelProfileDir: () => path.join(app.getPath("userData"), "tunnel-profiles"),
+  mcpServerUrl: () => `http://${MCP_HOST}:${MCP_PORT}/mcp`,
+  tunnelHealthListenAddr: () => TUNNEL_HEALTH_LISTEN_ADDR,
   readRuntimeKey: () => readRuntimeKey(),
   appToolsBin: () => path.join(app.getPath("userData"), "tools", "bin"),
   resolveDesktopGitHubCli,
@@ -212,13 +219,6 @@ function spawnLogged(command, args, options, label) {
   return child;
 }
 
-function onceExit(child) {
-  return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`命令退出码：${code}`)));
-  });
-}
-
 function requestHealth() {
   return new Promise((resolve) => {
     const req = http.get({ host: MCP_HOST, port: MCP_PORT, path: "/healthz", timeout: 1500 }, (res) => {
@@ -257,7 +257,7 @@ function getStatus() {
   return {
     ...status,
     healthUrl: `http://${MCP_HOST}:${MCP_PORT}/healthz`,
-    tunnelAdminUrl: "http://127.0.0.1:8080/ui",
+    tunnelAdminUrl: `http://${TUNNEL_HEALTH_HOST}:${TUNNEL_HEALTH_PORT}/ui`,
   };
 }
 
@@ -565,28 +565,43 @@ async function waitRuntimeAgentReady() {
 }
 
 async function startRuntimeTunnel(preflight) {
-  const { settings, tunnelClient, runtimeKey } = preflight;
+  const { settings, tunnelClient, tunnelProfile, runtimeKey } = preflight;
   const tunnelEnv = {
     ...process.env,
     CONTROL_PLANE_API_KEY: runtimeKey,
     ...(settings.httpsProxy ? { HTTPS_PROXY: settings.httpsProxy, HTTP_PROXY: settings.httpsProxy } : {}),
   };
-  if (!initializedTunnelPreflights.has(preflight)) {
-    const init = spawnLogged(
-      tunnelClient,
-      ["init", "--force", "--profile", settings.profile, "--tunnel-id", settings.tunnelId, "--mcp-server-url", `http://${MCP_HOST}:${MCP_PORT}/mcp`],
-      { env: tunnelEnv },
-      "tunnel-init",
-    );
-    await onceExit(init);
-    initializedTunnelPreflights.add(preflight);
-  }
-  tunnelProcess = spawnLogged(tunnelClient, ["run", "--profile", settings.profile], { env: tunnelEnv }, "tunnel");
+  tunnelProcess = spawnLogged(
+    tunnelClient,
+    ["run", "--profile", tunnelProfile.profile, "--profile-dir", tunnelProfile.profileDir],
+    { env: tunnelEnv },
+    "tunnel",
+  );
   return tunnelProcess;
 }
 
-async function waitRuntimeTunnelReady(tunnel) {
-  return processIsLive(tunnel);
+async function waitRuntimeTunnelReady(tunnel, preflight) {
+  const healthUrl = new URL(preflight.tunnelProfile.healthBaseUrl);
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (!processIsLive(tunnel)) return false;
+    const ready = await new Promise((resolve) => {
+      const req = http.get({
+        host: healthUrl.hostname,
+        port: healthUrl.port,
+        path: "/readyz",
+        timeout: 1500,
+      }, (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode === 200));
+      });
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => { req.destroy(); resolve(false); });
+    });
+    if (ready) return true;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return false;
 }
 
 async function stopRuntimeResource(resource, { kind }) {
