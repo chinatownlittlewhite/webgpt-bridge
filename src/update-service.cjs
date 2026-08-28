@@ -70,6 +70,7 @@ function createUpdateService(options) {
     updater,
     currentVersion,
     isPackaged,
+    prepareForInstall,
     stopRuntime,
     setQuitting,
     emitState = () => {},
@@ -79,6 +80,8 @@ function createUpdateService(options) {
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
   } = options;
+  const prepareInstall = typeof prepareForInstall === "function" ? prepareForInstall : stopRuntime;
+  const setQuittingIntent = typeof setQuitting === "function" ? setQuitting : () => {};
 
   updater.autoDownload = false;
   updater.autoInstallOnAppQuit = false;
@@ -216,7 +219,7 @@ function createUpdateService(options) {
   async function installUpdateAndRestart() {
     if (state.status !== "downloaded") return snapshot(state);
     try {
-      await stopRuntime();
+      await prepareInstall();
     } catch (error) {
       return publish({
         status: "error",
@@ -225,12 +228,12 @@ function createUpdateService(options) {
       });
     }
 
-    setQuitting(true);
+    setQuittingIntent(true);
     publish({ status: "installing", errorCode: "", errorMessage: "" });
     try {
       updater.quitAndInstall(false, true);
     } catch (error) {
-      setQuitting(false);
+      setQuittingIntent(false);
       return publish({
         status: "error",
         errorCode: "install_launch_failed",

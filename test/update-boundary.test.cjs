@@ -21,10 +21,49 @@ test("renderer update IPC has no URL repository path or installer arguments", ()
   assert.doesNotMatch(preload, /setFeedURL|feedURL|installerPath|repository|publisherName/);
 });
 
-test("update installation marks quit intent before electron-updater closes windows", () => {
-  assert.match(main, /setQuitting:\s*\(value\)\s*=>\s*\{\s*isQuitting\s*=\s*Boolean\(value\)/s);
-  assert.match(main, /createUpdateService/);
-  assert.match(main, /autoUpdater/);
+test("main process routes quit and update install through AppLifecycleCoordinator", () => {
+  assert.match(main, /createAppLifecycleCoordinator/);
+  assert.match(main, /appLifecycle\s*=\s*createAppLifecycleCoordinator\s*\(\s*\{[\s\S]*?supervisor:\s*runtimeSupervisor[\s\S]*?disposeHostServices:/);
+
+  const updateStart = main.indexOf("updateService = createUpdateService");
+  const updateEnd = main.indexOf("});", updateStart);
+  const updateBlock = main.slice(updateStart, updateEnd);
+  assert.match(updateBlock, /prepareForInstall:\s*\(\)\s*=>\s*appLifecycle\.prepareForUpdateInstall\(\)/);
+  assert.doesNotMatch(updateBlock, /stopRuntime|setQuitting/);
+
+  assert.match(main, /app\.on\("before-quit",\s*\(event\)\s*=>\s*\{?[^}]*appLifecycle\.handleBeforeQuit\(event\)/s);
+  assert.match(main, /appLifecycle\.requestQuit\("tray-quit"\)/);
+  assert.match(main, /appLifecycle\.nativeQuitAllowed\(\)/);
+  assert.doesNotMatch(main, /let isQuitting\b/);
+});
+
+test("main process delegates runtime preparation to StartupPreflight without synchronous Node version probing", () => {
+  assert.match(main, /createStartupPreflight/);
+  assert.match(main, /startupPreflight\s*=\s*createStartupPreflight\s*\(/);
+  assert.match(main, /startupPreflight\.prepare\s*\(/);
+  assert.doesNotMatch(main, /function\s+nodeVersion\s*\(/);
+  assert.doesNotMatch(main, /selectSupportedNode\s*\(/);
+  assert.doesNotMatch(main, /spawnSync\([^\n]*\["--version"\]/);
+});
+
+test("tunnel startup reuses Host-owned profiles and connected waits for readyz", () => {
+  assert.match(main, /ensureTunnelProfile/);
+  assert.match(main, /tunnelProfileDir/);
+  assert.doesNotMatch(main, /initializedTunnelPreflights/);
+
+  const startIndex = main.indexOf("async function startRuntimeTunnel");
+  const readyIndex = main.indexOf("async function waitRuntimeTunnelReady", startIndex);
+  const stopIndex = main.indexOf("async function stopRuntimeResource", readyIndex);
+  const startBlock = main.slice(startIndex, readyIndex);
+  const readyBlock = main.slice(readyIndex, stopIndex);
+
+  assert.match(startBlock, /tunnelProfile/);
+  assert.match(startBlock, /"run"/);
+  assert.match(startBlock, /"--profile-dir"/);
+  assert.doesNotMatch(startBlock, /"init"|--force/);
+  assert.match(readyBlock, /\/readyz/);
+  assert.match(readyBlock, /statusCode\s*===\s*200/);
+  assert.doesNotMatch(readyBlock, /return\s+processIsLive\(tunnel\)/);
 });
 
 test("main process does not expose host-prep mutation through update IPC", () => {

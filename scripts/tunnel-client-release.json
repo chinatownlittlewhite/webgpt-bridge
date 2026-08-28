@@ -1,22 +1,22 @@
 {
-  "version": "0.0.11",
-  "baseUrl": "https://github.com/openai/tunnel-client/releases/download/v0.0.11",
+  "version": "0.0.13",
+  "baseUrl": "https://github.com/openai/tunnel-client/releases/download/v0.0.13",
   "source": "https://github.com/openai/tunnel-client",
   "license": "Apache-2.0",
   "assets": {
     "darwin-arm64": {
-      "file": "tunnel-client-v0.0.11-darwin-arm64.zip",
-      "sha256": "3685443b057614ff932d2d477dab94be2082e60bcf4e8b4e378bebc89121b714",
+      "file": "tunnel-client-v0.0.13-darwin-arm64.zip",
+      "sha256": "15abf165f06050af642c948ba6bd6c905191dc5420a9422dadde2b49d892e2c6",
       "executable": "tunnel-client"
     },
     "darwin-amd64": {
-      "file": "tunnel-client-v0.0.11-darwin-amd64.zip",
-      "sha256": "a48c8a37983d9bf9442309cb661cd2f14d7321cfacf72375d7fa31a6a7420db0",
+      "file": "tunnel-client-v0.0.13-darwin-amd64.zip",
+      "sha256": "c683e15d84fb997f5af1cc7c4cb55008e19a555a9ed2ec0f89a5ff426d85f85c",
       "executable": "tunnel-client"
     },
     "windows-amd64": {
-      "file": "tunnel-client-v0.0.11-windows-amd64.zip",
-      "sha256": "eb912c86c6ccde90cda805cb17009507176a656725cf86c36fabe1901a12e29b",
+      "file": "tunnel-client-v0.0.13-windows-amd64.zip",
+      "sha256": "17113162b353906bbb884c3ed7620facba5cc72b5fdc94fd54fd7208c7166edb",
       "executable": "tunnel-client.exe"
     }
   }

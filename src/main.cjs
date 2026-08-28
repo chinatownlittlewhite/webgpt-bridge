@@ -7,15 +7,19 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { normalizeSettings, validateDevelopmentRuntime } = require("./host-config.cjs");
+const { normalizeSettings } = require("./host-config.cjs");
 const { approvalPrompt } = require("./approval-prompt.cjs");
 const { createApprovalSession } = require("./approval-session.cjs");
 const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
 const { createLocalFileBroker } = require("./local-file-broker.cjs");
 const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
-const { buildTrustedCommandPath, preferredNodeCandidates, selectSupportedNode } = require("./host-path.cjs");
-const { bundledTunnelClientPath, resolveTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { buildTrustedCommandPath } = require("./host-path.cjs");
+const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
+const { ensureTunnelProfile } = require("./tunnel-profile-manager.cjs");
+const { createStartupPreflight } = require("./startup-preflight.cjs");
+const { createAppLifecycleCoordinator } = require("./app-lifecycle.cjs");
+const { createRuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { createUpdateService } = require("./update-service.cjs");
 const { trayIconDataUrl } = require("./tray-icon.cjs");
 const { autoUpdater } = require("electron-updater");
@@ -27,8 +31,10 @@ app.setPath("userData", path.join(app.getPath("appData"), "local-agent-host"));
 
 const MCP_HOST = "127.0.0.1";
 const MCP_PORT = 8787;
+const TUNNEL_HEALTH_HOST = "127.0.0.1";
+const TUNNEL_HEALTH_PORT = 8080;
+const TUNNEL_HEALTH_LISTEN_ADDR = `${TUNNEL_HEALTH_HOST}:${TUNNEL_HEALTH_PORT}`;
 const MAX_LOG_LINES = 600;
-const PROFILE_PATTERN = /^[a-zA-Z0-9._-]{1,64}$/;
 
 let windowRef;
 let trayRef;
@@ -41,8 +47,9 @@ let localTerminalBroker;
 let localApprovalMode = "development";
 const approvalSession = createApprovalSession();
 let logLines = [];
-let isQuitting = false;
 let updateService;
+let runtimeSupervisor;
+let appLifecycle;
 
 function configPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -69,6 +76,20 @@ function defaultBundledNodePath() {
   if (process.platform !== "win32") return "";
   const resourcesRoot = app.isPackaged ? process.resourcesPath : path.join(__dirname, "..", "build");
   return path.join(resourcesRoot, "node-runtime", "node.exe");
+}
+
+function loadBundledNodeManifest() {
+  const nodePath = defaultBundledNodePath();
+  if (!nodePath) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(path.dirname(nodePath), "BUNDLED_SOURCE.json"), "utf8"));
+    const version = String(parsed?.version || "").trim();
+    const nodeSha256 = String(parsed?.nodeSha256 || "").trim().toLowerCase();
+    if (!version || !/^[a-f0-9]{64}$/.test(nodeSha256)) return null;
+    return Object.freeze({ path: nodePath, version, nodeSha256 });
+  } catch {
+    return null;
+  }
 }
 
 function defaultSettings() {
@@ -144,6 +165,18 @@ async function readRuntimeKey() {
   return migrateLegacyMacKey();
 }
 
+const startupPreflight = createStartupPreflight({
+  bundledTunnelClientPath: () => defaultBundledTunnelClientPath(),
+  bundledNodeManifest: () => loadBundledNodeManifest(),
+  ensureTunnelProfile,
+  tunnelProfileDir: () => path.join(app.getPath("userData"), "tunnel-profiles"),
+  mcpServerUrl: () => `http://${MCP_HOST}:${MCP_PORT}/mcp`,
+  tunnelHealthListenAddr: () => TUNNEL_HEALTH_LISTEN_ADDR,
+  readRuntimeKey: () => readRuntimeKey(),
+  appToolsBin: () => path.join(app.getPath("userData"), "tools", "bin"),
+  resolveDesktopGitHubCli,
+});
+
 function emit(type, value) {
   windowRef?.webContents.send("host:event", { type, value });
   if (type === "status") updateTray();
@@ -162,18 +195,6 @@ function processIsLive(child) {
   return Boolean(child && child.exitCode === null);
 }
 
-function nodeVersion(candidate) {
-  if (!candidate) return "";
-  const result = spawnSync(candidate, ["--version"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    shell: false,
-    timeout: 4000,
-    windowsHide: true,
-  });
-  return result.error || result.status !== 0 ? "" : result.stdout;
-}
-
 function nvmNodeCandidates() {
   const versions = path.join(os.homedir(), ".nvm", "versions", "node");
   try {
@@ -187,46 +208,6 @@ function nvmNodeCandidates() {
   }
 }
 
-function preferredNode(settings) {
-  const candidates = preferredNodeCandidates({
-    settingsNodePath: settings.nodePath,
-    lpcNodePath: process.env.LPC_NODE_PATH,
-    bundledNodePath: defaultBundledNodePath(),
-    platform: process.platform,
-    env: process.env,
-    nvmCandidates: nvmNodeCandidates(),
-  });
-  return selectSupportedNode(candidates, nodeVersion);
-}
-
-function assertDirectory(value, label) {
-  if (!value || !path.isAbsolute(value) || !fs.statSync(value, { throwIfNoEntry: false })?.isDirectory()) {
-    throw new Error(`${label}必须是存在的绝对目录。`);
-  }
-}
-
-function validateSettings(settings) {
-  const runtime = validateDevelopmentRuntime(settings);
-  assertDirectory(runtime.workspacePath, "工作区");
-  assertDirectory(runtime.runtimePath, "Agent 运行时目录");
-  if (!fs.existsSync(path.join(runtime.runtimePath, "dist", "server.js"))) {
-    throw new Error("Agent 运行时目录中未找到 dist/server.js；请先在该项目运行 npm install 和 npm run build。");
-  }
-  const tunnelClient = resolveTunnelClientPath({
-    customPath: settings.tunnelClientPath,
-    bundledPath: defaultBundledTunnelClientPath(),
-    isFile: (value) => fs.statSync(value, { throwIfNoEntry: false })?.isFile() === true,
-  });
-  if (!tunnelClient) {
-    throw new Error("未找到应用内置的 OpenAI tunnel-client。请重新安装应用，或在高级设置中选择自定义 tunnel-client。");
-  }
-  if (!settings.tunnelId.startsWith("tunnel_")) throw new Error("Tunnel ID 应以 tunnel_ 开头。");
-  if (!PROFILE_PATTERN.test(settings.profile)) throw new Error("配置名称只能包含字母、数字、点、下划线和连字符。");
-  const node = preferredNode(settings);
-  if (!node) throw new Error("未找到 Node.js。请安装 Node.js 20+，或在设置中选择 node 可执行文件。");
-  return { node, runtime, tunnelClient };
-}
-
 function spawnLogged(command, args, options, label) {
   const child = spawn(command, args, { ...options, shell: false, windowsHide: true });
   child.stdout?.on("data", (chunk) => appendLog(label, chunk));
@@ -234,16 +215,8 @@ function spawnLogged(command, args, options, label) {
   child.on("error", (error) => appendLog(label, `启动失败：${error.message}`));
   child.on("exit", (code, signal) => {
     appendLog(label, `进程已退出（code=${code ?? "null"}, signal=${signal ?? "none"}）`);
-    emit("status", getStatus());
   });
   return child;
-}
-
-function onceExit(child) {
-  return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`命令退出码：${code}`)));
-  });
 }
 
 function requestHealth() {
@@ -269,12 +242,22 @@ async function waitForHealth() {
 }
 
 function getStatus() {
+  const status = runtimeSupervisor?.getStatus() || {
+    state: "stopped",
+    connected: false,
+    server: false,
+    tunnel: false,
+    localBroker: false,
+    agentHealth: "unknown",
+    tunnelReadiness: "unknown",
+    transitionId: 0,
+    lastExitReason: null,
+    phaseTimings: Object.freeze({}),
+  };
   return {
-    server: processIsLive(serverProcess),
-    tunnel: processIsLive(tunnelProcess),
-    localBroker: Boolean(localBrokerServer),
+    ...status,
     healthUrl: `http://${MCP_HOST}:${MCP_PORT}/healthz`,
-    tunnelAdminUrl: "http://127.0.0.1:8080/ui",
+    tunnelAdminUrl: `http://${TUNNEL_HEALTH_HOST}:${TUNNEL_HEALTH_PORT}/ui`,
   };
 }
 
@@ -430,6 +413,7 @@ async function startLocalBroker(settings, runtime, { githubCliPath = "" } = {}) 
   });
   if (process.platform !== "win32") await fsp.chmod(localBrokerSocket, 0o600);
   appendLog("local-broker", "已启动受控本机文件与终端代理。");
+  return localBrokerServer;
 }
 
 function trayIcon() {
@@ -453,7 +437,7 @@ function showWindow() {
 function updateTray() {
   if (!trayRef) return;
   const status = getStatus();
-  const connected = status.tunnel;
+  const connected = status.connected;
   const update = updateService?.getState();
   const updateItem = update?.status === "downloaded"
     ? { label: `更新已下载 · v${update.availableVersion}`, enabled: false }
@@ -469,13 +453,15 @@ function updateTray() {
     {
       label: "启动连接",
       enabled: !connected,
-      click: () => startAll().catch((error) => appendLog("host", `启动失败：${error.message}`)),
+      click: () => runtimeSupervisor.start().catch((error) => appendLog("host", `启动失败：${error.message}`)),
     },
-    { label: "停止服务", enabled: status.server || status.tunnel, click: () => { void stopAll(); } },
+    { label: "停止服务", enabled: status.server || status.tunnel, click: () => { void runtimeSupervisor.stop("tray"); } },
     { type: "separator" },
     {
       label: "退出 WebGPT Bridge",
-      click: () => { isQuitting = true; app.quit(); },
+      click: () => {
+        void appLifecycle.requestQuit("tray-quit").catch((error) => appendLog("host", `${error.code || "SHUTDOWN_FAILED"}：${error.message}`));
+      },
     },
   ]));
 }
@@ -526,34 +512,31 @@ async function stopChild(child, name) {
   }
 }
 
-async function stopAll() {
-  await stopChild(tunnelProcess, "隧道客户端");
-  await stopChild(serverProcess, "Agent 服务");
-  await stopLocalBroker();
-  tunnelProcess = undefined;
-  serverProcess = undefined;
-  emit("status", getStatus());
-}
-
-async function startAll() {
-  if (processIsLive(tunnelProcess)) return getStatus();
+async function prepareRuntime() {
   const settings = await loadSettings();
-  const { node, runtime, tunnelClient } = validateSettings(settings);
-  const runtimeKey = await readRuntimeKey();
-  if (!runtimeKey) throw new Error("请先保存此电脑专用的 OpenAI Tunnel 运行时密钥。");
-  await stopAll();
+  const preflight = await startupPreflight.prepare({
+    settings,
+    env: process.env,
+    platform: process.platform,
+    nvmCandidates: nvmNodeCandidates(),
+  });
   logLines = [];
   emit("logs", logLines);
-  const appToolsBin = path.join(app.getPath("userData"), "tools", "bin");
-  const githubCliPath = resolveDesktopGitHubCli({ appToolsBin });
   appendLog(
     "host",
-    githubCliPath
-      ? `GitHub CLI：${githubCliPath}`
+    preflight.githubCliPath
+      ? `GitHub CLI：${preflight.githubCliPath}`
       : "未检测到 GitHub CLI；GitHub 工具会返回可修复诊断，其他本地工具不受影响。",
   );
-  await startLocalBroker(settings, runtime, { githubCliPath });
+  return preflight;
+}
 
+async function startRuntimeBroker(preflight) {
+  return startLocalBroker(preflight.settings, preflight.runtime, { githubCliPath: preflight.githubCliPath });
+}
+
+async function startRuntimeAgent(preflight) {
+  const { settings, node, runtime, appToolsBin, githubCliPath } = preflight;
   const baseEnv = {
     ...process.env,
     PATH: buildTrustedCommandPath({
@@ -573,24 +556,87 @@ async function startAll() {
     LPC_DESIGN_ISSUE_JOURNAL: settings.designIssueJournal === true ? "true" : "false",
   };
   serverProcess = spawnLogged(node, [path.join(runtime.runtimePath, "dist", "server.js")], { env: baseEnv, cwd: runtime.runtimePath }, "agent");
-  await waitForHealth();
+  return serverProcess;
+}
 
+async function waitRuntimeAgentReady() {
+  await waitForHealth();
+  return true;
+}
+
+async function startRuntimeTunnel(preflight) {
+  const { settings, tunnelClient, tunnelProfile, runtimeKey } = preflight;
   const tunnelEnv = {
     ...process.env,
     CONTROL_PLANE_API_KEY: runtimeKey,
     ...(settings.httpsProxy ? { HTTPS_PROXY: settings.httpsProxy, HTTP_PROXY: settings.httpsProxy } : {}),
   };
-  const init = spawnLogged(
+  tunnelProcess = spawnLogged(
     tunnelClient,
-    ["init", "--force", "--profile", settings.profile, "--tunnel-id", settings.tunnelId, "--mcp-server-url", `http://${MCP_HOST}:${MCP_PORT}/mcp`],
+    ["run", "--profile", tunnelProfile.profile, "--profile-dir", tunnelProfile.profileDir],
     { env: tunnelEnv },
-    "tunnel-init",
+    "tunnel",
   );
-  await onceExit(init);
-  tunnelProcess = spawnLogged(tunnelClient, ["run", "--profile", settings.profile], { env: tunnelEnv }, "tunnel");
-  emit("status", getStatus());
-  return getStatus();
+  return tunnelProcess;
 }
+
+async function waitRuntimeTunnelReady(tunnel, preflight) {
+  const healthUrl = new URL(preflight.tunnelProfile.healthBaseUrl);
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (!processIsLive(tunnel)) return false;
+    const ready = await new Promise((resolve) => {
+      const req = http.get({
+        host: healthUrl.hostname,
+        port: healthUrl.port,
+        path: "/readyz",
+        timeout: 1500,
+      }, (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode === 200));
+      });
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => { req.destroy(); resolve(false); });
+    });
+    if (ready) return true;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return false;
+}
+
+async function stopRuntimeResource(resource, { kind }) {
+  if (kind === "tunnel") {
+    await stopChild(resource, "隧道客户端");
+    if (tunnelProcess === resource) tunnelProcess = undefined;
+    return;
+  }
+  if (kind === "agent") {
+    await stopChild(resource, "Agent 服务");
+    if (serverProcess === resource) serverProcess = undefined;
+    return;
+  }
+  if (kind === "broker") {
+    await stopLocalBroker();
+  }
+}
+
+runtimeSupervisor = createRuntimeSupervisor({
+  prepare: prepareRuntime,
+  startBroker: startRuntimeBroker,
+  startAgent: startRuntimeAgent,
+  waitAgentReady: waitRuntimeAgentReady,
+  startTunnel: startRuntimeTunnel,
+  waitTunnelReady: waitRuntimeTunnelReady,
+  stopResource: stopRuntimeResource,
+});
+runtimeSupervisor.subscribe(() => emit("status", getStatus()));
+appLifecycle = createAppLifecycleCoordinator({
+  app,
+  supervisor: runtimeSupervisor,
+  disposeHostServices: async () => {
+    updateService?.dispose();
+  },
+});
 
 function createWindow() {
   windowRef = new BrowserWindow({
@@ -609,7 +655,7 @@ function createWindow() {
   });
   windowRef.webContents.on("will-navigate", (event) => event.preventDefault());
   windowRef.on("close", (event) => {
-    if (isQuitting) return;
+    if (appLifecycle.nativeQuitAllowed()) return;
     event.preventDefault();
     windowRef.hide();
   });
@@ -623,8 +669,7 @@ app.whenReady().then(() => {
     updater: autoUpdater,
     currentVersion: app.getVersion(),
     isPackaged: app.isPackaged,
-    stopRuntime: stopAll,
-    setQuitting: (value) => { isQuitting = Boolean(value); },
+    prepareForInstall: () => appLifecycle.prepareForUpdateInstall(),
     emitState: (state) => {
       windowRef?.webContents?.send("update:state", state);
       updateTray();
@@ -645,9 +690,9 @@ app.whenReady().then(() => {
   ipcMain.handle("settings:clear-key", async () => { await fsp.rm(secretPath(), { force: true }); return { hasRuntimeKey: false }; });
   ipcMain.handle("dialog:directory", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openDirectory"] })).filePaths[0] || "");
   ipcMain.handle("dialog:file", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openFile"] })).filePaths[0] || "");
-  ipcMain.handle("host:start", startAll);
-  ipcMain.handle("host:stop", stopAll);
-  ipcMain.handle("host:status", getStatus);
+  ipcMain.handle("host:start", () => runtimeSupervisor.start());
+  ipcMain.handle("host:stop", () => runtimeSupervisor.stop("ipc"));
+  ipcMain.handle("host:status", () => getStatus());
   ipcMain.handle("host:logs", () => logLines);
   ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
   ipcMain.handle("update:get-state", () => updateService.getState());
@@ -668,8 +713,10 @@ app.whenReady().then(() => {
   app.on("activate", showWindow);
 });
 
-app.on("before-quit", () => {
-  isQuitting = true;
-  updateService?.dispose();
-  void stopAll();
+app.on("before-quit", (event) => {
+  const nativeAllowed = appLifecycle.nativeQuitAllowed();
+  appLifecycle.handleBeforeQuit(event);
+  if (!nativeAllowed) {
+    void appLifecycle.whenSettled().catch((error) => appendLog("host", `${error.code || "SHUTDOWN_FAILED"}：${error.message}`));
+  }
 });

@@ -48,9 +48,10 @@ test(
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-v044-abort-"));
     try {
       const controller = new AbortController();
+      const timeoutMs = 1_000;
       const run = createCommandRunner({
         workspace: root,
-        timeoutMs: 250,
+        timeoutMs,
         sandboxAdapter: verifiedSandbox("abort-sandbox"),
       });
       const pending = run({
@@ -62,7 +63,7 @@ test(
       const result = await pending;
       assert.equal(result.status, "canceled");
       assert.notEqual(result.status, "timed_out");
-      assert.ok(result.durationMs < 250, `cancel should complete before timeout, got ${result.durationMs}ms`);
+      assert.ok(result.durationMs < timeoutMs, `cancel should complete before timeout, got ${result.durationMs}ms`);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

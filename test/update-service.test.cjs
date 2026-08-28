@@ -124,6 +124,22 @@ test("installs only after runtime shutdown and explicit request", async () => {
   assert.equal(service.getState().status, "installing");
 });
 
+test("update install delegates teardown to the lifecycle preparation gate", async () => {
+  const calls = [];
+  const updater = fakeUpdater();
+  const service = createUpdateService(baseOptions({
+    updater,
+    stopRuntime: undefined,
+    setQuitting: undefined,
+    prepareForInstall: async () => calls.push("prepare"),
+  }));
+  updater.emit("update-downloaded", { version: "0.3.5" });
+  await service.installUpdateAndRestart();
+  assert.deepEqual(calls, ["prepare"]);
+  assert.deepEqual(updater.quitAndInstallCalls, [[false, true]]);
+  assert.equal(service.getState().status, "installing");
+});
+
 test("failed shutdown does not invoke installer", async () => {
   const updater = fakeUpdater();
   const service = createUpdateService(baseOptions({ updater, stopRuntime: async () => { throw new Error("busy"); } }));
