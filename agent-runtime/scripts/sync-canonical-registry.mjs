@@ -10,6 +10,8 @@ const sourceDir = path.join(repositoryRoot, "shared");
 const destinationDir = path.join(agentRoot, "shared");
 const SHARED_RUNTIME_FILES = Object.freeze([
   "local-broker-protocol.cjs",
+  "product-contract.cjs",
+  "product-metadata.cjs",
   "security-policy-core.cjs",
   "tool-registry.cjs",
 ]);
