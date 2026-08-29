@@ -9,6 +9,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { resolveDevelopmentRuntimeConfig } = require("./dev-runtime-config.cjs");
+const { establishSingleInstanceOwnership } = require("./single-instance.cjs");
 const { normalizeSettings } = require("./host-config.cjs");
 const { approvalPrompt } = require("./approval-prompt.cjs");
 const { createApprovalSession } = require("./approval-session.cjs");
@@ -41,6 +42,12 @@ const desktopRuntimeConfig = resolveDevelopmentRuntimeConfig({
   defaultUserDataPath: path.join(app.getPath("appData"), "local-agent-host"),
 });
 app.setPath("userData", desktopRuntimeConfig.userDataPath);
+const singleInstanceOwnership = establishSingleInstanceOwnership({
+  app,
+  activatePrimary: () => {
+    void app.whenReady().then(() => setImmediate(showWindow));
+  },
+});
 
 const MCP_HOST = "127.0.0.1";
 const MCP_PORT = desktopRuntimeConfig.mcpPort;
@@ -722,24 +729,6 @@ async function stopRuntimeResource(resource, { kind }) {
   }
 }
 
-runtimeSupervisor = createRuntimeSupervisor({
-  prepare: prepareRuntime,
-  startBroker: startRuntimeBroker,
-  startAgent: startRuntimeAgent,
-  waitAgentReady: waitRuntimeAgentReady,
-  startTunnel: startRuntimeTunnel,
-  waitTunnelReady: waitRuntimeTunnelReady,
-  stopResource: stopRuntimeResource,
-});
-runtimeSupervisor.subscribe(() => emit("status", getStatus()));
-appLifecycle = createAppLifecycleCoordinator({
-  app,
-  supervisor: runtimeSupervisor,
-  disposeHostServices: async () => {
-    updateService?.dispose();
-  },
-});
-
 function createWindow() {
   windowRef = new BrowserWindow({
     width: 720,
@@ -765,60 +754,80 @@ function createWindow() {
   windowRef.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
-app.whenReady().then(() => {
-  if (process.platform === "darwin" && app.dock) app.dock.setIcon(dockIcon());
-  updateService = createUpdateService({
-    updater: autoUpdater,
-    currentVersion: app.getVersion(),
-    isPackaged: app.isPackaged,
-    prepareForInstall: () => appLifecycle.prepareForUpdateInstall(),
-    emitState: (state) => {
-      windowRef?.webContents?.send("update:state", state);
-      updateTray();
-    },
-    log: (line) => appendLog("update", line),
-  });
-  // The host has no browser-facing permissions. Tunnel traffic is handled by
-  // the separate client process, not by renderer pages.
-  const { session } = require("electron");
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
-  ipcMain.handle("settings:load", loadSettings);
-  ipcMain.handle("settings:save", async (_event, payload) => {
-    if (!payload || typeof payload !== "object") throw new Error("设置格式无效。");
-    if (typeof payload.runtimeKey === "string" && payload.runtimeKey.trim()) await saveRuntimeKey(payload.runtimeKey.trim());
-    return { ...(await writeSettings(payload)), hasRuntimeKey: fs.existsSync(secretPath()) };
-  });
-  ipcMain.handle("settings:clear-key", async () => { await fsp.rm(secretPath(), { force: true }); return { hasRuntimeKey: false }; });
-  ipcMain.handle("dialog:directory", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openDirectory"] })).filePaths[0] || "");
-  ipcMain.handle("dialog:file", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openFile"] })).filePaths[0] || "");
-  ipcMain.handle("host:start", () => runtimeSupervisor.start());
-  ipcMain.handle("host:stop", () => runtimeSupervisor.stop("ipc"));
-  ipcMain.handle("host:status", () => getStatus());
-  ipcMain.handle("host:logs", () => logLines);
-  ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
-  ipcMain.handle("update:get-state", () => updateService.getState());
-  ipcMain.handle("update:check", () => updateService.checkForUpdates());
-  ipcMain.handle("update:download", () => updateService.downloadUpdate());
-  ipcMain.handle("update:install", () => updateService.installUpdateAndRestart());
-  createTray();
-  createWindow();
-  if (packageMetadata.WEBGPT_UPDATE_E2E_BUILD === true) {
-    const { runUpdateE2EControl } = require("./update-e2e-control.cjs");
-    void runUpdateE2EControl({ packageMeta: packageMetadata, updateService, app }).catch((error) => {
-      appendLog("update-e2e", error?.stack || error?.message || String(error));
-      setTimeout(() => app.exit(1), 250);
+if (singleInstanceOwnership.primary) {
+  app.whenReady().then(() => {
+    runtimeSupervisor = createRuntimeSupervisor({
+      prepare: prepareRuntime,
+      startBroker: startRuntimeBroker,
+      startAgent: startRuntimeAgent,
+      waitAgentReady: waitRuntimeAgentReady,
+      startTunnel: startRuntimeTunnel,
+      waitTunnelReady: waitRuntimeTunnelReady,
+      stopResource: stopRuntimeResource,
     });
-  } else {
-    updateService.start();
-  }
-  app.on("activate", showWindow);
-});
+    runtimeSupervisor.subscribe(() => emit("status", getStatus()));
+    appLifecycle = createAppLifecycleCoordinator({
+      app,
+      supervisor: runtimeSupervisor,
+      disposeHostServices: async () => {
+        singleInstanceOwnership.dispose();
+        updateService?.dispose();
+      },
+    });
 
-app.on("before-quit", (event) => {
-  const nativeAllowed = appLifecycle.nativeQuitAllowed();
-  appLifecycle.handleBeforeQuit(event);
-  if (!nativeAllowed) {
-    void appLifecycle.whenSettled().catch((error) => appendLog("host", `${error.code || "SHUTDOWN_FAILED"}：${error.message}`));
-  }
-});
+    if (process.platform === "darwin" && app.dock) app.dock.setIcon(dockIcon());
+    updateService = createUpdateService({
+      updater: autoUpdater,
+      currentVersion: app.getVersion(),
+      isPackaged: app.isPackaged,
+      prepareForInstall: () => appLifecycle.prepareForUpdateInstall(),
+      emitState: (state) => {
+        windowRef?.webContents?.send("update:state", state);
+        updateTray();
+      },
+      log: (line) => appendLog("update", line),
+    });
+    // The host has no browser-facing permissions. Tunnel traffic is handled by
+    // the separate client process, not by renderer pages.
+    const { session } = require("electron");
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    session.defaultSession.setPermissionCheckHandler(() => false);
+    ipcMain.handle("settings:load", loadSettings);
+    ipcMain.handle("settings:save", async (_event, payload) => {
+      if (!payload || typeof payload !== "object") throw new Error("设置格式无效。");
+      if (typeof payload.runtimeKey === "string" && payload.runtimeKey.trim()) await saveRuntimeKey(payload.runtimeKey.trim());
+      return { ...(await writeSettings(payload)), hasRuntimeKey: fs.existsSync(secretPath()) };
+    });
+    ipcMain.handle("settings:clear-key", async () => { await fsp.rm(secretPath(), { force: true }); return { hasRuntimeKey: false }; });
+    ipcMain.handle("dialog:directory", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openDirectory"] })).filePaths[0] || "");
+    ipcMain.handle("dialog:file", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openFile"] })).filePaths[0] || "");
+    ipcMain.handle("host:start", () => runtimeSupervisor.start());
+    ipcMain.handle("host:stop", () => runtimeSupervisor.stop("ipc"));
+    ipcMain.handle("host:status", () => getStatus());
+    ipcMain.handle("host:logs", () => logLines);
+    ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
+    ipcMain.handle("update:get-state", () => updateService.getState());
+    ipcMain.handle("update:check", () => updateService.checkForUpdates());
+    ipcMain.handle("update:download", () => updateService.downloadUpdate());
+    ipcMain.handle("update:install", () => updateService.installUpdateAndRestart());
+    createTray();
+    showWindow();
+    if (packageMetadata.WEBGPT_UPDATE_E2E_BUILD === true) {
+      const { runUpdateE2EControl } = require("./update-e2e-control.cjs");
+      void runUpdateE2EControl({ packageMeta: packageMetadata, updateService, app }).catch((error) => {
+        appendLog("update-e2e", error?.stack || error?.message || String(error));
+        setTimeout(() => app.exit(1), 250);
+      });
+    } else {
+      updateService.start();
+    }
+    app.on("activate", showWindow);
+    app.on("before-quit", (event) => {
+      const nativeAllowed = appLifecycle.nativeQuitAllowed();
+      appLifecycle.handleBeforeQuit(event);
+      if (!nativeAllowed) {
+        void appLifecycle.whenSettled().catch((error) => appendLog("host", `${error.code || "SHUTDOWN_FAILED"}：${error.message}`));
+      }
+    });
+  });
+}
