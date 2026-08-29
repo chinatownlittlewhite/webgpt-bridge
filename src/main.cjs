@@ -1,22 +1,14 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, shell, Tray } = require("electron");
-const { spawn, spawnSync } = require("node:child_process");
-const crypto = require("node:crypto");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
-const fsp = require("node:fs/promises");
-const http = require("node:http");
-const net = require("node:net");
-const os = require("node:os");
 const path = require("node:path");
-const { pathToFileURL } = require("node:url");
 const { resolveDevelopmentRuntimeConfig } = require("./dev-runtime-config.cjs");
 const { establishSingleInstanceOwnership } = require("./single-instance.cjs");
-const { createBrokerBootstrap } = require("../shared/local-broker-protocol.cjs");
 const { createHostSettingsStore } = require("./host/settings-store.cjs");
 const { createHostSecurity } = require("./host/host-security.cjs");
 const { createHostBrokerServer } = require("./host/broker-server.cjs");
-const { resolveSystemProxyEnvironment } = require("./system-proxy.cjs");
+const { createRuntimeHost } = require("./host/runtime-host.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
-const { buildTrustedCommandPath } = require("./host-path.cjs");
 const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
 const { ensureTunnelProfile } = require("./tunnel-profile-manager.cjs");
 const { createStartupPreflight } = require("./startup-preflight.cjs");
@@ -52,8 +44,6 @@ const MAX_LOG_LINES = 600;
 
 let windowRef;
 let trayRef;
-let serverProcess;
-let tunnelProcess;
 let logLines = [];
 let updateService;
 let runtimeSupervisor;
@@ -126,56 +116,6 @@ function appendLog(source, data) {
   emit("logs", logLines);
 }
 
-function processIsLive(child) {
-  return Boolean(child && child.exitCode === null);
-}
-
-function nvmNodeCandidates() {
-  const versions = path.join(os.homedir(), ".nvm", "versions", "node");
-  try {
-    return fs.readdirSync(versions, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => path.join(versions, entry.name, "bin", process.platform === "win32" ? "node.exe" : "node"))
-      .sort()
-      .reverse();
-  } catch {
-    return [];
-  }
-}
-
-function spawnLogged(command, args, options, label) {
-  const child = spawn(command, args, { ...options, shell: false, windowsHide: true });
-  child.stdout?.on("data", (chunk) => appendLog(label, chunk));
-  child.stderr?.on("data", (chunk) => appendLog(label, chunk));
-  child.on("error", (error) => appendLog(label, `启动失败：${error.message}`));
-  child.on("exit", (code, signal) => {
-    appendLog(label, `进程已退出（code=${code ?? "null"}, signal=${signal ?? "none"}）`);
-  });
-  return child;
-}
-
-function requestHealth() {
-  return new Promise((resolve) => {
-    const req = http.get({ host: MCP_HOST, port: MCP_PORT, path: "/healthz", timeout: 1500 }, (res) => {
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => resolve(res.statusCode === 200 ? Buffer.concat(chunks).toString("utf8") : ""));
-    });
-    req.on("error", () => resolve(""));
-    req.on("timeout", () => { req.destroy(); resolve(""); });
-  });
-}
-
-async function waitForHealth() {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    const health = await requestHealth();
-    if (health) return health;
-    await new Promise((resolve) => setTimeout(resolve, 400));
-  }
-  throw new Error("本地 Agent 服务未在 15 秒内通过健康检查。请查看日志。");
-}
-
 function getStatus() {
   const status = runtimeSupervisor?.getStatus() || {
     state: "stopped",
@@ -210,6 +150,21 @@ const hostBroker = createHostBrokerServer({
   platform: process.platform,
   pid: process.pid,
   spawnSync,
+});
+
+const runtimeHost = createRuntimeHost({
+  settingsStore,
+  startupPreflight,
+  hostBroker,
+  appendLog,
+  resetLogs: () => {
+    logLines = [];
+    emit("logs", logLines);
+  },
+  spawnSync,
+  endpoints: { mcpHost: MCP_HOST, mcpPort: MCP_PORT },
+  platform: process.platform,
+  env: process.env,
 });
 
 function trayIcon() {
@@ -268,167 +223,6 @@ function createTray() {
   updateTray();
 }
 
-function waitForChildExit(child, timeoutMs = 5000) {
-  if (!processIsLive(child)) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.removeListener("exit", onExit);
-      child.removeListener("error", onError);
-    };
-    const onExit = () => { cleanup(); resolve(); };
-    const onError = (error) => { cleanup(); reject(error); };
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error(`进程在 ${timeoutMs}ms 内未退出。`));
-    }, timeoutMs);
-    child.once("exit", onExit);
-    child.once("error", onError);
-  });
-}
-
-async function stopChild(child, name) {
-  if (!processIsLive(child)) return;
-  appendLog("host", `正在停止 ${name}…`);
-  if (process.platform === "win32" && child.pid) {
-    const result = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-    if (result.status !== 0 && processIsLive(child)) throw new Error(`${name} 无法停止。`);
-    return;
-  }
-  try {
-    const gracefulExit = waitForChildExit(child, 5000);
-    child.kill("SIGTERM");
-    await gracefulExit;
-  } catch {
-    if (processIsLive(child)) {
-      const forcedExit = waitForChildExit(child, 2000);
-      child.kill("SIGKILL");
-      await forcedExit;
-    }
-  }
-}
-
-async function prepareRuntime() {
-  const settings = await settingsStore.loadSettings();
-  const preflight = await startupPreflight.prepare({
-    settings,
-    env: process.env,
-    platform: process.platform,
-    nvmCandidates: nvmNodeCandidates(),
-  });
-  const proxyEnv = resolveSystemProxyEnvironment({
-    explicitProxy: settings.httpsProxy,
-    platform: process.platform,
-    spawnSync,
-  });
-  logLines = [];
-  emit("logs", logLines);
-  appendLog(
-    "host",
-    preflight.githubCliPath
-      ? `GitHub CLI：${preflight.githubCliPath}`
-      : "未检测到 GitHub CLI；GitHub 工具会返回可修复诊断，其他本地工具不受影响。",
-  );
-  const brokerBootstrap = createBrokerBootstrap();
-  return { ...preflight, proxyEnv, brokerBootstrap };
-}
-
-async function startRuntimeBroker(preflight) {
-  return hostBroker.start(preflight.settings, preflight.runtime, {
-    githubCliPath: preflight.githubCliPath,
-    proxyEnv: preflight.proxyEnv,
-    brokerBootstrap: preflight.brokerBootstrap,
-  });
-}
-
-async function startRuntimeAgent(preflight) {
-  const { settings, node, runtime, appToolsBin, githubCliPath } = preflight;
-  const baseEnv = {
-    ...process.env,
-    PATH: buildTrustedCommandPath({
-      nodePath: node,
-      additionalPaths: [
-        appToolsBin,
-        ...(githubCliPath ? [path.dirname(githubCliPath)] : []),
-      ],
-    }),
-    LPC_WORKSPACE: runtime.workspacePath,
-    LPC_HOST: MCP_HOST,
-    LPC_PORT: String(MCP_PORT),
-    LPC_VERIFY_SANDBOX: "true",
-    LPC_ENABLE_NETWORK_TOOLS: "true",
-    LPC_LOCAL_BROKER_SOCKET: hostBroker.getSocketPath(),
-    LPC_LOCAL_BROKER_PROTOCOL: String(preflight.brokerBootstrap.protocolVersion),
-    LPC_LOCAL_BROKER_SESSION: preflight.brokerBootstrap.sessionId,
-    LPC_LOCAL_BROKER_SECRET: preflight.brokerBootstrap.secret,
-    LPC_GITHUB_CLI_PATH: githubCliPath,
-    LPC_DESIGN_ISSUE_JOURNAL: settings.designIssueJournal === true ? "true" : "false",
-  };
-  serverProcess = spawnLogged(node, [path.join(runtime.runtimePath, "dist", "server.js")], { env: baseEnv, cwd: runtime.runtimePath }, "agent");
-  return serverProcess;
-}
-
-async function waitRuntimeAgentReady() {
-  await waitForHealth();
-  return true;
-}
-
-async function startRuntimeTunnel(preflight) {
-  const { tunnelClient, tunnelProfile, runtimeKey, proxyEnv = {} } = preflight;
-  const tunnelEnv = {
-    ...process.env,
-    ...proxyEnv,
-    CONTROL_PLANE_API_KEY: runtimeKey,
-  };
-  tunnelProcess = spawnLogged(
-    tunnelClient,
-    ["run", "--profile", tunnelProfile.profile, "--profile-dir", tunnelProfile.profileDir],
-    { env: tunnelEnv },
-    "tunnel",
-  );
-  return tunnelProcess;
-}
-
-async function waitRuntimeTunnelReady(tunnel, preflight) {
-  const healthUrl = new URL(preflight.tunnelProfile.healthBaseUrl);
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    if (!processIsLive(tunnel)) return false;
-    const ready = await new Promise((resolve) => {
-      const req = http.get({
-        host: healthUrl.hostname,
-        port: healthUrl.port,
-        path: "/readyz",
-        timeout: 1500,
-      }, (res) => {
-        res.resume();
-        res.on("end", () => resolve(res.statusCode === 200));
-      });
-      req.on("error", () => resolve(false));
-      req.on("timeout", () => { req.destroy(); resolve(false); });
-    });
-    if (ready) return true;
-    await new Promise((resolve) => setTimeout(resolve, 400));
-  }
-  return false;
-}
-
-async function stopRuntimeResource(resource, { kind }) {
-  if (kind === "tunnel") {
-    await stopChild(resource, "隧道客户端");
-    if (tunnelProcess === resource) tunnelProcess = undefined;
-    return;
-  }
-  if (kind === "agent") {
-    await stopChild(resource, "Agent 服务");
-    if (serverProcess === resource) serverProcess = undefined;
-    return;
-  }
-  if (kind === "broker") {
-    await hostBroker.stop();
-  }
-}
-
 function createWindow() {
   windowRef = new BrowserWindow({
     width: 720,
@@ -456,15 +250,7 @@ function createWindow() {
 
 if (singleInstanceOwnership.primary) {
   app.whenReady().then(() => {
-    runtimeSupervisor = createRuntimeSupervisor({
-      prepare: prepareRuntime,
-      startBroker: startRuntimeBroker,
-      startAgent: startRuntimeAgent,
-      waitAgentReady: waitRuntimeAgentReady,
-      startTunnel: startRuntimeTunnel,
-      waitTunnelReady: waitRuntimeTunnelReady,
-      stopResource: stopRuntimeResource,
-    });
+    runtimeSupervisor = createRuntimeSupervisor(runtimeHost);
     runtimeSupervisor.subscribe(() => emit("status", getStatus()));
     appLifecycle = createAppLifecycleCoordinator({
       app,
