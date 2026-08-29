@@ -50,8 +50,10 @@ test("known-folder access is limited to desktop/downloads/documents, relative pa
 });
 
 test("desktop host wires actual runtime endpoints and authenticated GitHub health", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
-  assert.match(source, /createLoopbackHealthProbe\(\{[\s\S]*MCP_PORT[\s\S]*TUNNEL_HEALTH_PORT[\s\S]*githubProbe/);
+  const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
+  const broker = fs.readFileSync(path.join(__dirname, "..", "src", "host", "broker-server.cjs"), "utf8");
+  assert.match(main, /endpoints:\s*\{[\s\S]{0,180}mcpPort:\s*MCP_PORT[\s\S]{0,180}tunnelHealthPort:\s*TUNNEL_HEALTH_PORT/);
+  assert.match(broker, /createLoopbackHealthProbe\(\{[\s\S]*githubProbe/);
 });
 
 test("health probe accepts only fixed agent, tunnel, and github targets", async () => {

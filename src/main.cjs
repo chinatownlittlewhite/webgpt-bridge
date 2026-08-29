@@ -10,18 +10,10 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { resolveDevelopmentRuntimeConfig } = require("./dev-runtime-config.cjs");
 const { establishSingleInstanceOwnership } = require("./single-instance.cjs");
-const { createBrokerBootstrap, createBrokerChallenge, verifyBrokerProof } = require("../shared/local-broker-protocol.cjs");
-const { getBrokerMethodMetadata } = require("../shared/tool-registry.cjs");
+const { createBrokerBootstrap } = require("../shared/local-broker-protocol.cjs");
 const { createHostSettingsStore } = require("./host/settings-store.cjs");
-const { approvalPrompt } = require("./approval-prompt.cjs");
-const { createApprovalSession } = require("./approval-session.cjs");
-const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
-const { createLocalFileBroker } = require("./local-file-broker.cjs");
-const { createHostCapabilityStore } = require("./host-capability-store.cjs");
-const { createKnownFolderAccess } = require("./known-folder-access.cjs");
-const { createLoopbackHealthProbe, defaultTcpProbe } = require("./loopback-health-probe.cjs");
-const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
-const { validateSshCommand } = require("./ssh-policy.cjs");
+const { createHostSecurity } = require("./host/host-security.cjs");
+const { createHostBrokerServer } = require("./host/broker-server.cjs");
 const { resolveSystemProxyEnvironment } = require("./system-proxy.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { buildTrustedCommandPath } = require("./host-path.cjs");
@@ -62,15 +54,6 @@ let windowRef;
 let trayRef;
 let serverProcess;
 let tunnelProcess;
-let localBrokerServer;
-let localBrokerSocket = "";
-let localFileBroker;
-let localCapabilityStore;
-let localKnownFolderAccess;
-let localHealthProbe;
-let localTerminalBroker;
-let localApprovalMode = "development";
-const approvalSession = createApprovalSession();
 let logLines = [];
 let updateService;
 let runtimeSupervisor;
@@ -217,302 +200,17 @@ function dialogOwner() {
   return windowRef && !windowRef.isDestroyed() ? windowRef : undefined;
 }
 
+const hostSecurity = createHostSecurity({ dialog, dialogOwner, appendLog });
 
-async function confirmHostCommandApproval(params) {
-  const request = params?.request;
-  if (!request || typeof request !== "object" || !Array.isArray(request.argv) || request.argv.length === 0 || request.argv.some((value) => typeof value !== "string" || !value || value.includes("\0"))) {
-    throw new Error("Agent 审批请求格式无效。");
-  }
-  if (typeof request.cwd !== "string" || !request.cwd) throw new Error("Agent 审批请求缺少工作目录。");
-  const authorization = classifyHostCommandApproval(request, localApprovalMode);
-  if (authorization.decision === "deny") {
-    appendLog("local-broker", `Agent 命令审批：已拒绝（${authorization.reason}）`);
-    return { approved: false };
-  }
-  if (authorization.decision === "allow") {
-    appendLog("local-broker", `Agent 命令审批：自动批准（${authorization.reason}）`);
-    return { approved: true };
-  }
-  const approved = await confirmLocalOperation({
-    kind: "terminal-command",
-    argv: request.argv,
-    cwd: request.cwd,
-    policy: { ...request.policy, reason: authorization.reason || request.policy?.reason },
-    rememberKey: authorization.rememberScope === "connection" ? authorization.permissionClass : undefined,
-  });
-  appendLog("local-broker", `Agent 命令审批：${approved ? "已批准" : "已取消"}`);
-  return { approved };
-}
-
-async function confirmLocalOperation(request) {
-  const explicitConsent = request?.kind === "sensitive-access" || request?.kind === "known-folder-access" || request?.kind === "host-path-access";
-  if (!explicitConsent && localApprovalMode === "full_control") {
-    appendLog("local-broker", "完全控制模式：自动批准本机权限请求");
-    return true;
-  }
-  const prompt = approvalPrompt(request, localApprovalMode);
-  if (approvalSession.isRemembered(prompt)) {
-    appendLog("local-broker", `已按本次连接记忆自动批准：${prompt.message}`);
-    return true;
-  }
-  const options = {
-    type: "warning",
-    buttons: ["取消", "允许"],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-    title: "WebGPT Bridge · 权限请求",
-    message: prompt.message,
-    detail: prompt.detail,
-  };
-  const owner = dialogOwner();
-  const response = owner ? await dialog.showMessageBox(owner, options) : await dialog.showMessageBox(options);
-  const approved = response.response === 1;
-  approvalSession.record(prompt, { approved });
-  return approved;
-}
-
-function localBrokerSocketPath() {
-  if (process.platform === "win32") return `\\\\.\\pipe\\webgpt-bridge-${process.pid}`;
-  return path.join(app.getPath("temp"), `webgpt-bridge-${process.pid}.sock`);
-}
-
-async function stopLocalBroker() {
-  approvalSession.clear();
-  const server = localBrokerServer;
-  const socketPath = localBrokerSocket;
-  localBrokerServer = undefined;
-  localBrokerSocket = "";
-  localCapabilityStore?.clear();
-  localCapabilityStore = undefined;
-  localFileBroker = undefined;
-  localKnownFolderAccess = undefined;
-  localHealthProbe = undefined;
-  localTerminalBroker = undefined;
-  if (server) await new Promise((resolve) => server.close(() => resolve()));
-  if (socketPath && process.platform !== "win32") await fsp.rm(socketPath, { force: true }).catch(() => {});
-}
-
-function localBrokerDispatch(method, params, executionContext = {}) {
-  const implementations = {
-    "file.list": () => localFileBroker.list(params),
-    "file.read": () => localFileBroker.read(params),
-    "known-folder.list": () => localKnownFolderAccess.list(params),
-    "known-folder.read": () => localKnownFolderAccess.read(params),
-    "health.probe": () => localHealthProbe.probe(params),
-    "access.sensitive.request": () => localFileBroker.requestSensitiveAccess(params),
-    "access.host.request": () => localFileBroker.requestHostAccess(params),
-    "file-batch.stage": () => localFileBroker.stage(params),
-    "file-batch.confirm": () => localFileBroker.confirmBatch(params),
-    "command.run": () => localTerminalBroker.run(params, executionContext),
-    "command.approve": () => confirmHostCommandApproval(params),
-  };
-  const metadata = getBrokerMethodMetadata(method);
-  if (!metadata) throw new Error("未知的本机代理方法。");
-  const handler = implementations[metadata.implementationKey];
-  if (typeof handler !== "function") throw new Error("本机代理方法未配置。");
-  return handler();
-}
-
-function attachLocalBrokerConnection(socket, brokerBootstrap) {
-  let buffered = "";
-  let handshakeState = "awaiting_hello";
-  let hello = null;
-  let challengeNonce = "";
-  const activeRequests = new Set();
-
-  function rejectHandshake(code) {
-    const safeCode = code === "BROKER_PROTOCOL_MISMATCH" ? code : "BROKER_AUTH_FAILED";
-    appendLog("local-broker", `broker-handshake: ${safeCode}`);
-    if (!socket.destroyed) socket.end(`${JSON.stringify({ type: "hello_error", code: safeCode })}\n`);
-    handshakeState = "failed";
-    hello = null;
-    challengeNonce = "";
-  }
-
-  socket.setEncoding("utf8");
-  socket.on("close", () => {
-    for (const controller of activeRequests) controller.abort();
-    activeRequests.clear();
-    hello = null;
-    challengeNonce = "";
-  });
-  socket.on("data", (chunk) => {
-    buffered += chunk;
-    if (buffered.length > 1024 * 1024) return socket.destroy();
-    const lines = buffered.split("\n");
-    buffered = lines.pop();
-    for (const line of lines) {
-      if (!line.trim() || handshakeState === "failed") continue;
-      let message;
-      try {
-        message = JSON.parse(line);
-      } catch {
-        if (handshakeState !== "ready") rejectHandshake("BROKER_AUTH_FAILED");
-        else if (!socket.destroyed) socket.write(`${JSON.stringify({ id: null, ok: false, error: "本机代理请求格式无效。" })}\n`);
-        continue;
-      }
-
-      if (handshakeState === "awaiting_hello") {
-        if (!message || message.type !== "hello") {
-          rejectHandshake("BROKER_AUTH_FAILED");
-          continue;
-        }
-        const challenge = createBrokerChallenge(message, brokerBootstrap);
-        if (challenge.type === "hello_error") {
-          rejectHandshake(challenge.code);
-          continue;
-        }
-        hello = Object.freeze({
-          protocolVersion: message.protocolVersion,
-          sessionId: message.sessionId,
-          agentVersion: message.agentVersion,
-        });
-        challengeNonce = challenge.nonce;
-        handshakeState = "awaiting_proof";
-        socket.write(`${JSON.stringify(challenge)}\n`);
-        continue;
-      }
-
-      if (handshakeState === "awaiting_proof") {
-        if (!message || message.type !== "authenticate" || !hello || message.protocolVersion !== hello.protocolVersion || message.sessionId !== hello.sessionId || message.agentVersion !== hello.agentVersion || message.nonce !== challengeNonce) {
-          rejectHandshake("BROKER_AUTH_FAILED");
-          continue;
-        }
-        const verification = verifyBrokerProof(message, brokerBootstrap, { expectedNonce: challengeNonce });
-        if (!verification.ok) {
-          rejectHandshake(verification.code);
-          continue;
-        }
-        handshakeState = "ready";
-        hello = null;
-        challengeNonce = "";
-        appendLog("local-broker", "broker-handshake: accepted");
-        socket.write(`${JSON.stringify({ type: "hello_ok" })}\n`);
-        continue;
-      }
-
-      if (handshakeState !== "ready") continue;
-      void (async () => {
-        try {
-          if (!message || typeof message !== "object" || typeof message.method !== "string" || !message.params || typeof message.params !== "object") throw new Error("本机代理请求格式无效。");
-          const controller = new AbortController();
-          activeRequests.add(controller);
-          try {
-            const result = await localBrokerDispatch(message.method, message.params, { signal: controller.signal });
-            if (!socket.destroyed) socket.write(`${JSON.stringify({ id: message.id, ok: true, result })}\n`);
-          } finally {
-            activeRequests.delete(controller);
-          }
-        } catch (error) {
-          if (!socket.destroyed) socket.write(`${JSON.stringify({ id: message?.id, ok: false, error: error.message || "本机代理请求失败。" })}\n`);
-        }
-      })();
-    }
-  });
-}
-
-async function startLocalBroker(settings, runtime, { githubCliPath = "", proxyEnv = {}, brokerBootstrap } = {}) {
-  await stopLocalBroker();
-  localApprovalMode = normalizeApprovalMode(settings.approvalMode);
-  const knownFolderRoots = {
-    desktop: app.getPath("desktop"),
-    downloads: app.getPath("downloads"),
-    documents: app.getPath("documents"),
-  };
-  const policyOptions = {
-    appDataRoots: [app.getPath("userData")],
-    workspaceRoot: settings.workspacePath,
-    knownFolderRoots,
-  };
-  const pathPolicy = (target, options) => classifyLocalPath(target, { ...policyOptions, ...options, approvalMode: settings.approvalMode });
-  const actionPolicy = (action) => classifyLocalAction({ ...action, approvalMode: settings.approvalMode });
-  const policyModule = await import(pathToFileURL(path.join(runtime.runtimePath, "dist", "policy.js")).href);
-  localCapabilityStore = createHostCapabilityStore({ generation: crypto.randomUUID(), policyVersion: "v0.5-phase1" });
-  localFileBroker = createLocalFileBroker({
-    workspaceRoot: settings.workspacePath,
-    transactionRegistryPath: path.join(app.getPath("userData"), "local-file-transactions.json"),
-    capabilityStore: localCapabilityStore,
-    policy: pathPolicy,
-    actionPolicy,
-    confirm: confirmLocalOperation,
-    audit: (entry) => appendLog("local-broker", `${entry.action}：${entry.result}`),
-  });
-  localKnownFolderAccess = createKnownFolderAccess({
-    roots: knownFolderRoots,
-    fileBroker: localFileBroker,
-    issueCapability: async (request) => {
-      const classified = pathPolicy(request.path, { operation: request.operation });
-      if (classified.scope === "system" || classified.scope === "sensitive") {
-        throw new Error(classified.reason || "该 known-folder 目标不能通过普通目录授权访问。");
-      }
-      if (!await confirmLocalOperation({ kind: "known-folder-access", ...request })) {
-        throw new Error("known-folder 访问未获得用户授权。");
-      }
-      const grant = localCapabilityStore.issue({
-        root: classified.path || request.path,
-        operations: [request.operation],
-        ttlMs: 5 * 60_000,
-        maxUses: 100,
-        className: `known-folder-${request.operation}`,
-      });
-      return { accessId: grant.accessId };
-    },
-  });
-  localHealthProbe = createLoopbackHealthProbe({
-    targets: {
-      agent: { kind: "http", host: MCP_HOST, port: MCP_PORT, path: "/healthz" },
-      tunnel: { kind: "http", host: TUNNEL_HEALTH_HOST, port: TUNNEL_HEALTH_PORT, path: "/readyz" },
-    },
-    githubProbe: async () => {
-      const connectivity = await defaultTcpProbe({ host: "github.com", port: 443 });
-      if (!githubCliPath) {
-        return { ok: false, connectivity: connectivity.ok === true, binaryReady: false, authenticated: false };
-      }
-      const auth = spawnSync(githubCliPath, ["auth", "status"], {
-        shell: false,
-        windowsHide: true,
-        timeout: 10_000,
-        stdio: "ignore",
-      });
-      const authenticated = !auth.error && auth.status === 0;
-      return {
-        ok: connectivity.ok === true && authenticated,
-        connectivity: connectivity.ok === true,
-        binaryReady: true,
-        authenticated,
-      };
-    },
-  });
-  const sshExecutable = settings.sshEnabled && process.platform !== "win32" ? "/usr/bin/ssh" : "";
-  const trustedExecutables = {
-    ...(githubCliPath ? { gh: githubCliPath } : {}),
-    ...(sshExecutable ? { ssh: sshExecutable } : {}),
-  };
-  localTerminalBroker = createLocalTerminalBroker({
-    approvalMode: settings.approvalMode,
-    classifyCommand: policyModule.classifyCommand,
-    confirm: confirmLocalOperation,
-    pathPolicy,
-    trustedExecutables,
-    networkEnv: proxyEnv,
-    sshPolicy: sshExecutable ? (argv) => validateSshCommand(argv, { allowedHosts: settings.sshAllowedHosts }) : undefined,
-  });
-  localBrokerSocket = localBrokerSocketPath();
-  if (process.platform !== "win32") await fsp.rm(localBrokerSocket, { force: true }).catch(() => {});
-  if (!brokerBootstrap || typeof brokerBootstrap.secret !== "string" || !brokerBootstrap.secret) throw new Error("Local broker authentication bootstrap is required");
-  localBrokerServer = net.createServer((socket) => attachLocalBrokerConnection(socket, brokerBootstrap));
-  await new Promise((resolve, reject) => {
-    localBrokerServer.once("error", reject);
-    localBrokerServer.listen(localBrokerSocket, () => {
-      localBrokerServer.off("error", reject);
-      resolve();
-    });
-  });
-  if (process.platform !== "win32") await fsp.chmod(localBrokerSocket, 0o600);
-  appendLog("local-broker", "已启动受控本机文件与终端代理。");
-  return localBrokerServer;
-}
+const hostBroker = createHostBrokerServer({
+  app,
+  hostSecurity,
+  appendLog,
+  endpoints: { mcpHost: MCP_HOST, mcpPort: MCP_PORT, tunnelHealthHost: TUNNEL_HEALTH_HOST, tunnelHealthPort: TUNNEL_HEALTH_PORT },
+  platform: process.platform,
+  pid: process.pid,
+  spawnSync,
+});
 
 function trayIcon() {
   const image = nativeImage.createFromDataURL(trayIconDataUrl(process.platform));
@@ -636,7 +334,7 @@ async function prepareRuntime() {
 }
 
 async function startRuntimeBroker(preflight) {
-  return startLocalBroker(preflight.settings, preflight.runtime, {
+  return hostBroker.start(preflight.settings, preflight.runtime, {
     githubCliPath: preflight.githubCliPath,
     proxyEnv: preflight.proxyEnv,
     brokerBootstrap: preflight.brokerBootstrap,
@@ -659,7 +357,7 @@ async function startRuntimeAgent(preflight) {
     LPC_PORT: String(MCP_PORT),
     LPC_VERIFY_SANDBOX: "true",
     LPC_ENABLE_NETWORK_TOOLS: "true",
-    LPC_LOCAL_BROKER_SOCKET: localBrokerSocket,
+    LPC_LOCAL_BROKER_SOCKET: hostBroker.getSocketPath(),
     LPC_LOCAL_BROKER_PROTOCOL: String(preflight.brokerBootstrap.protocolVersion),
     LPC_LOCAL_BROKER_SESSION: preflight.brokerBootstrap.sessionId,
     LPC_LOCAL_BROKER_SECRET: preflight.brokerBootstrap.secret,
@@ -727,7 +425,7 @@ async function stopRuntimeResource(resource, { kind }) {
     return;
   }
   if (kind === "broker") {
-    await stopLocalBroker();
+    await hostBroker.stop();
   }
 }
 
