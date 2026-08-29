@@ -51,6 +51,7 @@ function createBuilderConfig(env = process.env) {
       "!src/update-e2e-control.cjs",
       "agent-runtime/dist/**/*",
       "agent-runtime/node_modules/**/*",
+      "!agent-runtime/node_modules/.bin/**/*",
       ...agentDevDependencyExcludes(),
       "agent-runtime/package.json",
       "agent-runtime/native/windows-host/bin/release/**/*",
