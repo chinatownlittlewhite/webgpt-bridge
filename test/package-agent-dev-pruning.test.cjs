@@ -27,9 +27,14 @@ test("desktop packaging excludes every lockfile-marked Agent dev-only dependency
   assert.equal(config.files.includes("!agent-runtime/node_modules/node-pty/**/*"), false);
 });
 
+test("production Agent packaging excludes package-manager bin shims", () => {
+  const config = createBuilderConfig({});
+  assert.ok(config.files.includes("!agent-runtime/node_modules/.bin/**/*"));
+});
+
 test("Agent dev-package exclusions are deterministic and remain narrower than node_modules", () => {
   const config = createBuilderConfig({});
-  const excludes = config.files.filter((entry) => entry.startsWith("!agent-runtime/node_modules/"));
+  const excludes = config.files.filter((entry) => entry.startsWith("!agent-runtime/node_modules/") && entry !== "!agent-runtime/node_modules/.bin/**/*");
   assert.deepEqual(excludes, [...excludes].sort());
   assert.equal(excludes.includes("!agent-runtime/node_modules/**/*"), false);
   assert.equal(excludes.some((entry) => entry.includes("../")), false);
