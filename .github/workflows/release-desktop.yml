@@ -153,13 +153,18 @@ jobs:
             release/WebGPT-Bridge-*-win-x64.exe.blockmap
             release/latest.yml
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-windows-size
+          path: release/windows-install-size.json
+          if-no-files-found: error
       - name: Cleanup Windows host preparation
         if: always()
         shell: pwsh
         run: |
           $installRoot = Join-Path $env:SystemDrive "WebGPT-Bridge-Custom-Install-Smoke"
           if (Test-Path $installRoot) {
-            $uninstaller = Get-ChildItem -Path $installRoot -Filter "Uninstall*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            $uninstaller = Get-ChildItem -Path $InstallRoot -Filter "Uninstall*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($uninstaller) {
               $cleanup = Start-Process -FilePath $uninstaller.FullName -ArgumentList @("/S") -Wait -PassThru
               if ($cleanup.ExitCode -ne 0) { Write-Warning "release cleanup uninstall returned exit $($cleanup.ExitCode)" }
@@ -198,6 +203,8 @@ jobs:
           APP="$(find release -type d -name 'WebGPT Bridge.app' -print -quit)"
           npm run verify:mac-native-artifact -- "$APP"
           npm run verify:mac-packaged-pty -- "$APP"
+          node scripts/report-package-size.cjs "$APP" > release/macos-package-size.json
+          cat release/macos-package-size.json
           APP_BIN="$APP/Contents/MacOS/WebGPT Bridge"
           TUNNEL_BIN="$APP/Contents/Resources/tunnel-client/tunnel-client"
           CLOUDFLARED_BIN="$APP/Contents/Resources/tunnel-client/cloudflared"
@@ -229,6 +236,11 @@ jobs:
             release/WebGPT-Bridge-*-mac-universal.zip
             release/WebGPT-Bridge-*-mac-universal.zip.blockmap
             release/latest-mac.yml
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-macos-size
+          path: release/macos-package-size.json
           if-no-files-found: error
 
   publish:
