@@ -28,6 +28,7 @@ function createBuilderConfig(env = process.env) {
     asar: true,
     asarUnpack: [
       "agent-runtime/dist/**/*",
+      "agent-runtime/shared/**/*",
       "agent-runtime/node_modules/**/*",
       "agent-runtime/package.json",
       "agent-runtime/native/windows-host/bin/release/**/*",
@@ -40,6 +41,7 @@ function createBuilderConfig(env = process.env) {
       "src/**/*",
       "!src/update-e2e-control.cjs",
       "agent-runtime/dist/**/*",
+      "agent-runtime/shared/**/*",
       "agent-runtime/node_modules/**/*",
       "agent-runtime/package.json",
       "agent-runtime/native/windows-host/bin/release/**/*",
