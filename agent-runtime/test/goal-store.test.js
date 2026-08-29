@@ -8,6 +8,7 @@ import {
   createFileGoalSessionStore,
   createMemoryGoalSessionStore,
 } from "../src/goal-store.js";
+import { INTERNAL_STATE_DIR } from "../src/workspace.js";
 
 function makeWorkspace() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-goal-store-"));
@@ -50,19 +51,75 @@ test("memory goal store snapshots values instead of exposing mutable references"
   assert.equal(store.loadAll()[0].nested.value, 1);
 });
 
-test("file goal store persists sessions with one file per opaque handle", () => {
+test("file goal store persists sessions in the durable v2 state directory", () => {
   const workspace = makeWorkspace();
   const store = createFileGoalSessionStore({ workspace });
   store.save({ id: "abc_123", status: "active", goal: "persist me" });
 
   const loaded = store.loadAll();
+  assert.equal(store.kind, "file");
+  assert.equal(store.persistent, true);
+  assert.equal(store.version, 2);
+  assert.equal(path.basename(store.stateDirectory), "state-v2");
   assert.equal(loaded.length, 1);
   assert.equal(loaded[0].id, "abc_123");
   assert.equal(loaded[0].goal, "persist me");
-  assert.equal(fs.existsSync(path.join(store.directory, "abc_123.json")), true);
+  for (const name of ["metadata.json", "snapshot.json", "journal.log"]) {
+    assert.equal(fs.existsSync(path.join(store.stateDirectory, name)), true);
+  }
+  assert.equal(fs.existsSync(path.join(store.directory, "abc_123.json")), false);
 
   store.remove("abc_123");
   assert.equal(store.loadAll().length, 0);
+  fs.rmSync(workspace, { recursive: true, force: true });
+});
+
+test("file goal store transactionally migrates valid v1 sessions once and preserves source files", () => {
+  const workspace = makeWorkspace();
+  const goalsDir = path.join(workspace, INTERNAL_STATE_DIR, "goals");
+  fs.mkdirSync(goalsDir, { recursive: true });
+  const legacyPath = path.join(goalsDir, "legacy.json");
+  fs.writeFileSync(legacyPath, `${JSON.stringify({
+    version: 1,
+    session: { id: "legacy", status: "active", goal: "keep me" },
+  }, null, 2)}\n`, "utf8");
+
+  const first = createFileGoalSessionStore({ workspace });
+  assert.equal(first.version, 2);
+  assert.deepEqual(first.loadAll().map((session) => session.id), ["legacy"]);
+  assert.equal(fs.existsSync(legacyPath), true);
+  const metadata = JSON.parse(fs.readFileSync(path.join(first.stateDirectory, "metadata.json"), "utf8"));
+  assert.equal(metadata.version, 2);
+  assert.equal(metadata.migrationComplete, true);
+  assert.equal(metadata.migratedFromV1, 1);
+  assert.equal(fs.readdirSync(goalsDir).some((name) => name.startsWith(".state-v2-migrate-")), false);
+
+  fs.writeFileSync(path.join(goalsDir, "late-legacy.json"), `${JSON.stringify({
+    version: 1,
+    session: { id: "late_legacy", status: "active", goal: "must not be reimported" },
+  })}\n`, "utf8");
+  const second = createFileGoalSessionStore({ workspace });
+  assert.deepEqual(second.loadAll().map((session) => session.id), ["legacy"]);
+  assert.equal(fs.existsSync(legacyPath), true);
+  fs.rmSync(workspace, { recursive: true, force: true });
+});
+
+test("migration publication failure leaves valid v1 Goal state readable and writable", () => {
+  const workspace = makeWorkspace();
+  const goalsDir = path.join(workspace, INTERNAL_STATE_DIR, "goals");
+  fs.mkdirSync(goalsDir, { recursive: true });
+  fs.writeFileSync(path.join(goalsDir, "legacy.json"), `${JSON.stringify({
+    version: 1,
+    session: { id: "legacy", status: "active", goal: "fallback" },
+  })}\n`, "utf8");
+  fs.writeFileSync(path.join(goalsDir, "state-v2"), "blocks directory publication\n", "utf8");
+
+  const store = createFileGoalSessionStore({ workspace });
+  assert.equal(store.version, 1);
+  assert.equal(store.loadAll()[0].id, "legacy");
+  store.save({ id: "legacy_2", status: "paused", goal: "still writable" });
+  assert.equal(fs.existsSync(path.join(goalsDir, "legacy_2.json")), true);
+  assert.deepEqual(store.loadAll().map((session) => session.id).sort(), ["legacy", "legacy_2"]);
   fs.rmSync(workspace, { recursive: true, force: true });
 });
 

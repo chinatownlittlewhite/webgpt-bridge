@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createGoalController } from "../src/goal-controller.js";
 import { createFileGoalSessionStore, createMemoryGoalSessionStore } from "../src/goal-store.js";
+import { INTERNAL_STATE_DIR } from "../src/workspace.js";
 
 const emptyObjectSchema = {
   type: "object",
@@ -279,7 +280,8 @@ test("legacy version-1 persisted Goal files remain readable after paused-state s
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-goal-legacy-v1-"));
   fs.mkdirSync(path.join(workspace, "project"), { recursive: true });
   try {
-    const store = createFileGoalSessionStore({ workspace });
+    const goalsDir = path.join(workspace, INTERNAL_STATE_DIR, "goals");
+    fs.mkdirSync(goalsDir, { recursive: true });
     const raw = storedSession({
       id: "legacy_file_v1",
       status: "active",
@@ -288,7 +290,7 @@ test("legacy version-1 persisted Goal files remain readable after paused-state s
       goal: "legacy file goal",
     });
     fs.writeFileSync(
-      path.join(store.directory, "legacy_file_v1.json"),
+      path.join(goalsDir, "legacy_file_v1.json"),
       `${JSON.stringify({ version: 1, session: raw }, null, 2)}\n`,
       "utf8",
     );

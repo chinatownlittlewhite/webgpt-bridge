@@ -214,7 +214,9 @@ function replayJournal({ journalPath, snapshotSequence, sessions }) {
   return { sequence, pendingById, pendingProtectedBySession, committedSinceSnapshot };
 }
 
-function initializeDirectory(directory) {
+function initializeDirectory(directory, { initialSessions = [], migratedFromV1 = 0 } = {}) {
+  if (!Array.isArray(initialSessions)) throw new TypeError("goal store v2 initialSessions must be an array");
+  if (!Number.isInteger(migratedFromV1) || migratedFromV1 < 0) throw new TypeError("goal store v2 migratedFromV1 must be a non-negative integer");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const stat = fs.lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("goal store v2 directory must be a plain directory");
@@ -225,15 +227,18 @@ function initializeDirectory(directory) {
   const journalPath = path.join(directory, "journal.log");
   const exists = [metadataPath, snapshotPath, journalPath].map((target) => fs.existsSync(target));
   if (exists.every((value) => !value)) {
+    const orderedInitialSessions = initialSessions
+      .map((session) => cloneSession(session))
+      .sort((left, right) => left.id.localeCompare(right.id));
+    durableWriteFile(snapshotPath, `${JSON.stringify(checkedSnapshot(0, orderedInitialSessions), null, 2)}\n`);
+    durableWriteFile(journalPath, "");
     durableWriteFile(metadataPath, `${JSON.stringify({
       version: STORE_VERSION,
       schemaVersion: STORE_VERSION,
       migrationComplete: true,
       createdAt: Date.now(),
-      migratedFromV1: 0,
+      migratedFromV1,
     }, null, 2)}\n`);
-    durableWriteFile(snapshotPath, `${JSON.stringify(checkedSnapshot(0, []), null, 2)}\n`);
-    durableWriteFile(journalPath, "");
   } else if (!exists.every(Boolean)) {
     throw new Error("goal store v2 directory is incomplete");
   }
@@ -254,13 +259,18 @@ function readMetadata(metadataPath) {
   return parsed;
 }
 
-export function createGoalStoreV2({ directory, snapshotEvery = DEFAULT_SNAPSHOT_EVERY } = {}) {
+export function createGoalStoreV2({
+  directory,
+  snapshotEvery = DEFAULT_SNAPSHOT_EVERY,
+  initialSessions = [],
+  migratedFromV1 = 0,
+} = {}) {
   if (typeof directory !== "string" || !path.isAbsolute(directory)) throw new TypeError("goal store v2 directory must be an absolute path");
   if (!Number.isInteger(snapshotEvery) || snapshotEvery < 1 || snapshotEvery > 10_000) {
     throw new RangeError("goal store v2 snapshotEvery must be between 1 and 10000");
   }
 
-  const { metadataPath, snapshotPath, journalPath } = initializeDirectory(directory);
+  const { metadataPath, snapshotPath, journalPath } = initializeDirectory(directory, { initialSessions, migratedFromV1 });
   readMetadata(metadataPath);
   const snapshot = validateSnapshot(JSON.parse(fs.readFileSync(snapshotPath, "utf8")));
   const sessions = snapshot.sessions;
