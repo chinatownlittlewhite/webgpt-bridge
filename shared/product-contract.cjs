@@ -1,0 +1,23 @@
+"use strict";
+
+const DESKTOP_VERSION = "0.4.11";
+const AGENT_VERSION = "0.9.3";
+const MCP_PROTOCOL_REVISION = "2026-07-28";
+const BROKER_PROTOCOL_VERSION = 1;
+const GOAL_STORE_VERSION = 2;
+const SUPPORTED_GOAL_VERIFICATION_PROFILES = Object.freeze([
+  "code-change",
+  "read-only-audit",
+  "system-operation",
+]);
+const LEGACY_GOAL_VERIFICATION_PROFILE = "legacy-code-project";
+
+module.exports = Object.freeze({
+  DESKTOP_VERSION,
+  AGENT_VERSION,
+  MCP_PROTOCOL_REVISION,
+  BROKER_PROTOCOL_VERSION,
+  GOAL_STORE_VERSION,
+  SUPPORTED_GOAL_VERIFICATION_PROFILES,
+  LEGACY_GOAL_VERIFICATION_PROFILE,
+});
