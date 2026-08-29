@@ -17,6 +17,20 @@ function agentDevDependencyExcludes() {
     .sort();
 }
 
+function agentNativePayloadExcludes(platform) {
+  if (platform === "darwin") {
+    return [
+      "!agent-runtime/node_modules/node-pty/deps/**/*",
+      "!agent-runtime/node_modules/node-pty/prebuilds/win32-*/**/*",
+      "!agent-runtime/node_modules/node-pty/third_party/**/*",
+    ];
+  }
+  if (platform === "win32") {
+    return ["!agent-runtime/node_modules/node-pty/prebuilds/darwin-*/**/*"];
+  }
+  return [];
+}
+
 async function normalizeMacNodePtyAfterPack(context) {
   if (context.electronPlatformName !== "darwin") return;
   const productFilename = context.packager.appInfo.productFilename;
@@ -24,11 +38,15 @@ async function normalizeMacNodePtyAfterPack(context) {
   normalizeNodePtyMacPayload(appRoot);
 }
 
-function createBuilderConfig(env = process.env) {
+function createBuilderConfig(env = process.env, { platform = process.platform } = {}) {
   const formalPlatform = String(env.WEBGPT_FORMAL_RELEASE || "").trim();
   if (formalPlatform && formalPlatform !== "windows" && formalPlatform !== "macos") {
     throw new Error("WEBGPT_FORMAL_RELEASE must be windows or macos");
   }
+  const agentExcludes = [
+    ...agentDevDependencyExcludes(),
+    ...agentNativePayloadExcludes(platform),
+  ].sort();
 
   const config = {
     afterPack: normalizeMacNodePtyAfterPack,
@@ -52,7 +70,7 @@ function createBuilderConfig(env = process.env) {
       "agent-runtime/dist/**/*",
       "agent-runtime/node_modules/**/*",
       "!agent-runtime/node_modules/.bin/**/*",
-      ...agentDevDependencyExcludes(),
+      ...agentExcludes,
       "agent-runtime/package.json",
       "agent-runtime/native/windows-host/bin/release/**/*",
       "shared/**/*",
