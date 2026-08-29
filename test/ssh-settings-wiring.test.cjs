@@ -24,8 +24,9 @@ test("desktop UI exposes default-off SSH settings with explicit safety copy", ()
 
 test("desktop host trusts only /usr/bin/ssh when SSH is enabled and passes allowlist into validation", () => {
   const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
-  assert.match(main, /sshEnabled:\s*false/);
-  assert.match(main, /sshAllowedHosts:\s*\[\]/);
+  const settingsStore = fs.readFileSync(path.join(__dirname, "..", "src", "host", "settings-store.cjs"), "utf8");
+  assert.match(settingsStore, /sshEnabled:\s*false/);
+  assert.match(settingsStore, /sshAllowedHosts:\s*\[\]/);
   assert.match(main, /settings\.sshEnabled[\s\S]{0,220}\/usr\/bin\/ssh/);
   assert.match(main, /validateSshCommand/);
   assert.match(main, /allowedHosts:\s*settings\.sshAllowedHosts/);

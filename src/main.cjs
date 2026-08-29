@@ -12,7 +12,7 @@ const { resolveDevelopmentRuntimeConfig } = require("./dev-runtime-config.cjs");
 const { establishSingleInstanceOwnership } = require("./single-instance.cjs");
 const { createBrokerBootstrap, createBrokerChallenge, verifyBrokerProof } = require("../shared/local-broker-protocol.cjs");
 const { getBrokerMethodMetadata } = require("../shared/tool-registry.cjs");
-const { normalizeSettings } = require("./host-config.cjs");
+const { createHostSettingsStore } = require("./host/settings-store.cjs");
 const { approvalPrompt } = require("./approval-prompt.cjs");
 const { createApprovalSession } = require("./approval-session.cjs");
 const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
@@ -76,14 +76,6 @@ let updateService;
 let runtimeSupervisor;
 let appLifecycle;
 
-function configPath() {
-  return path.join(app.getPath("userData"), "settings.json");
-}
-
-function secretPath() {
-  return path.join(app.getPath("userData"), "runtime-key.bin");
-}
-
 function bundledRuntimePath() {
   return app.isPackaged
     ? path.join(process.resourcesPath, "app.asar.unpacked", "agent-runtime")
@@ -117,80 +109,13 @@ function loadBundledNodeManifest() {
   }
 }
 
-function defaultSettings() {
-  return {
-    workspacePath: "",
-    runtimePath: bundledRuntimePath(),
-    agentMode: "bundled",
-    developmentPath: "",
-    tunnelClientPath: "",
-    nodePath: "",
-    tunnelId: "",
-    profile: "webgpt-bridge",
-    httpsProxy: "",
-    sshEnabled: false,
-    sshAllowedHosts: [],
-    approvalMode: "development",
-    designIssueJournal: false,
-  };
-}
-
-async function loadSettings() {
-  try {
-    const parsed = JSON.parse(await fsp.readFile(configPath(), "utf8"));
-    const settings = normalizeSettings(parsed, defaultSettings());
-    return { ...settings, runtimePath: settings.runtimePath || bundledRuntimePath(), hasRuntimeKey: fs.existsSync(secretPath()) };
-  } catch {
-    return { ...defaultSettings(), hasRuntimeKey: fs.existsSync(secretPath()) };
-  }
-}
-
-async function writeSettings(input) {
-  const settings = { ...normalizeSettings(input, defaultSettings()), runtimePath: input.runtimePath || bundledRuntimePath() };
-  delete settings.runtimeKey;
-  delete settings.hasRuntimeKey;
-  await fsp.mkdir(app.getPath("userData"), { recursive: true });
-  await fsp.writeFile(configPath(), JSON.stringify(settings, null, 2), { mode: 0o600 });
-  return settings;
-}
-
-async function saveRuntimeKey(key) {
-  if (typeof key !== "string" || key.length < 16) throw new Error("运行时密钥为空或格式不正确。");
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error("系统安全存储不可用；不会将密钥保存为明文。");
-  }
-  await fsp.mkdir(app.getPath("userData"), { recursive: true });
-  await fsp.writeFile(secretPath(), safeStorage.encryptString(key).toString("base64"), { mode: 0o600 });
-}
-
-async function migrateLegacyMacKey() {
-  if (process.platform !== "darwin") return "";
-  const result = spawnSync("/usr/bin/security", ["find-generic-password", "-s", "openai-tunnel-client", "-w"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  const legacyKey = result.status === 0 ? result.stdout.trim() : "";
-  if (!legacyKey) return "";
-  await saveRuntimeKey(legacyKey);
-  return legacyKey;
-}
-
-async function readRuntimeKey() {
-  if (fs.existsSync(secretPath())) {
-    try {
-      if (!safeStorage.isEncryptionAvailable()) throw new Error("系统安全存储不可用，无法读取运行时密钥。");
-      const encrypted = Buffer.from(await fsp.readFile(secretPath(), "utf8"), "base64");
-      return safeStorage.decryptString(encrypted);
-    } catch {
-      // The app was renamed after v0.1. Fall back to the legacy Keychain item
-      // and immediately re-encrypt it using this app's safeStorage identity.
-      const migrated = await migrateLegacyMacKey();
-      if (migrated) return migrated;
-      throw new Error("无法读取已保存的运行时密钥。请在高级设置中重新保存此电脑的密钥。");
-    }
-  }
-  return migrateLegacyMacKey();
-}
+const settingsStore = createHostSettingsStore({
+  app,
+  safeStorage,
+  bundledRuntimePath,
+  spawnSync,
+  platform: process.platform,
+});
 
 const startupPreflight = createStartupPreflight({
   bundledTunnelClientPath: () => defaultBundledTunnelClientPath(),
@@ -199,7 +124,7 @@ const startupPreflight = createStartupPreflight({
   tunnelProfileDir: () => path.join(app.getPath("userData"), "tunnel-profiles"),
   mcpServerUrl: () => `http://${MCP_HOST}:${MCP_PORT}/mcp`,
   tunnelHealthListenAddr: () => TUNNEL_HEALTH_LISTEN_ADDR,
-  readRuntimeKey: () => readRuntimeKey(),
+  readRuntimeKey: () => settingsStore.readRuntimeKey(),
   appToolsBin: () => path.join(app.getPath("userData"), "tools", "bin"),
   resolveDesktopGitHubCli,
 });
@@ -686,7 +611,7 @@ async function stopChild(child, name) {
 }
 
 async function prepareRuntime() {
-  const settings = await loadSettings();
+  const settings = await settingsStore.loadSettings();
   const preflight = await startupPreflight.prepare({
     settings,
     env: process.env,
@@ -869,13 +794,13 @@ if (singleInstanceOwnership.primary) {
     const { session } = require("electron");
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
-    ipcMain.handle("settings:load", loadSettings);
+    ipcMain.handle("settings:load", () => settingsStore.loadSettings());
     ipcMain.handle("settings:save", async (_event, payload) => {
       if (!payload || typeof payload !== "object") throw new Error("设置格式无效。");
-      if (typeof payload.runtimeKey === "string" && payload.runtimeKey.trim()) await saveRuntimeKey(payload.runtimeKey.trim());
-      return { ...(await writeSettings(payload)), hasRuntimeKey: fs.existsSync(secretPath()) };
+      if (typeof payload.runtimeKey === "string" && payload.runtimeKey.trim()) await settingsStore.saveRuntimeKey(payload.runtimeKey.trim());
+      return { ...(await settingsStore.writeSettings(payload)), hasRuntimeKey: settingsStore.hasRuntimeKey() };
     });
-    ipcMain.handle("settings:clear-key", async () => { await fsp.rm(secretPath(), { force: true }); return { hasRuntimeKey: false }; });
+    ipcMain.handle("settings:clear-key", () => settingsStore.clearRuntimeKey());
     ipcMain.handle("dialog:directory", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openDirectory"] })).filePaths[0] || "");
     ipcMain.handle("dialog:file", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openFile"] })).filePaths[0] || "");
     ipcMain.handle("host:start", () => runtimeSupervisor.start());
