@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const sharedRegistry = require("../../shared/tool-registry.cjs");
+const sharedRegistry = require("../shared/tool-registry.cjs");
 
 export const TOOL_REGISTRY_VERSION = sharedRegistry.TOOL_REGISTRY_VERSION;
 export const listToolMetadata = sharedRegistry.listToolMetadata;
