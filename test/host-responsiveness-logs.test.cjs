@@ -9,10 +9,12 @@ const read = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
 test("GitHub health never runs gh auth status synchronously on the Electron main thread", () => {
   const broker = read("src/host/broker-server.cjs");
   const main = read("src/main.cjs");
+  const brokerCall = main.match(/const hostBroker = createHostBrokerServer\(\{([\s\S]*?)\n\}\);/);
 
   assert.match(broker, /createGitHubHealthProbe/);
   assert.doesNotMatch(broker, /spawnSync\(githubCliPath\s*,\s*\[\s*["']auth["']\s*,\s*["']status["']\s*\]/);
-  assert.doesNotMatch(main, /createHostBrokerServer\([\s\S]*?spawnSync[,\s}]/);
+  assert.ok(brokerCall, "Desktop must construct the Host broker explicitly");
+  assert.doesNotMatch(brokerCall[1], /\bspawnSync\b/);
 });
 
 test("async GitHub health keeps connectivity binary readiness and authentication as distinct bounded facts", () => {
