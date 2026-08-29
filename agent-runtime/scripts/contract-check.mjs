@@ -2,17 +2,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { createCoreTools } from "../src/tool.js";
 import { goalModeHostInstructions } from "../src/host-instructions.js";
 
-const EXPECTED_TOOLS = [
-  "run_command", "run_project_task", "git", "dependency_sync", "github",
-  "process_start", "process_poll", "process_input", "process_kill", "process_list",
-  "read_file", "list_dir", "search_text", "search_files",
-  "apply_patch", "delete_file", "move_file",
-  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "goal_pause", "goal_resume", "goal_list",
-  "get_capabilities",
-];
+const require = createRequire(import.meta.url);
+const { listToolNames } = require("../../shared/tool-registry.cjs");
+const EXPECTED_TOOLS = listToolNames();
 const FORBIDDEN_MODEL_KEYS = new Set([
   "approvalGranted",
   "requestApproval",

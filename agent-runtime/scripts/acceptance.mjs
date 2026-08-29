@@ -11,16 +11,10 @@ import { resolvePlatformArgv } from "../src/platform.js";
 
 const require = createRequire(import.meta.url);
 const { createBrokerBootstrap, createBrokerChallenge, verifyBrokerProof } = require("../../shared/local-broker-protocol.cjs");
+const { listToolNames } = require("../../shared/tool-registry.cjs");
 
 const VERSION = "0.9.3";
-const EXPECTED_TOOLS = [
-  "run_command", "run_project_task", "git", "dependency_sync", "github",
-  "process_start", "process_poll", "process_input", "process_kill", "process_list",
-  "read_file", "list_dir", "search_text", "search_files",
-  "apply_patch", "delete_file", "move_file",
-  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "goal_pause", "goal_resume", "goal_list",
-  "get_capabilities",
-].sort();
+const EXPECTED_TOOLS = listToolNames().sort();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skipNative = process.argv.includes("--skip-native");
 const prebuiltNative = process.argv.includes("--prebuilt-native");

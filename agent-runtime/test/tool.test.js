@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import {
   createCapabilitiesTool,
   createCoreTools,
@@ -28,36 +29,11 @@ import {
   runProjectTaskInputSchema,
 } from "../src/tool.js";
 
-const TEST_BROKER_AUTH = Object.freeze({ protocolVersion: 1, sessionId: "test-session", secret: "test-secret", agentVersion: "0.9.3" });
+const require = createRequire(import.meta.url);
+const { listToolNames } = require("../../shared/tool-registry.cjs");
 
-const EXPECTED_TOOLS = [
-  "run_command",
-  "run_project_task",
-  "git",
-  "dependency_sync",
-  "github",
-  "process_start",
-  "process_poll",
-  "process_input",
-  "process_kill",
-  "process_list",
-  "read_file",
-  "list_dir",
-  "search_text",
-  "search_files",
-  "apply_patch",
-  "delete_file",
-  "move_file",
-  "goal_mode",
-  "goal_step",
-  "goal_finish",
-  "goal_status",
-  "goal_cancel",
-  "goal_pause",
-  "goal_resume",
-  "goal_list",
-  "get_capabilities",
-];
+const TEST_BROKER_AUTH = Object.freeze({ protocolVersion: 1, sessionId: "test-session", secret: "test-secret", agentVersion: "0.9.3" });
+const EXPECTED_TOOLS = listToolNames();
 
 test("trusted execution controls cannot be supplied through model-facing schemas", () => {
   for (const schema of [

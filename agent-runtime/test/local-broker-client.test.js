@@ -74,15 +74,7 @@ function authenticatedServer(handler) {
   });
 }
 
-const LOCAL_TOOL_NAMES = [
-  "local_list",
-  "local_read",
-  "local_request_sensitive_access",
-  "local_request_host_access",
-  "local_stage_changes",
-  "local_confirm_batch",
-  "local_run_command",
-];
+const LOCAL_TOOL_NAMES = listBrokerToolNames({ brokerEnabled: true });
 
 test("local broker schemas reject tokens, arbitrary repository controls, shells, sudo, and approval bypasses", () => {
   for (const schema of [localListInputSchema, localReadInputSchema, localRequestHostAccessInputSchema, localStageChangesInputSchema, localConfirmBatchInputSchema, localRunCommandInputSchema]) {

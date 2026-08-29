@@ -77,6 +77,13 @@ test("packaging contains only production Agent runtime payload and bounded Elect
   assert.deepEqual(builderConfig.electronLanguages, ["en-US", "zh-CN", "zh-TW", "ja"]);
 });
 
+test("canonical tool registry is part of the packaged shared runtime payload", () => {
+  const registryPath = path.join(__dirname, "..", "shared", "tool-registry.cjs");
+  assert.equal(fs.existsSync(registryPath), true);
+  assert.ok(builderConfig.files.includes("shared/**/*"), "shared/tool-registry.cjs must be included in packaged files");
+  assert.ok(builderConfig.asarUnpack.includes("shared/**/*"), "shared/tool-registry.cjs must remain available to the unpacked Agent runtime");
+});
+
 test("desktop host enables the dedicated network-tool sandbox", () => {
   const mainSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
   assert.match(mainSource, /LPC_ENABLE_NETWORK_TOOLS:\s*"true"/);

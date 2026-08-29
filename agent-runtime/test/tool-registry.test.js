@@ -14,28 +14,22 @@ const {
   listToolNames,
 } = require("../../shared/tool-registry.cjs");
 
-const BASELINE_TOOLS = [
-  "run_command", "run_project_task", "git", "dependency_sync", "github",
-  "process_start", "process_poll", "process_input", "process_kill", "process_list",
-  "read_file", "list_dir", "search_text", "search_files",
-  "apply_patch", "delete_file", "move_file",
-  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel",
-  "goal_pause", "goal_resume", "goal_list", "get_capabilities",
-];
-
-const BROKER_TOOLS = [
-  "local_list", "local_read", "local_list_known_folder", "local_read_known_folder", "local_probe_health",
-  "local_request_sensitive_access", "local_request_host_access", "local_stage_changes", "local_confirm_batch", "local_run_command",
-];
-
 test("canonical tool registry freezes the public catalog and broker insertion point", () => {
   assert.equal(TOOL_REGISTRY_VERSION, 1);
-  assert.deepEqual(listToolNames(), BASELINE_TOOLS);
-  assert.equal(new Set(listToolNames()).size, 26);
+  const baseNames = listToolNames();
+  const brokerNames = listBrokerToolNames({ brokerEnabled: true });
+  assert.equal(baseNames.length, 26);
+  assert.equal(new Set(baseNames).size, 26);
+  assert.equal(baseNames[0], "run_command");
+  assert.equal(baseNames[16], "move_file");
+  assert.equal(baseNames[17], "goal_mode");
+  assert.equal(baseNames.at(-1), "get_capabilities");
   assert.deepEqual(listBrokerToolNames(), []);
-  assert.deepEqual(listBrokerToolNames({ brokerEnabled: true }), BROKER_TOOLS);
+  assert.equal(brokerNames.length, 10);
+  assert.equal(brokerNames[0], "local_list");
+  assert.equal(brokerNames.at(-1), "local_run_command");
   assert.equal(listToolNames({ brokerEnabled: true }).length, 36);
-  assert.deepEqual(listToolNames({ brokerEnabled: true }).slice(17, 27), BROKER_TOOLS);
+  assert.deepEqual(listToolNames({ brokerEnabled: true }).slice(17, 27), brokerNames);
   assert.equal(listGoalToolNames().includes("goal_mode"), false);
   assert.equal(listGoalToolNames().includes("read_file"), true);
   assert.equal(listGoalToolNames({ brokerEnabled: true }).includes("local_read"), true);

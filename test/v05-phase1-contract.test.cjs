@@ -7,6 +7,7 @@ const { pathToFileURL } = require("node:url");
 const { createHostCapabilityStore } = require("../src/host-capability-store.cjs");
 const { createLocalFileBroker } = require("../src/local-file-broker.cjs");
 const { classifyLocalAction, classifyLocalPath } = require("../src/local-policy.cjs");
+const { getBrokerMethodMetadata, getToolMetadata } = require("../shared/tool-registry.cjs");
 
 function phaseFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-v05-phase1-"));
@@ -47,7 +48,10 @@ test("v0.5 phase one keeps host access capability-scoped and broker authenticate
   assert.match(agent, /createBrokerProof/);
   assert.match(agent, /BROKER_AUTH_FAILED/);
   assert.match(agent, /BROKER_PROTOCOL_MISMATCH/);
-  assert.match(agent, /local_request_host_access/);
+  const hostAccessTool = getToolMetadata("local_request_host_access");
+  assert.equal(hostAccessTool.availability, "broker");
+  assert.equal(hostAccessTool.brokerMethod, "local_request_host_access");
+  assert.equal(getBrokerMethodMetadata(hostAccessTool.brokerMethod).implementationKey, "access.host.request");
   assert.match(protocol, /createHmac\("sha256"/);
   assert.match(protocol, /timingSafeEqual/);
 });
