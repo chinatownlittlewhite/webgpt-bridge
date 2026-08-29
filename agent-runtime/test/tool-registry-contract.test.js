@@ -88,3 +88,20 @@ test("Agent runtime keeps a sandbox-local byte-identical projection of the canon
     assert.doesNotMatch(source, /\.\.\/\.\.\/shared\/tool-registry\.cjs/);
   }
 });
+
+test("canonical registry sync hooks preserve lexical Node entry paths in sandboxed Windows verification", () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  );
+  const expected = "node --preserve-symlinks --preserve-symlinks-main scripts/sync-canonical-registry.mjs";
+  for (const name of [
+    "predev",
+    "precontract",
+    "preacceptance",
+    "preacceptance:quick",
+    "pretest",
+    "prebuild",
+  ]) {
+    assert.equal(packageJson.scripts[name], expected, `${name} must preserve lexical entry paths`);
+  }
+});
