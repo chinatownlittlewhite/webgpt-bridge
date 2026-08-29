@@ -8,6 +8,7 @@ release-patched/
 Library/
 agent-runtime/node_modules/
 agent-runtime/dist/
+agent-runtime/shared/
 agent-runtime/.webgpt-bridge/
 agent-runtime/.local-project-coding/
 agent-runtime/.DS_Store
