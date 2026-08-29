@@ -22,17 +22,18 @@ function publicGitHubCliState(value) {
 
 function publicWindowsHostPreparationState(value) {
   if (!value || typeof value !== "object") return value;
-  return Object.freeze({
+  const result = {
     status: typeof value.status === "string" ? value.status : "unknown",
     usable: value.usable === true,
     capabilityName: safePublicText(value.capabilityName),
-    expectedPath: null,
-    capabilitySid: safePublicText(value.capabilitySid),
-    target: safePublicText(value.target),
-    errorCode: Number.isInteger(value.errorCode) ? value.errorCode : null,
-    reason: safePublicText(value.reason),
-    remediation: safePublicText(value.remediation),
-  });
+  };
+  if (Object.hasOwn(value, "expectedPath")) result.expectedPath = null;
+  if (typeof value.capabilitySid === "string") result.capabilitySid = safePublicText(value.capabilitySid);
+  if (typeof value.target === "string") result.target = safePublicText(value.target);
+  if (Number.isInteger(value.errorCode)) result.errorCode = value.errorCode;
+  if (Object.hasOwn(value, "reason")) result.reason = safePublicText(value.reason);
+  if (Object.hasOwn(value, "remediation")) result.remediation = safePublicText(value.remediation);
+  return Object.freeze(result);
 }
 
 function decorateCapabilities(value, { brokerEnabled }) {
