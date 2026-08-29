@@ -227,7 +227,7 @@ test("capabilities report bounded Windows host preparation state", () => {
   assert.deepEqual(report.windowsHostPreparation, windowsHostPreparationState);
 });
 
-test("capabilities report trusted GitHub CLI path and version when startup probing succeeds", () => {
+test("capabilities report GitHub CLI readiness without exposing its trusted Host path", () => {
   const githubCliState = {
     status: "ready",
     resolvedPath: "C:\\Program Files\\GitHub CLI\\gh.exe",
@@ -236,7 +236,13 @@ test("capabilities report trusted GitHub CLI path and version when startup probi
     remediation: null,
   };
   const report = createCapabilitiesTool({ githubCliState, platform: "win32" }).invoke({});
-  assert.deepEqual(report.githubCli, githubCliState);
+  assert.deepEqual(report.githubCli, {
+    status: "ready",
+    resolvedPath: null,
+    version: "2.98.0",
+    reason: "GitHub CLI 2.98.0 is available",
+    remediation: null,
+  });
 });
 
 test("capabilities report marks goal cwd scoping active when workspace is configured", () => {
