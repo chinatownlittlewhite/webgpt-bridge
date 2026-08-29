@@ -48,6 +48,7 @@
     let entries = [];
     let initialized = false;
     let resyncPromise = null;
+    let snapshotEpoch = 0;
     let pendingEvents = [];
     let pendingOverflow = false;
 
@@ -123,10 +124,11 @@
 
     function startResync() {
       if (resyncPromise) return resyncPromise;
+      const requestEpoch = snapshotEpoch;
       resyncPromise = (async () => {
         try {
           const snapshot = await requestSnapshot();
-          applySnapshot(snapshot);
+          if (requestEpoch === snapshotEpoch) applySnapshot(snapshot);
         } finally {
           resyncPromise = null;
         }
@@ -138,6 +140,7 @@
     function handle(event) {
       if (!event || (event.kind !== "snapshot" && event.kind !== "append")) return Promise.resolve();
       if (event.kind === "snapshot") {
+        snapshotEpoch += 1;
         applySnapshot(event);
         return Promise.resolve();
       }
