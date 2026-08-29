@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { canonicalPath, classifyLocalAction, classifyLocalPath } = require("./local-policy.cjs");
+const { createLocalFileTransactionManager } = require("./local-file-transaction-manager.cjs");
 
 const MAX_BATCH_CHANGES = 20;
 const MAX_LIST_ENTRIES = 500;
@@ -27,12 +28,16 @@ function summarize(change) {
   };
 }
 
-function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = classifyLocalAction, confirm = async () => false, audit = () => {}, fsImpl = fs, workspaceRoot = "", capabilityStore } = {}) {
+function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = classifyLocalAction, confirm = async () => false, audit = () => {}, fsImpl = fs, workspaceRoot = "", capabilityStore, transactionRegistryPath = "" } = {}) {
   const batches = new Map();
   let workspace = "";
   if (typeof workspaceRoot === "string" && workspaceRoot) {
     workspace = canonicalPath(workspaceRoot, fsImpl);
   }
+  const transactionManager = typeof transactionRegistryPath === "string" && transactionRegistryPath
+    ? createLocalFileTransactionManager({ registryPath: transactionRegistryPath, fsImpl })
+    : null;
+  if (transactionManager) transactionManager.recoverPendingTransactions();
 
   function isInsideWorkspace(target) {
     if (!workspace || typeof target !== "string") return false;
@@ -258,65 +263,6 @@ function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = clas
     }
   }
 
-  function applyAtomically(batchId, changes) {
-    const transactionDirs = new Map();
-    const journal = [];
-    function transactionDirectory(parent) {
-      if (!transactionDirs.has(parent)) {
-        const directory = path.join(parent, `.webgpt-bridge-txn-${batchId}`);
-        fsImpl.mkdirSync(directory, { mode: 0o700 });
-        transactionDirs.set(parent, directory);
-      }
-      return transactionDirs.get(parent);
-    }
-    function cleanup() {
-      for (const directory of transactionDirs.values()) fsImpl.rmSync(directory, { recursive: true, force: true });
-    }
-    try {
-      changes.forEach((change, index) => {
-        const source = change.type === "move" ? change.from : change.path;
-        const txn = transactionDirectory(path.dirname(source));
-        const temporary = path.join(txn, `new-${index}`);
-        const backup = path.join(txn, `backup-${index}`);
-        if (change.type === "create") {
-          fsImpl.writeFileSync(temporary, change.content, { mode: 0o600 });
-          fsImpl.renameSync(temporary, change.path);
-          journal.push({ type: "create", target: change.path });
-        } else if (change.type === "update") {
-          fsImpl.writeFileSync(temporary, change.content, { mode: 0o600 });
-          fsImpl.renameSync(change.path, backup);
-          fsImpl.renameSync(temporary, change.path);
-          journal.push({ type: "update", source: change.path, backup });
-        } else if (change.type === "delete") {
-          fsImpl.renameSync(change.path, backup);
-          journal.push({ type: "delete", source: change.path, backup });
-        } else {
-          fsImpl.renameSync(change.from, backup);
-          fsImpl.renameSync(backup, change.path);
-          journal.push({ type: "move", source: change.from, target: change.path, backup });
-        }
-      });
-      cleanup();
-    } catch (error) {
-      for (const entry of journal.reverse()) {
-        try {
-          if (entry.type === "create" && fsImpl.existsSync(entry.target)) fsImpl.rmSync(entry.target, { force: true });
-          if (entry.type === "update") {
-            if (fsImpl.existsSync(entry.source)) fsImpl.rmSync(entry.source, { force: true });
-            if (fsImpl.existsSync(entry.backup)) fsImpl.renameSync(entry.backup, entry.source);
-          }
-          if (entry.type === "delete" && fsImpl.existsSync(entry.backup)) fsImpl.renameSync(entry.backup, entry.source);
-          if (entry.type === "move") {
-            if (fsImpl.existsSync(entry.target)) fsImpl.renameSync(entry.target, entry.source);
-            else if (fsImpl.existsSync(entry.backup)) fsImpl.renameSync(entry.backup, entry.source);
-          }
-        } catch { /* best-effort rollback; the original failure is retained */ }
-      }
-      cleanup();
-      throw error;
-    }
-  }
-
   async function confirmBatch({ batchId } = {}) {
     const batch = batches.get(batchId);
     if (!batch) throw new Error("批次不存在、已过期或已被处理。 ");
@@ -338,7 +284,10 @@ function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = clas
       throw new Error("用户取消了本机文件变更批次。 ");
     }
     revalidate(batch.changes);
-    applyAtomically(batchId, batch.changes);
+    if (!transactionManager) {
+      throw Object.assign(new Error("Local file mutations require a durable transaction registry"), { code: "LOCAL_TRANSACTION_REGISTRY_REQUIRED" });
+    }
+    transactionManager.commit({ batchId, changes: batch.changes });
     record({ action: "local-file-batch", result: "applied", changes: summaries });
     return { batchId, applied: batch.changes.length, changes: summaries };
   }

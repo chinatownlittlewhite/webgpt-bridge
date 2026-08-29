@@ -502,6 +502,7 @@ async function startLocalBroker(settings, runtime, { githubCliPath = "", proxyEn
   localCapabilityStore = createHostCapabilityStore({ generation: crypto.randomUUID(), policyVersion: "v0.5-phase1" });
   localFileBroker = createLocalFileBroker({
     workspaceRoot: settings.workspacePath,
+    transactionRegistryPath: path.join(app.getPath("userData"), "local-file-transactions.json"),
     capabilityStore: localCapabilityStore,
     policy: pathPolicy,
     actionPolicy,

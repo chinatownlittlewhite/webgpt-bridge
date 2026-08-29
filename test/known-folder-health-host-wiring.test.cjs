@@ -12,6 +12,7 @@ test("desktop broker wires known-folder and fixed health methods and clears help
   assert.match(main, /local_probe_health/);
   assert.match(main, /local_request_host_access/);
   assert.match(main, /createHostCapabilityStore/);
+  assert.match(main, /transactionRegistryPath:\s*path\.join\(app\.getPath\("userData"\),\s*"local-file-transactions\.json"\)/);
   assert.match(main, /issueCapability/);
   assert.match(main, /localCapabilityStore\?\.clear\(\)/);
   assert.match(main, /createBrokerBootstrap/);
