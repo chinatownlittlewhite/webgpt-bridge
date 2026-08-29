@@ -4,9 +4,62 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { discoverDependencySync } from "../src/dependency.js";
 import { buildGitHubArgv } from "../src/github.js";
 import { createDependencySyncTool, createGitHubTool, createGitTool } from "../src/tool.js";
+
+const require = createRequire(import.meta.url);
+const { createBrokerBootstrap, createBrokerChallenge, verifyBrokerProof } = require("../../shared/local-broker-protocol.cjs");
+
+function authenticatedBrokerServer(onRequest) {
+  const bootstrap = createBrokerBootstrap();
+  const auth = Object.freeze({ protocolVersion: bootstrap.protocolVersion, sessionId: bootstrap.sessionId, secret: bootstrap.secret, agentVersion: "0.9.3" });
+  const server = net.createServer((socket) => {
+    let buffered = "";
+    let state = "hello";
+    let hello = null;
+    let nonce = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffered += chunk;
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const message = JSON.parse(line);
+        if (state === "hello") {
+          const challenge = createBrokerChallenge(message, bootstrap);
+          if (challenge.type === "hello_error") {
+            socket.end(`${JSON.stringify(challenge)}\n`);
+            return;
+          }
+          hello = message;
+          nonce = challenge.nonce;
+          state = "authenticate";
+          socket.write(`${JSON.stringify(challenge)}\n`);
+          continue;
+        }
+        if (state === "authenticate") {
+          const verified = message?.type === "authenticate" && message.protocolVersion === hello?.protocolVersion && message.sessionId === hello?.sessionId && message.agentVersion === hello?.agentVersion && message.nonce === nonce
+            ? verifyBrokerProof(message, bootstrap, { expectedNonce: nonce })
+            : { ok: false, code: "BROKER_AUTH_FAILED" };
+          if (!verified.ok) {
+            socket.end(`${JSON.stringify({ type: "hello_error", code: verified.code })}\n`);
+            return;
+          }
+          state = "ready";
+          hello = null;
+          nonce = "";
+          socket.write(`${JSON.stringify({ type: "hello_ok" })}\n`);
+          continue;
+        }
+        onRequest(socket, message);
+      }
+    });
+  });
+  return { server, auth };
+}
 
 function testBrokerSocketPath(prefix) {
   if (process.platform === "darwin") return `/tmp/${prefix}-${process.pid}-${Date.now()}.sock`;
@@ -124,16 +177,13 @@ test("GitHub tool delegates authenticated CLI calls to the App-owned broker", as
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-github-workspace-"));
   const socketPath = testBrokerSocketPath("lpc-github-broker");
   let request = null;
-  const server = net.createServer((socket) => {
-    socket.setEncoding("utf8");
-    socket.once("data", (line) => {
-      request = JSON.parse(line);
-      socket.end(`${JSON.stringify({
-        id: request.id,
-        ok: true,
-        result: { code: 0, stdout: "authenticated-account\n", stderr: "", truncated: false },
-      })}\n`);
-    });
+  const { server, auth } = authenticatedBrokerServer((socket, message) => {
+    request = message;
+    socket.end(`${JSON.stringify({
+      id: request.id,
+      ok: true,
+      result: { code: 0, stdout: "authenticated-account\n", stderr: "", truncated: false },
+    })}\n`);
   });
   try {
     await new Promise((resolve, reject) => {
@@ -155,7 +205,7 @@ test("GitHub tool delegates authenticated CLI calls to the App-owned broker", as
     fs.rmSync(socketPath, { force: true });
   });
 
-  const github = createGitHubTool({ workspace: root, localBrokerSocket: socketPath });
+  const github = createGitHubTool({ workspace: root, localBrokerSocket: socketPath, localBrokerAuth: auth });
   const result = await github.invoke({ action: "ci_status" });
 
   assert.equal(result.status, "completed");
@@ -175,12 +225,9 @@ test("Windows structured Git delegates every action to the App-owned broker", as
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-win-git-broker-workspace-"));
   const socketPath = testBrokerSocketPath("lpc-win-git-broker");
   let request = null;
-  const server = net.createServer((socket) => {
-    socket.setEncoding("utf8");
-    socket.once("data", (line) => {
-      request = JSON.parse(line);
-      socket.end(`${JSON.stringify({ id: request.id, ok: true, result: { code: 0, stdout: " M file.txt\\n", stderr: "", truncated: false } })}\n`);
-    });
+  const { server, auth } = authenticatedBrokerServer((socket, message) => {
+    request = message;
+    socket.end(`${JSON.stringify({ id: request.id, ok: true, result: { code: 0, stdout: " M file.txt\\n", stderr: "", truncated: false } })}\n`);
   });
   try {
     await new Promise((resolve, reject) => {
@@ -202,7 +249,7 @@ test("Windows structured Git delegates every action to the App-owned broker", as
     fs.rmSync(socketPath, { force: true });
   });
 
-  const git = createGitTool({ workspace: root, localBrokerSocket: socketPath, platform: "win32" });
+  const git = createGitTool({ workspace: root, localBrokerSocket: socketPath, localBrokerAuth: auth, platform: "win32" });
   const result = await git.invoke({ action: "status" });
   assert.equal(result.status, "completed");
   assert.equal(result.exitCode, 0);
@@ -221,16 +268,13 @@ test("Git push is fixed to origin HEAD and delegates to the App-owned broker", a
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-git-push-workspace-"));
   const socketPath = testBrokerSocketPath("lpc-git-push-broker");
   let request = null;
-  const server = net.createServer((socket) => {
-    socket.setEncoding("utf8");
-    socket.once("data", (line) => {
-      request = JSON.parse(line);
-      socket.end(`${JSON.stringify({
-        id: request.id,
-        ok: true,
-        result: { code: 0, stdout: "pushed\n", stderr: "", truncated: false },
-      })}\n`);
-    });
+  const { server, auth } = authenticatedBrokerServer((socket, message) => {
+    request = message;
+    socket.end(`${JSON.stringify({
+      id: request.id,
+      ok: true,
+      result: { code: 0, stdout: "pushed\n", stderr: "", truncated: false },
+    })}\n`);
   });
   try {
     await new Promise((resolve, reject) => {
@@ -252,7 +296,7 @@ test("Git push is fixed to origin HEAD and delegates to the App-owned broker", a
     fs.rmSync(socketPath, { force: true });
   });
 
-  const git = createGitTool({ workspace: root, localBrokerSocket: socketPath });
+  const git = createGitTool({ workspace: root, localBrokerSocket: socketPath, localBrokerAuth: auth });
   const result = await git.invoke({ action: "push" });
 
   assert.equal(result.status, "completed");

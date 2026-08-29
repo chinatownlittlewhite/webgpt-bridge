@@ -28,6 +28,8 @@ import {
   runProjectTaskInputSchema,
 } from "../src/tool.js";
 
+const TEST_BROKER_AUTH = Object.freeze({ protocolVersion: 1, sessionId: "test-session", secret: "test-secret", agentVersion: "0.9.3" });
+
 const EXPECTED_TOOLS = [
   "run_command",
   "run_project_task",
@@ -96,6 +98,7 @@ test("Windows structured Git requires the App-owned broker instead of the AppCon
       workspace: root,
       platform: "win32",
       localBrokerSocket: path.join(root, "missing-broker.sock"),
+      localBrokerAuth: TEST_BROKER_AUTH,
     });
     await assert.rejects(
       tool.invoke({ action: "status" }),
@@ -185,7 +188,7 @@ test("core tool set exposes the v0.9.3 final-acceptance surface", () => {
 
 test("broker-enabled capabilities tool list exactly matches the actual runtime surface", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-broker-capabilities-"));
-  const tools = createCoreTools({ workspace: root, localBrokerSocket: path.join(root, "broker.sock") });
+  const tools = createCoreTools({ workspace: root, localBrokerSocket: path.join(root, "broker.sock"), localBrokerAuth: TEST_BROKER_AUTH });
   const report = tools.find((tool) => tool.name === "get_capabilities").invoke({});
   assert.deepEqual(report.tools, tools.map((tool) => tool.name));
   assert.ok(report.tools.includes("local_list_known_folder"));

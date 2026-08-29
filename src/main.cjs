@@ -10,6 +10,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { resolveDevelopmentRuntimeConfig } = require("./dev-runtime-config.cjs");
 const { establishSingleInstanceOwnership } = require("./single-instance.cjs");
+const { createBrokerBootstrap, createBrokerChallenge, verifyBrokerProof } = require("../shared/local-broker-protocol.cjs");
 const { normalizeSettings } = require("./host-config.cjs");
 const { approvalPrompt } = require("./approval-prompt.cjs");
 const { createApprovalSession } = require("./approval-session.cjs");
@@ -384,13 +385,28 @@ function localBrokerDispatch(method, params, executionContext = {}) {
   return handlers[method]();
 }
 
-function attachLocalBrokerConnection(socket) {
+function attachLocalBrokerConnection(socket, brokerBootstrap) {
   let buffered = "";
+  let handshakeState = "awaiting_hello";
+  let hello = null;
+  let challengeNonce = "";
   const activeRequests = new Set();
+
+  function rejectHandshake(code) {
+    const safeCode = code === "BROKER_PROTOCOL_MISMATCH" ? code : "BROKER_AUTH_FAILED";
+    appendLog("local-broker", `broker-handshake: ${safeCode}`);
+    if (!socket.destroyed) socket.end(`${JSON.stringify({ type: "hello_error", code: safeCode })}\n`);
+    handshakeState = "failed";
+    hello = null;
+    challengeNonce = "";
+  }
+
   socket.setEncoding("utf8");
   socket.on("close", () => {
     for (const controller of activeRequests) controller.abort();
     activeRequests.clear();
+    hello = null;
+    challengeNonce = "";
   });
   socket.on("data", (chunk) => {
     buffered += chunk;
@@ -398,11 +414,58 @@ function attachLocalBrokerConnection(socket) {
     const lines = buffered.split("\n");
     buffered = lines.pop();
     for (const line of lines) {
-      if (!line.trim()) continue;
+      if (!line.trim() || handshakeState === "failed") continue;
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        if (handshakeState !== "ready") rejectHandshake("BROKER_AUTH_FAILED");
+        else if (!socket.destroyed) socket.write(`${JSON.stringify({ id: null, ok: false, error: "本机代理请求格式无效。" })}\n`);
+        continue;
+      }
+
+      if (handshakeState === "awaiting_hello") {
+        if (!message || message.type !== "hello") {
+          rejectHandshake("BROKER_AUTH_FAILED");
+          continue;
+        }
+        const challenge = createBrokerChallenge(message, brokerBootstrap);
+        if (challenge.type === "hello_error") {
+          rejectHandshake(challenge.code);
+          continue;
+        }
+        hello = Object.freeze({
+          protocolVersion: message.protocolVersion,
+          sessionId: message.sessionId,
+          agentVersion: message.agentVersion,
+        });
+        challengeNonce = challenge.nonce;
+        handshakeState = "awaiting_proof";
+        socket.write(`${JSON.stringify(challenge)}\n`);
+        continue;
+      }
+
+      if (handshakeState === "awaiting_proof") {
+        if (!message || message.type !== "authenticate" || !hello || message.protocolVersion !== hello.protocolVersion || message.sessionId !== hello.sessionId || message.agentVersion !== hello.agentVersion || message.nonce !== challengeNonce) {
+          rejectHandshake("BROKER_AUTH_FAILED");
+          continue;
+        }
+        const verification = verifyBrokerProof(message, brokerBootstrap, { expectedNonce: challengeNonce });
+        if (!verification.ok) {
+          rejectHandshake(verification.code);
+          continue;
+        }
+        handshakeState = "ready";
+        hello = null;
+        challengeNonce = "";
+        appendLog("local-broker", "broker-handshake: accepted");
+        socket.write(`${JSON.stringify({ type: "hello_ok" })}\n`);
+        continue;
+      }
+
+      if (handshakeState !== "ready") continue;
       void (async () => {
-        let message;
         try {
-          message = JSON.parse(line);
           if (!message || typeof message !== "object" || typeof message.method !== "string" || !message.params || typeof message.params !== "object") throw new Error("本机代理请求格式无效。");
           const controller = new AbortController();
           activeRequests.add(controller);
@@ -420,7 +483,7 @@ function attachLocalBrokerConnection(socket) {
   });
 }
 
-async function startLocalBroker(settings, runtime, { githubCliPath = "", proxyEnv = {} } = {}) {
+async function startLocalBroker(settings, runtime, { githubCliPath = "", proxyEnv = {}, brokerBootstrap } = {}) {
   await stopLocalBroker();
   localApprovalMode = normalizeApprovalMode(settings.approvalMode);
   const knownFolderRoots = {
@@ -507,7 +570,8 @@ async function startLocalBroker(settings, runtime, { githubCliPath = "", proxyEn
   });
   localBrokerSocket = localBrokerSocketPath();
   if (process.platform !== "win32") await fsp.rm(localBrokerSocket, { force: true }).catch(() => {});
-  localBrokerServer = net.createServer(attachLocalBrokerConnection);
+  if (!brokerBootstrap || typeof brokerBootstrap.secret !== "string" || !brokerBootstrap.secret) throw new Error("Local broker authentication bootstrap is required");
+  localBrokerServer = net.createServer((socket) => attachLocalBrokerConnection(socket, brokerBootstrap));
   await new Promise((resolve, reject) => {
     localBrokerServer.once("error", reject);
     localBrokerServer.listen(localBrokerSocket, () => {
@@ -637,11 +701,16 @@ async function prepareRuntime() {
       ? `GitHub CLI：${preflight.githubCliPath}`
       : "未检测到 GitHub CLI；GitHub 工具会返回可修复诊断，其他本地工具不受影响。",
   );
-  return { ...preflight, proxyEnv };
+  const brokerBootstrap = createBrokerBootstrap();
+  return { ...preflight, proxyEnv, brokerBootstrap };
 }
 
 async function startRuntimeBroker(preflight) {
-  return startLocalBroker(preflight.settings, preflight.runtime, { githubCliPath: preflight.githubCliPath, proxyEnv: preflight.proxyEnv });
+  return startLocalBroker(preflight.settings, preflight.runtime, {
+    githubCliPath: preflight.githubCliPath,
+    proxyEnv: preflight.proxyEnv,
+    brokerBootstrap: preflight.brokerBootstrap,
+  });
 }
 
 async function startRuntimeAgent(preflight) {
@@ -661,6 +730,9 @@ async function startRuntimeAgent(preflight) {
     LPC_VERIFY_SANDBOX: "true",
     LPC_ENABLE_NETWORK_TOOLS: "true",
     LPC_LOCAL_BROKER_SOCKET: localBrokerSocket,
+    LPC_LOCAL_BROKER_PROTOCOL: String(preflight.brokerBootstrap.protocolVersion),
+    LPC_LOCAL_BROKER_SESSION: preflight.brokerBootstrap.sessionId,
+    LPC_LOCAL_BROKER_SECRET: preflight.brokerBootstrap.secret,
     LPC_GITHUB_CLI_PATH: githubCliPath,
     LPC_DESIGN_ISSUE_JOURNAL: settings.designIssueJournal === true ? "true" : "false",
   };

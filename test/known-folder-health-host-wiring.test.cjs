@@ -14,6 +14,12 @@ test("desktop broker wires known-folder and fixed health methods and clears help
   assert.match(main, /createHostCapabilityStore/);
   assert.match(main, /issueCapability/);
   assert.match(main, /localCapabilityStore\?\.clear\(\)/);
+  assert.match(main, /createBrokerBootstrap/);
+  assert.match(main, /createBrokerChallenge/);
+  assert.match(main, /verifyBrokerProof/);
+  assert.match(main, /LPC_LOCAL_BROKER_PROTOCOL/);
+  assert.match(main, /LPC_LOCAL_BROKER_SESSION/);
+  assert.match(main, /LPC_LOCAL_BROKER_SECRET/);
   assert.match(main, /localKnownFolderAccess\s*=\s*undefined/);
   assert.match(main, /localHealthProbe\s*=\s*undefined/);
 });

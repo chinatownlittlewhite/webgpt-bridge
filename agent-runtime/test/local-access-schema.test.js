@@ -32,7 +32,8 @@ test("health schema allows only agent, tunnel, and github fixed targets", () => 
 });
 
 test("Agent exposes known-folder and health tools only through the App-owned broker", () => {
-  const tools = new Map(broker.createLocalBrokerTools({ socketPath: "/tmp/webgpt-bridge-local-access-test.sock" }).map((tool) => [tool.name, tool]));
+  const auth = { protocolVersion: 1, sessionId: "test-session", secret: "test-secret", agentVersion: "0.9.3" };
+  const tools = new Map(broker.createLocalBrokerTools({ socketPath: "/tmp/webgpt-bridge-local-access-test.sock", auth }).map((tool) => [tool.name, tool]));
   for (const name of ["local_list_known_folder", "local_read_known_folder", "local_probe_health"]) {
     assert.equal(tools.has(name), true, `${name} should be exposed`);
   }

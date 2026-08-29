@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
+import { createRequire } from "node:module";
 import net from "node:net";
 import { validateJsonSchema } from "./schema-validate.js";
+
+const require = createRequire(import.meta.url);
+const { BROKER_PROTOCOL_VERSION, createBrokerProof } = require("../../shared/local-broker-protocol.cjs");
 
 const pathSchema = { type: "string", minLength: 1, maxLength: 4_096 };
 const shaSchema = { type: "string", pattern: "^[a-fA-F0-9]{64}$" };
@@ -82,37 +86,99 @@ export const localRunCommandInputSchema = Object.freeze({
   properties: { argv: argvSchema, cwd: { ...pathSchema, pattern: "^(?:/|[A-Za-z]:[\\\\/])" } },
 });
 
-function requestOverSocket(socketPath, method, params, timeoutMs = 20_000) {
+function codedBrokerError(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+function normalizeBrokerAuth(auth) {
+  if (!auth || typeof auth !== "object") throw codedBrokerError("BROKER_AUTH_FAILED", "Local broker authentication metadata is required");
+  if (auth.protocolVersion !== BROKER_PROTOCOL_VERSION) throw codedBrokerError("BROKER_PROTOCOL_MISMATCH", "Local broker protocol version mismatch");
+  for (const field of ["sessionId", "secret", "agentVersion"]) {
+    if (typeof auth[field] !== "string" || auth[field].length < 1 || auth[field].length > 512) {
+      throw codedBrokerError("BROKER_AUTH_FAILED", "Local broker authentication metadata is invalid");
+    }
+  }
+  return Object.freeze({
+    protocolVersion: auth.protocolVersion,
+    sessionId: auth.sessionId,
+    secret: auth.secret,
+    agentVersion: auth.agentVersion,
+  });
+}
+
+function requestOverSocket(socketPath, method, params, timeoutMs = 20_000, auth) {
   if (typeof socketPath !== "string" || socketPath.length === 0) throw new TypeError("App-owned local broker socket is not configured");
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new RangeError("本机代理超时必须是正整数毫秒值。");
+  const normalizedAuth = normalizeBrokerAuth(auth);
   return new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
     const socket = net.createConnection(socketPath);
     let buffered = "";
+    let state = "awaiting_challenge";
+    let settled = false;
     const timeout = setTimeout(() => {
-      socket.destroy();
-      reject(new Error(`本机代理在 ${Math.ceil(timeoutMs / 1_000)} 秒内没有响应。`));
+      finish(new Error(`本机代理在 ${Math.ceil(timeoutMs / 1_000)} 秒内没有响应。`));
     }, timeoutMs);
     function finish(error, value) {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       socket.destroy();
       if (error) reject(error);
       else resolve(value);
     }
     socket.once("error", (error) => finish(new Error(`无法连接本机代理：${error.message}`)));
-    socket.once("connect", () => socket.write(`${JSON.stringify({ id, method, params })}\n`));
+    socket.once("connect", () => socket.write(`${JSON.stringify({
+      type: "hello",
+      protocolVersion: normalizedAuth.protocolVersion,
+      sessionId: normalizedAuth.sessionId,
+      agentVersion: normalizedAuth.agentVersion,
+    })}\n`));
     socket.on("data", (chunk) => {
       buffered += chunk.toString("utf8");
       const lines = buffered.split("\n");
       buffered = lines.pop();
       for (const line of lines) {
-        if (!line.trim()) continue;
+        if (!line.trim() || settled) continue;
         try {
           const response = JSON.parse(line);
-          if (response.id !== id) continue;
-          if (!response.ok) finish(new Error(response.error || "本机代理拒绝了请求。"));
-          else finish(null, response.result);
-          return;
+          if (response?.type === "hello_error") {
+            const code = response.code === "BROKER_PROTOCOL_MISMATCH" ? "BROKER_PROTOCOL_MISMATCH" : "BROKER_AUTH_FAILED";
+            finish(codedBrokerError(code, code === "BROKER_PROTOCOL_MISMATCH" ? "Local broker protocol version mismatch" : "Local broker authentication failed"));
+            return;
+          }
+          if (state === "awaiting_challenge") {
+            if (response?.type !== "challenge" || typeof response.nonce !== "string" || !response.nonce) {
+              finish(codedBrokerError("BROKER_AUTH_FAILED", "Local broker challenge is invalid"));
+              return;
+            }
+            const proof = createBrokerProof({ ...normalizedAuth, nonce: response.nonce });
+            socket.write(`${JSON.stringify({
+              type: "authenticate",
+              protocolVersion: normalizedAuth.protocolVersion,
+              sessionId: normalizedAuth.sessionId,
+              agentVersion: normalizedAuth.agentVersion,
+              nonce: response.nonce,
+              proof,
+            })}\n`);
+            state = "awaiting_hello_ok";
+            continue;
+          }
+          if (state === "awaiting_hello_ok") {
+            if (response?.type !== "hello_ok") {
+              finish(codedBrokerError("BROKER_AUTH_FAILED", "Local broker authentication failed"));
+              return;
+            }
+            socket.write(`${JSON.stringify({ id, method, params })}\n`);
+            state = "ready";
+            continue;
+          }
+          if (state === "ready") {
+            if (response.id !== id) continue;
+            if (!response.ok) finish(new Error(response.error || "本机代理拒绝了请求。"));
+            else finish(null, response.result);
+            return;
+          }
         } catch (error) {
           finish(new Error(`本机代理响应无效：${error.message}`));
           return;
@@ -122,16 +188,17 @@ function requestOverSocket(socketPath, method, params, timeoutMs = 20_000) {
   });
 }
 
-export function createLocalBrokerClient({ socketPath, timeoutMs = 20_000 } = {}) {
+export function createLocalBrokerClient({ socketPath, timeoutMs = 20_000, auth } = {}) {
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new RangeError("本机代理超时必须是正整数毫秒值。");
+  const normalizedAuth = typeof socketPath === "string" && socketPath.length > 0 ? normalizeBrokerAuth(auth) : auth;
   return Object.freeze({
     timeoutMs,
-    request: (method, params) => requestOverSocket(socketPath, method, params, timeoutMs),
+    request: (method, params) => requestOverSocket(socketPath, method, params, timeoutMs, normalizedAuth),
   });
 }
 
-export function createHostApprovalClient({ socketPath, timeoutMs = 5 * 60_000 } = {}) {
-  const client = createLocalBrokerClient({ socketPath, timeoutMs });
+export function createHostApprovalClient({ socketPath, timeoutMs = 5 * 60_000, auth } = {}) {
+  const client = createLocalBrokerClient({ socketPath, timeoutMs, auth });
   const requestHostApproval = async function requestHostApproval(request) {
     const result = await client.request("host_approve_command", { request });
     return result?.approved === true;
@@ -153,10 +220,10 @@ function tool(name, description, inputSchema, client) {
   });
 }
 
-export function createLocalBrokerTools({ socketPath } = {}) {
+export function createLocalBrokerTools({ socketPath, auth } = {}) {
   if (typeof socketPath !== "string" || socketPath.length === 0) return [];
-  const client = createLocalBrokerClient({ socketPath });
-  const interactiveClient = createLocalBrokerClient({ socketPath, timeoutMs: 5 * 60_000 });
+  const client = createLocalBrokerClient({ socketPath, auth });
+  const interactiveClient = createLocalBrokerClient({ socketPath, timeoutMs: 5 * 60_000, auth });
   return [
     tool("local_list", "List an allowed non-sensitive local directory through the App-owned broker; symlinks are not followed.", localListInputSchema, client),
     tool("local_read", "Read a bounded UTF-8 local file through the App-owned broker and receive its SHA-256.", localReadInputSchema, client),

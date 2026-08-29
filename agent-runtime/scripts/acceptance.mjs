@@ -3,10 +3,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { resolvePlatformArgv } from "../src/platform.js";
+
+const require = createRequire(import.meta.url);
+const { createBrokerBootstrap, createBrokerChallenge, verifyBrokerProof } = require("../../shared/local-broker-protocol.cjs");
 
 const VERSION = "0.9.3";
 const EXPECTED_TOOLS = [
@@ -103,8 +107,18 @@ function isInsideAcceptanceRoot(candidate) {
 async function createAcceptanceGitBroker() {
   if (process.platform !== "win32") return null;
   const socketPath = `\\\\.\\pipe\\webgpt-bridge-acceptance-${process.pid}-${crypto.randomUUID()}`;
+  const bootstrap = createBrokerBootstrap();
+  const auth = Object.freeze({
+    protocolVersion: bootstrap.protocolVersion,
+    sessionId: bootstrap.sessionId,
+    secret: bootstrap.secret,
+    agentVersion: VERSION,
+  });
   const server = net.createServer((socket) => {
     let buffered = "";
+    let state = "hello";
+    let hello = null;
+    let nonce = "";
     socket.setEncoding("utf8");
     socket.on("data", (chunk) => {
       buffered += chunk;
@@ -115,6 +129,27 @@ async function createAcceptanceGitBroker() {
         let request = null;
         try {
           request = JSON.parse(line);
+          if (state === "hello") {
+            const challenge = createBrokerChallenge(request, bootstrap);
+            if (challenge.type === "hello_error") throw new Error(challenge.code);
+            hello = request;
+            nonce = challenge.nonce;
+            state = "authenticate";
+            socket.write(`${JSON.stringify(challenge)}\n`);
+            continue;
+          }
+          if (state === "authenticate") {
+            if (request?.type !== "authenticate" || request.protocolVersion !== hello?.protocolVersion || request.sessionId !== hello?.sessionId || request.agentVersion !== hello?.agentVersion || request.nonce !== nonce) {
+              throw new Error("BROKER_AUTH_FAILED");
+            }
+            const verified = verifyBrokerProof(request, bootstrap, { expectedNonce: nonce });
+            if (!verified.ok) throw new Error(verified.code);
+            state = "ready";
+            hello = null;
+            nonce = "";
+            socket.write(`${JSON.stringify({ type: "hello_ok" })}\n`);
+            continue;
+          }
           const argv = request?.params?.argv;
           const cwd = request?.params?.cwd;
           if (request?.method !== "local_run_command") throw new Error("acceptance broker only supports local_run_command");
@@ -145,7 +180,7 @@ async function createAcceptanceGitBroker() {
             },
           })}\n`);
         } catch (error) {
-          socket.end(`${JSON.stringify({ id: request?.id ?? null, ok: false, error: error.message })}\n`);
+          socket.end(`${JSON.stringify({ type: "hello_error", code: error.message === "BROKER_PROTOCOL_MISMATCH" ? error.message : "BROKER_AUTH_FAILED" })}\n`);
         }
       }
     });
@@ -156,6 +191,7 @@ async function createAcceptanceGitBroker() {
   });
   return {
     socketPath,
+    auth,
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
@@ -262,6 +298,7 @@ async function verifyNativeDeveloperWorkflow(runtime) {
           workspace: root,
           sandboxAdapter: runtime.normalSandbox.adapter,
           localBrokerSocket: gitBrokerSocket,
+          localBrokerAuth: gitBroker?.auth,
           platform: process.platform,
           auditLogger: runtime.auditLogger,
         });
@@ -275,6 +312,7 @@ async function verifyNativeDeveloperWorkflow(runtime) {
       workspace: root,
       sandboxAdapter: runtime.normalSandbox.adapter,
       localBrokerSocket: gitBrokerSocket,
+      localBrokerAuth: gitBroker?.auth,
       platform: process.platform,
       auditLogger: runtime.auditLogger,
       timeoutMs: 30_000,

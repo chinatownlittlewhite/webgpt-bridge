@@ -22,11 +22,15 @@ test("Windows native developer smoke uses the production command timeout budget"
   assert.match(source, /timeoutMs: process\.platform === "win32" \? 120_000 : 30_000/);
 });
 
-test("Windows acceptance mirrors the desktop Git broker architecture", () => {
+test("Windows acceptance mirrors the authenticated desktop Git broker architecture", () => {
   assert.match(source, /\\\\\\\\\.\\\\pipe\\\\webgpt-bridge-acceptance-/);
   assert.match(source, /createAcceptanceGitBroker/);
+  assert.match(source, /createBrokerBootstrap/);
+  assert.match(source, /createBrokerChallenge/);
+  assert.match(source, /verifyBrokerProof/);
   assert.match(source, /createGitTool/);
   assert.match(source, /localBrokerSocket: gitBrokerSocket/);
+  assert.match(source, /localBrokerAuth: gitBroker\?\.auth/);
   assert.match(source, /process\.platform === "win32" \? \[\["node", "--version"\], \["npm", "--version"\]\]/);
   assert.match(source, /await git\.invoke\(\{ action: "status", cwd: path\.relative\(root, repo\) \}\)/);
 });

@@ -27,7 +27,8 @@ test("builder config fixes GitHub update source and platform targets", () => {
     "agent-runtime/node_modules/**/*",
     "agent-runtime/package.json",
     "agent-runtime/native/windows-host/bin/release/**/*",
-  ], "the production Agent runtime must remain on the real filesystem without unpacking development sources");
+    "shared/**/*",
+  ], "the production Agent runtime and shared broker protocol must remain on the real filesystem without unpacking development sources");
   assert.equal(config.mac.x64ArchFiles, "**/{node-pty/prebuilds/darwin-*/pty.node,node-pty/prebuilds/darwin-*/spawn-helper,node-pty-helper/darwin-*/spawn-helper}");
 });
 
@@ -63,6 +64,7 @@ test("packaging contains only production Agent runtime payload and bounded Elect
   assert.ok(builderConfig.files.includes("agent-runtime/node_modules/**/*"));
   assert.ok(builderConfig.files.includes("agent-runtime/package.json"));
   assert.ok(builderConfig.files.includes("agent-runtime/native/windows-host/bin/release/**/*"));
+  assert.ok(builderConfig.files.includes("shared/**/*"));
   assert.equal(builderConfig.files.includes("agent-runtime/**/*"), false);
   assert.equal(builderConfig.files.some((entry) => /agent-runtime\/(?:src|test|scripts)\/\*\*/.test(entry)), false);
   assert.deepEqual(builderConfig.asarUnpack, [
@@ -70,6 +72,7 @@ test("packaging contains only production Agent runtime payload and bounded Elect
     "agent-runtime/node_modules/**/*",
     "agent-runtime/package.json",
     "agent-runtime/native/windows-host/bin/release/**/*",
+    "shared/**/*",
   ]);
   assert.deepEqual(builderConfig.electronLanguages, ["en-US", "zh-CN", "zh-TW", "ja"]);
 });

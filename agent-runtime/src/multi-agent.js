@@ -18,6 +18,7 @@ export function createMultiAgentCoordinator({
   tools = [],
   sandboxAdapter,
   localBrokerSocket = "",
+  localBrokerAuth,
   platform = process.platform,
   auditLogger,
   maxAgents = 4,
@@ -30,6 +31,7 @@ export function createMultiAgentCoordinator({
     workspace,
     sandboxAdapter,
     localBrokerSocket,
+    localBrokerAuth,
     platform,
     auditLogger,
   });

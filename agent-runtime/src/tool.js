@@ -467,7 +467,7 @@ export function createRunProjectTaskTool({ workspace, defaultTimeoutMs = 120_000
   };
 }
 
-export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger } = {}) {
+export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAdapter, localBrokerSocket = "", localBrokerAuth, platform = process.platform, auditLogger } = {}) {
   return {
     name: "git",
     description: "Run a structured Git operation, including isolated worktree management. Network Git sync/push and Windows Git run through the desktop App's policy-controlled local broker when available.",
@@ -485,7 +485,7 @@ export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAd
       if ((platform === "win32" || networkGitAction) && hasLocalBroker) {
         const cwd = resolveModelWorkspaceCwd(workspace, input.cwd ?? ".", { platform }).cwd;
         const argv = buildGitArgv(input);
-        const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000 })
+        const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000, auth: localBrokerAuth })
           .request("local_run_command", { argv, cwd });
         return {
           status: "completed",
@@ -544,7 +544,7 @@ export function createDependencySyncTool({ workspace, networkSandboxAdapter, net
   };
 }
 
-export function createGitHubTool({ workspace, networkSandboxAdapter, networkSandboxState, githubCliState, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger } = {}) {
+export function createGitHubTool({ workspace, networkSandboxAdapter, networkSandboxState, githubCliState, sandboxAdapter, localBrokerSocket = "", localBrokerAuth, platform = process.platform, auditLogger } = {}) {
   return {
     name: "github",
     description: "Run bounded GitHub CLI actions for PRs, CI, issues, and releases. Authenticated desktop actions run through the App-owned broker so tokens remain in the OS keychain. Release assets must be workspace-relative.",
@@ -560,7 +560,7 @@ export function createGitHubTool({ workspace, networkSandboxAdapter, networkSand
       }
       if (typeof localBrokerSocket === "string" && localBrokerSocket) {
         const cwd = resolveModelWorkspaceCwd(workspace, input.cwd ?? ".", { platform }).cwd;
-        const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000 })
+        const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000, auth: localBrokerAuth })
           .request("local_run_command", { argv: buildGitHubArgv(input), cwd });
         return {
           status: "completed",
@@ -898,7 +898,7 @@ export function createCoreTools(options = {}) {
     createApplyPatchTool(options),
     createDeleteFileTool(options),
     createMoveFileTool(options),
-    ...createLocalBrokerTools({ socketPath: options.localBrokerSocket }),
+    ...createLocalBrokerTools({ socketPath: options.localBrokerSocket, auth: options.localBrokerAuth }),
   ];
   const goalSessionStore = options.goalSessionStore ?? (
     options.goalPersistSessions === true

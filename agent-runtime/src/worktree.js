@@ -28,11 +28,11 @@ function repoKey(repoRoot) {
   return createHash("sha256").update(repoRoot).digest("hex").slice(0, 16);
 }
 
-export function createManagedWorktreeRunner({ workspace, sandboxAdapter, localBrokerSocket = "", platform = process.platform, auditLogger, timeoutMs = 120_000 } = {}) {
+export function createManagedWorktreeRunner({ workspace, sandboxAdapter, localBrokerSocket = "", localBrokerAuth, platform = process.platform, auditLogger, timeoutMs = 120_000 } = {}) {
   const root = resolveWorkspace(workspace);
   const run = createCommandRunner({ workspace: root, sandboxAdapter, platform, auditLogger, timeoutMs });
   const localBroker = platform === "win32" && typeof localBrokerSocket === "string" && localBrokerSocket.length > 0
-    ? createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000 })
+    ? createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000, auth: localBrokerAuth })
     : null;
 
   async function runGit(argv, { repoRoot, repoRelative, requestApproval, sandboxExtraWritePaths = [] }) {

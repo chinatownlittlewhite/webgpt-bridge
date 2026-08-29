@@ -4,10 +4,15 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { createMultiAgentCoordinator } from "../src/multi-agent.js";
 import { createCoreTools } from "../src/tool.js";
 import { createManagedWorktreeRunner } from "../src/worktree.js";
+
+const require = createRequire(import.meta.url);
+const { createBrokerBootstrap, createBrokerChallenge, verifyBrokerProof } = require("../../shared/local-broker-protocol.cjs");
+const TEST_BROKER_AUTH = Object.freeze({ protocolVersion: 1, sessionId: "test-session", secret: "test-secret", agentVersion: "0.9.3" });
 
 function git(cwd, args) {
   const result = spawnSync("git", args, { cwd, shell: false, encoding: "utf8" });
@@ -17,8 +22,13 @@ function git(cwd, args) {
 async function startWindowsGitBroker(root) {
   if (process.platform !== "win32") return null;
   const socketPath = `\\\\.\\pipe\\lpc-multi-agent-${process.pid}-${Date.now()}`;
+  const bootstrap = createBrokerBootstrap();
+  const auth = Object.freeze({ protocolVersion: bootstrap.protocolVersion, sessionId: bootstrap.sessionId, secret: bootstrap.secret, agentVersion: "0.9.3" });
   const server = net.createServer((socket) => {
     let buffered = "";
+    let state = "hello";
+    let hello = null;
+    let nonce = "";
     socket.setEncoding("utf8");
     socket.on("data", (chunk) => {
       buffered += chunk;
@@ -29,6 +39,25 @@ async function startWindowsGitBroker(root) {
         let request = null;
         try {
           request = JSON.parse(line);
+          if (state === "hello") {
+            const challenge = createBrokerChallenge(request, bootstrap);
+            if (challenge.type === "hello_error") throw new Error(challenge.code);
+            hello = request;
+            nonce = challenge.nonce;
+            state = "authenticate";
+            socket.write(`${JSON.stringify(challenge)}\n`);
+            continue;
+          }
+          if (state === "authenticate") {
+            if (request?.type !== "authenticate" || request.protocolVersion !== hello?.protocolVersion || request.sessionId !== hello?.sessionId || request.agentVersion !== hello?.agentVersion || request.nonce !== nonce) throw new Error("BROKER_AUTH_FAILED");
+            const verified = verifyBrokerProof(request, bootstrap, { expectedNonce: nonce });
+            if (!verified.ok) throw new Error(verified.code);
+            state = "ready";
+            hello = null;
+            nonce = "";
+            socket.write(`${JSON.stringify({ type: "hello_ok" })}\n`);
+            continue;
+          }
           const argv = request?.params?.argv;
           const cwd = request?.params?.cwd;
           const relative = path.relative(root, path.resolve(cwd));
@@ -40,7 +69,7 @@ async function startWindowsGitBroker(root) {
           if (result.error) throw result.error;
           socket.end(`${JSON.stringify({ id: request.id, ok: true, result: { code: result.status ?? -1, signal: result.signal ?? undefined, stdout: result.stdout ?? "", stderr: result.stderr ?? "", truncated: false } })}\n`);
         } catch (error) {
-          socket.end(`${JSON.stringify({ id: request?.id ?? null, ok: false, error: error.message })}\n`);
+          socket.end(`${JSON.stringify({ type: "hello_error", code: error.message === "BROKER_PROTOCOL_MISMATCH" ? error.message : "BROKER_AUTH_FAILED" })}\n`);
         }
       }
     });
@@ -49,7 +78,7 @@ async function startWindowsGitBroker(root) {
     server.once("error", reject);
     server.listen(socketPath, resolve);
   });
-  return { socketPath, close: () => new Promise((resolve) => server.close(resolve)) };
+  return { socketPath, auth, close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
 test("Windows managed worktrees require the App-owned Git broker", async () => {
@@ -61,6 +90,7 @@ test("Windows managed worktrees require the App-owned Git broker", async () => {
       workspace: root,
       platform: "win32",
       localBrokerSocket: path.join(root, "missing-broker.sock"),
+      localBrokerAuth: TEST_BROKER_AUTH,
     });
     await assert.rejects(
       manage({ action: "list", cwd: "repo" }),
@@ -86,7 +116,7 @@ test("multi-agent coordinator isolates agents in managed Git worktrees without a
   git(repo, ["-c", "user.name=LPC Test", "-c", "user.email=lpc@example.invalid", "commit", "-m", "initial"]);
 
   const tools = createCoreTools({ workspace: root, goalVerificationTasks: [] });
-  const coordinator = createMultiAgentCoordinator({ workspace: root, tools, localBrokerSocket: broker?.socketPath ?? "", maxAgents: 2 });
+  const coordinator = createMultiAgentCoordinator({ workspace: root, tools, localBrokerSocket: broker?.socketPath ?? "", localBrokerAuth: broker?.auth, maxAgents: 2 });
   const result = await coordinator.run({
     cwd: "repo",
     goal: "Inspect the isolated worktree",

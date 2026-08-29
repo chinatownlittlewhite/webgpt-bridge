@@ -290,6 +290,9 @@ export async function createProductionRuntime({
   verifySandbox = envBool(process.env.LPC_VERIFY_SANDBOX, true),
   enableNetworkTools = envBool(process.env.LPC_ENABLE_NETWORK_TOOLS, false),
   localBrokerSocket = process.env.LPC_LOCAL_BROKER_SOCKET ?? "",
+  localBrokerProtocol = process.env.LPC_LOCAL_BROKER_PROTOCOL,
+  localBrokerSession = process.env.LPC_LOCAL_BROKER_SESSION,
+  localBrokerSecret = process.env.LPC_LOCAL_BROKER_SECRET,
   windowsHelperPath = process.env.LPC_WINDOWS_SANDBOX_HELPER,
   windowsHostPrepPath = process.env.LPC_WINDOWS_HOST_PREP,
   githubCliPath = process.env.LPC_GITHUB_CLI_PATH ?? "",
@@ -343,6 +346,15 @@ export async function createProductionRuntime({
     explicitPath: githubCliPath,
   });
 
+  const localBrokerAuth = localBrokerSocket
+    ? Object.freeze({
+        protocolVersion: Number(localBrokerProtocol),
+        sessionId: localBrokerSession,
+        secret: localBrokerSecret,
+        agentVersion: VERSION,
+      })
+    : undefined;
+
   const processManager = createProcessManager({
     workspace: root,
     sandboxAdapter: normalSandbox.adapter,
@@ -361,6 +373,7 @@ export async function createProductionRuntime({
     githubCliState,
     windowsHostPreparationState,
     localBrokerSocket,
+    localBrokerAuth,
     processManager,
     platform: process.platform,
     auditLogger,
@@ -370,7 +383,7 @@ export async function createProductionRuntime({
     maxProcesses: 32,
   });
 
-  const hostApproval = localBrokerSocket ? createHostApprovalClient({ socketPath: localBrokerSocket }) : undefined;
+  const hostApproval = localBrokerSocket ? createHostApprovalClient({ socketPath: localBrokerSocket, auth: localBrokerAuth }) : undefined;
   const mcpHandler = createMcpHandler(
     () => buildMcpServer({ tools, auditLogger, instructions: serverInstructions, hostApproval }),
     { legacy: "stateless" },
