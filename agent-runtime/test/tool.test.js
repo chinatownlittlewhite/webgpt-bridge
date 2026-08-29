@@ -215,7 +215,7 @@ test("capabilities report final-acceptance guarantees without overclaiming inact
   assert.equal(goalFinishInputSchema.properties.postconditionEvidence.maxLength, 8_192);
 });
 
-test("capabilities report bounded Windows host preparation state", () => {
+test("capabilities report bounded Windows host preparation state without exposing its Host path", () => {
   const windowsHostPreparationState = {
     status: "capability_ace_missing",
     usable: false,
@@ -224,7 +224,13 @@ test("capabilities report bounded Windows host preparation state", () => {
     remediation: "Repair the Windows installation as administrator.",
   };
   const report = createCapabilitiesTool({ windowsHostPreparationState, platform: "win32" }).invoke({});
-  assert.deepEqual(report.windowsHostPreparation, windowsHostPreparationState);
+  assert.deepEqual(report.windowsHostPreparation, {
+    status: "capability_ace_missing",
+    usable: false,
+    capabilityName: "com.localagenthost.desktop.null-device",
+    expectedPath: null,
+    remediation: "Repair the Windows installation as administrator.",
+  });
 });
 
 test("capabilities report GitHub CLI readiness without exposing its trusted Host path", () => {
