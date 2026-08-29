@@ -8,6 +8,10 @@ import { buildGitArgv, createGitRunner } from "./git.js";
 import { buildGitHubArgv, createGitHubRunner } from "./github.js";
 import { createGoalController } from "./goal-controller.js";
 import { createFileGoalSessionStore } from "./goal-store.js";
+import {
+  LEGACY_GOAL_VERIFICATION_PROFILE,
+  SUPPORTED_GOAL_VERIFICATION_PROFILES,
+} from "./goal-verification-profile.js";
 import { createLocalBrokerClient, createLocalBrokerTools } from "./local-broker-client.js";
 import {
   listWorkspaceDirectory,
@@ -297,6 +301,8 @@ export const goalModeInputSchema = Object.freeze({
       maxItems: 50,
       items: { type: "string", minLength: 1, maxLength: 8_192 },
     },
+    verificationProfile: { type: "string", enum: [...SUPPORTED_GOAL_VERIFICATION_PROFILES] },
+    postcondition: { type: "string", minLength: 1, maxLength: 8_192 },
     maxSteps: { type: "integer", minimum: 1, maximum: 200, default: 50 },
     maxToolCalls: { type: "integer", minimum: 1, maximum: 500, default: 100 },
     maxDurationMs: { type: "integer", minimum: 1, maximum: 1_800_000, default: 600_000 },
@@ -370,6 +376,7 @@ export const goalFinishInputSchema = Object.freeze({
         },
       },
     },
+    postconditionEvidence: { type: "string", minLength: 1, maxLength: 8_192 },
   },
 });
 
@@ -857,6 +864,9 @@ export function createCapabilitiesTool({
           pauseReclaimsOwnedProcesses: true,
           acceptanceCriteriaGate: true,
           externalOrchestratorCompatible: true,
+          supportedVerificationProfiles: [...SUPPORTED_GOAL_VERIFICATION_PROFILES],
+          defaultVerificationProfile: LEGACY_GOAL_VERIFICATION_PROFILE,
+          effectiveProfileReportedPerSession: true,
         },
         guarantees: {
           shellDisabledForModelCommands: true,

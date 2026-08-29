@@ -213,6 +213,9 @@ test("capabilities report final-acceptance guarantees without overclaiming inact
   assert.equal(report.goalMode.goalCwdScoped, false);
   assert.equal(report.goalMode.acceptanceCriteriaGate, true);
   assert.equal(report.goalMode.externalOrchestratorCompatible, true);
+  assert.deepEqual(report.goalMode.supportedVerificationProfiles, ["code-change", "read-only-audit", "system-operation"]);
+  assert.equal(report.goalMode.defaultVerificationProfile, "legacy-code-project");
+  assert.equal(report.goalMode.effectiveProfileReportedPerSession, true);
   assert.equal(report.goalMode.sessionPersistence, "in-memory-until-server-restart-or-ttl");
   assert.equal(report.mcp.protocolRevision, "2026-07-28");
   assert.equal(report.mcp.mrtrApprovalSupported, true);
@@ -230,7 +233,10 @@ test("capabilities report final-acceptance guarantees without overclaiming inact
   assert.equal(report.releaseAcceptance.perTargetOs, true);
   assert.equal(report.releaseAcceptance.currentNativeSandboxVerified, false);
   assert.equal(Object.hasOwn(goalModeInputSchema.properties, "acceptanceCriteria"), true);
+  assert.deepEqual(goalModeInputSchema.properties.verificationProfile.enum, ["code-change", "read-only-audit", "system-operation"]);
+  assert.equal(goalModeInputSchema.properties.postcondition.maxLength, 8_192);
   assert.equal(Object.hasOwn(goalFinishInputSchema.properties, "criteriaEvidence"), true);
+  assert.equal(goalFinishInputSchema.properties.postconditionEvidence.maxLength, 8_192);
 });
 
 test("capabilities report bounded Windows host preparation state", () => {
