@@ -45,9 +45,16 @@ export function isNestedMacOSManagedRunner({
     typeof home !== "string" || home.length === 0 ||
     typeof tmpdir !== "string" || tmpdir.length === 0
   ) return false;
+  const resolvedHome = path.resolve(home);
   const resolvedCwd = path.resolve(cwd);
-  return path.resolve(home) === resolvedCwd
-    && path.resolve(tmpdir) === path.join(resolvedCwd, INTERNAL_STATE_DIR, "tmp");
+  const relativeCwd = path.relative(resolvedHome, resolvedCwd);
+  const cwdInsideSandboxRoot = relativeCwd === "" || (
+    relativeCwd !== ".." &&
+    !relativeCwd.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativeCwd)
+  );
+  return cwdInsideSandboxRoot
+    && path.resolve(tmpdir) === path.join(resolvedHome, INTERNAL_STATE_DIR, "tmp");
 }
 
 async function runStandardSuite() {

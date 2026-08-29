@@ -59,6 +59,12 @@ test("nested macOS managed-runner detection is bound to the trusted workspace en
   }), true);
   assert.equal(detect({
     platform: "darwin",
+    home: "/project",
+    tmpdir: "/project/.webgpt-bridge/tmp",
+    cwd: "/project/agent-runtime",
+  }), true, "npm --prefix may move cwd below the sandbox-owned workspace root");
+  assert.equal(detect({
+    platform: "darwin",
     home: "/Users/runner",
     tmpdir: "/private/tmp",
     cwd: "/project",

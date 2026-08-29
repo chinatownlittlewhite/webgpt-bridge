@@ -103,12 +103,12 @@ test("ordinary Host path access has a distinct connection-scoped permission prom
   assert.equal(prompt.rememberKey, "host-path:read:/Users/test/Projects/other");
 });
 
-test("sensitive access is concise and remembered by sensitive root", () => {
+test("sensitive access is concise and never remembered across requests", () => {
   const { approvalPrompt } = api();
   const prompt = approvalPrompt({ kind: "sensitive-access", operation: "read", path: "/Users/me/.ssh/config" }, "auto");
   assert.equal(prompt.message, "允许读取敏感位置？");
   assert.equal(prompt.detail, "位置：.ssh/config\n范围：仅本次访问");
   assert.doesNotMatch(prompt.detail, /原因：|私人数据|\/Users\/me/);
   assert.equal(prompt.detail.split("\n").length, 2);
-  assert.equal(prompt.rememberKey, "sensitive:read:.ssh");
+  assert.equal(prompt.rememberKey, null);
 });

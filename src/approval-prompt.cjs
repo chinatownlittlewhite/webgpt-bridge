@@ -158,11 +158,10 @@ function hostPathPresentation(request) {
 }
 
 function sensitivePresentation(request) {
-  const sensitiveRoot = shortSensitivePath(request.path).split("/")[0] || "sensitive";
   return {
     message: request.operation === "list" ? "允许查看敏感目录？" : "允许读取敏感位置？",
     detail: `位置：${shortSensitivePath(request.path)}\n范围：仅本次访问`,
-    rememberKey: `sensitive:${request.operation === "list" ? "list" : "read"}:${sensitiveRoot}`,
+    rememberKey: null,
   };
 }
 
