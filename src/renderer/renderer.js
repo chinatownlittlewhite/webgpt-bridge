@@ -1,6 +1,7 @@
 const api = window.localAgentHost;
 const ids = ["workspacePath", "runtimePath", "tunnelClientPath", "nodePath", "tunnelId", "profile", "httpsProxy", "sshAllowedHosts", "approvalMode", "runtimeKey"];
 const byId = (id) => document.getElementById(id);
+const LOG_CAPACITY = 600;
 let updateState;
 
 function message(text, error = false) {
@@ -28,10 +29,49 @@ function renderStatus(status) {
   connection.querySelector("b").textContent = status.tunnel ? "已连接" : "未连接";
 }
 
-function renderLogs(logs) {
-  byId("logOutput").textContent = logs.length ? logs.map(({ at, source, line }) => `${at.slice(11, 19)}  ${source.padEnd(12)} ${line}`).join("\n") : "尚未启动。";
-  byId("logOutput").scrollTop = byId("logOutput").scrollHeight;
+function formatLogEntry({ at, source, line }) {
+  const time = String(at || "").slice(11, 19).padEnd(8);
+  return `${time}  ${String(source || "host").padEnd(12)} ${String(line || "")}`;
 }
+
+function logOutputNearBottom(target) {
+  return target.textContent === "尚未启动。" || target.scrollHeight - target.scrollTop - target.clientHeight <= 32;
+}
+
+function createLogNode(entry) {
+  return document.createTextNode(`${formatLogEntry(entry)}\n`);
+}
+
+function renderLogSnapshot(entries) {
+  const target = byId("logOutput");
+  const follow = logOutputNearBottom(target);
+  if (!entries.length) {
+    target.replaceChildren(document.createTextNode("尚未启动。"));
+  } else {
+    const fragment = document.createDocumentFragment();
+    for (const entry of entries) fragment.appendChild(createLogNode(entry));
+    target.replaceChildren(fragment);
+  }
+  if (follow) target.scrollTop = target.scrollHeight;
+}
+
+function renderLogAppend(entries, { trimCount = 0 } = {}) {
+  if (!entries.length) return;
+  const target = byId("logOutput");
+  const follow = logOutputNearBottom(target);
+  if (target.textContent === "尚未启动。") target.replaceChildren();
+  for (const entry of entries) target.appendChild(createLogNode(entry));
+  for (let index = 0; index < trimCount && target.firstChild; index += 1) target.removeChild(target.firstChild);
+  if (follow) target.scrollTop = target.scrollHeight;
+}
+
+const { createRendererLogState } = window.WebGPTLogState;
+const logState = createRendererLogState({
+  capacity: LOG_CAPACITY,
+  requestSnapshot: () => api.logs(),
+  onSnapshot: renderLogSnapshot,
+  onAppend: renderLogAppend,
+});
 
 function formatBytes(value) {
   const bytes = Math.max(0, Number(value) || 0);
@@ -122,7 +162,7 @@ byId("updateAction").addEventListener("click", async () => {
     message("更新操作失败，请重试。", true);
   }
 });
-api.onEvent((event) => { if (event.type === "logs") renderLogs(event.value); if (event.type === "status") renderStatus(event.value); });
+api.onEvent((event) => { if (event.type === "logs") void logState.handle(event.value); if (event.type === "status") renderStatus(event.value); });
 api.onUpdateState(renderUpdate);
 
 (async () => {
@@ -133,6 +173,6 @@ api.onUpdateState(renderUpdate);
   byId("sshAllowedHosts").value = Array.isArray(settings.sshAllowedHosts) ? settings.sshAllowedHosts.join("\n") : "";
   byId("keyStatus").textContent = settings.hasRuntimeKey ? "此电脑的密钥已安全保存" : "尚未保存运行时密钥";
   renderStatus(await api.status());
-  renderLogs(await api.logs());
+  await logState.bootstrap();
   renderUpdate(await api.getUpdateState());
 })();
