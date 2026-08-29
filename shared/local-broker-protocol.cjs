@@ -1,6 +1,6 @@
 const crypto = require("node:crypto");
+const { BROKER_PROTOCOL_VERSION } = require("./product-contract.cjs");
 
-const BROKER_PROTOCOL_VERSION = 1;
 const MAX_FIELD_LENGTH = 512;
 
 function nonEmptyString(value, name) {
