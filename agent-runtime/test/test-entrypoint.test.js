@@ -5,7 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as testEntrypoint from "../scripts/run-tests.mjs";
 
-const { isNestedWindowsAppContainer, NESTED_WINDOWS_TEST_FILES } = testEntrypoint;
+const {
+  isNestedWindowsAppContainer,
+  NESTED_WINDOWS_TEST_FILES,
+  NESTED_MACOS_TEST_FILES,
+} = testEntrypoint;
 
 test("npm test delegates through the sandbox-aware test entrypoint", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -99,4 +103,25 @@ test("nested Windows suite stays explicit and excludes host-fixture integration 
   ]);
   assert.equal(NESTED_WINDOWS_TEST_FILES.includes("workspace.test.js"), false);
   assert.equal(NESTED_WINDOWS_TEST_FILES.includes("local-broker-client.test.js"), false);
+});
+
+test("nested macOS suite stays explicit and excludes host-fixture and nested-sandbox integration tests", () => {
+  assert.deepEqual(NESTED_MACOS_TEST_FILES, [
+    "acceptance-script.test.js",
+    "approval.test.js",
+    "goal-controller.test.js",
+    "goal-mode.test.js",
+    "goal-session.test.js",
+    "platform.test.js",
+    "policy.test.js",
+    "schema-validate.test.js",
+    "test-entrypoint.test.js",
+  ]);
+  assert.equal(NESTED_MACOS_TEST_FILES.includes("workspace.test.js"), false);
+  assert.equal(NESTED_MACOS_TEST_FILES.includes("local-broker-client.test.js"), false);
+  assert.equal(NESTED_MACOS_TEST_FILES.includes("sandbox.test.js"), false);
+
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const runnerSource = fs.readFileSync(path.resolve(here, "..", "scripts", "run-tests.mjs"), "utf8");
+  assert.match(runnerSource, /isNestedMacOSManagedRunner\(\).*runNestedMacOSSuite\(\)/s);
 });
