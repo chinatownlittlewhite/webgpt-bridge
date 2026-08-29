@@ -25,9 +25,11 @@ $protectedHostRoot = Join-Path $env:ProgramFiles "WebGPT Bridge Host"
 $installedPrep = Join-Path $protectedHostRoot "lpc-windows-host.exe"
 $installedTaskXml = Join-Path $InstallRoot "resources\windows-host-prep-task.xml"
 $resourcesRoot = Join-Path $InstallRoot "resources"
+$appAsar = Join-Path $resourcesRoot "app.asar"
 $bundledNode = Join-Path $resourcesRoot "node-runtime\node.exe"
 $unpackedRoot = Join-Path $resourcesRoot "app.asar.unpacked"
 $agentRuntimeRoot = Join-Path $unpackedRoot "agent-runtime"
+$nodePtyRoot = Join-Path $agentRuntimeRoot "node_modules\node-pty"
 $agentNativeRoot = Join-Path $agentRuntimeRoot "native\windows-host\bin\release"
 
 try {
@@ -87,8 +89,10 @@ try {
     installerBytes = Get-PathSizeBytes $installer.FullName
     installRootBytes = Get-PathSizeBytes $InstallRoot
     resourcesBytes = Get-PathSizeBytes $resourcesRoot
+    appAsarBytes = Get-PathSizeBytes $appAsar
     appAsarUnpackedBytes = Get-PathSizeBytes $unpackedRoot
     agentRuntimeBytes = Get-PathSizeBytes $agentRuntimeRoot
+    nodePtyBytes = Get-PathSizeBytes $nodePtyRoot
     packagedNativeHostBytes = Get-PathSizeBytes $agentNativeRoot
     protectedNativeHostBytes = Get-PathSizeBytes $installedPrep
     bundledNodeBytes = Get-PathSizeBytes $bundledNode
