@@ -37,6 +37,7 @@ function createWindowController({ BrowserWindow, shell, preloadPath, rendererPat
 
   function showWindow() {
     if (!windowRef || windowRef.isDestroyed()) createWindow();
+    if (windowRef.isMinimized()) windowRef.restore();
     windowRef.show();
     windowRef.focus();
     return windowRef;
