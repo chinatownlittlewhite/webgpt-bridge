@@ -64,7 +64,7 @@ test("Agent execution adapter never upgrades deny and canonicalizes sandbox down
 test("Agent policy and runner are thin adapters over the shared canonical core", () => {
   const policySource = fs.readFileSync(path.join(agentRoot, "src", "policy.js"), "utf8");
   const runnerSource = fs.readFileSync(path.join(agentRoot, "src", "runner.js"), "utf8");
-  assert.match(policySource, /\.\.\/\.\.\/shared\/security-policy-core\.cjs/);
+  assert.match(policySource, /\.\.\/shared\/security-policy-core\.cjs/);
   assert.match(policySource, /authorizeSecurityOperation/);
   assert.match(policySource, /isImmutableDeniedExecutable/);
   assert.doesNotMatch(policySource, /const ALWAYS_DENY = new Set/);
