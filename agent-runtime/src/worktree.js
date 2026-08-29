@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createCommandRunner } from "./runner.js";
-import { createLocalBrokerClient } from "./local-broker-client.js";
+import { brokerMethodForImplementation, createLocalBrokerClient } from "./local-broker-client.js";
 import {
   INTERNAL_STATE_DIR,
   resolveModelWorkspaceCwd,
@@ -44,7 +44,7 @@ export function createManagedWorktreeRunner({ workspace, sandboxAdapter, localBr
           error: "Windows managed worktrees require the App-owned Git broker because Git for Windows cannot open the NUL device from the AppContainer.",
         };
       }
-      const result = await localBroker.request("local_run_command", { argv, cwd: repoRoot });
+      const result = await localBroker.request(brokerMethodForImplementation("command.run"), { argv, cwd: repoRoot });
       return {
         status: "completed",
         exitCode: result?.code ?? -1,

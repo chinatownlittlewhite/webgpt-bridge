@@ -11,6 +11,7 @@ const { pathToFileURL } = require("node:url");
 const { resolveDevelopmentRuntimeConfig } = require("./dev-runtime-config.cjs");
 const { establishSingleInstanceOwnership } = require("./single-instance.cjs");
 const { createBrokerBootstrap, createBrokerChallenge, verifyBrokerProof } = require("../shared/local-broker-protocol.cjs");
+const { getBrokerMethodMetadata } = require("../shared/tool-registry.cjs");
 const { normalizeSettings } = require("./host-config.cjs");
 const { approvalPrompt } = require("./approval-prompt.cjs");
 const { createApprovalSession } = require("./approval-session.cjs");
@@ -368,21 +369,24 @@ async function stopLocalBroker() {
 }
 
 function localBrokerDispatch(method, params, executionContext = {}) {
-  const handlers = {
-    local_list: () => localFileBroker.list(params),
-    local_read: () => localFileBroker.read(params),
-    local_list_known_folder: () => localKnownFolderAccess.list(params),
-    local_read_known_folder: () => localKnownFolderAccess.read(params),
-    local_probe_health: () => localHealthProbe.probe(params),
-    local_request_sensitive_access: () => localFileBroker.requestSensitiveAccess(params),
-    local_request_host_access: () => localFileBroker.requestHostAccess(params),
-    local_stage_changes: () => localFileBroker.stage(params),
-    local_confirm_batch: () => localFileBroker.confirmBatch(params),
-    local_run_command: () => localTerminalBroker.run(params, executionContext),
-    host_approve_command: () => confirmHostCommandApproval(params),
+  const implementations = {
+    "file.list": () => localFileBroker.list(params),
+    "file.read": () => localFileBroker.read(params),
+    "known-folder.list": () => localKnownFolderAccess.list(params),
+    "known-folder.read": () => localKnownFolderAccess.read(params),
+    "health.probe": () => localHealthProbe.probe(params),
+    "access.sensitive.request": () => localFileBroker.requestSensitiveAccess(params),
+    "access.host.request": () => localFileBroker.requestHostAccess(params),
+    "file-batch.stage": () => localFileBroker.stage(params),
+    "file-batch.confirm": () => localFileBroker.confirmBatch(params),
+    "command.run": () => localTerminalBroker.run(params, executionContext),
+    "command.approve": () => confirmHostCommandApproval(params),
   };
-  if (!Object.hasOwn(handlers, method)) throw new Error("未知的本机代理方法。");
-  return handlers[method]();
+  const metadata = getBrokerMethodMetadata(method);
+  if (!metadata) throw new Error("未知的本机代理方法。");
+  const handler = implementations[metadata.implementationKey];
+  if (typeof handler !== "function") throw new Error("本机代理方法未配置。");
+  return handler();
 }
 
 function attachLocalBrokerConnection(socket, brokerBootstrap) {

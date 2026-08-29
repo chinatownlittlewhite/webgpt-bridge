@@ -5,6 +5,11 @@ import { validateJsonSchema } from "./schema-validate.js";
 
 const require = createRequire(import.meta.url);
 const { BROKER_PROTOCOL_VERSION, createBrokerProof } = require("../../shared/local-broker-protocol.cjs");
+const {
+  findBrokerMethodByImplementation,
+  getBrokerMethodMetadata,
+  listToolMetadata,
+} = require("../../shared/tool-registry.cjs");
 
 const pathSchema = { type: "string", minLength: 1, maxLength: 4_096 };
 const shaSchema = { type: "string", pattern: "^[a-fA-F0-9]{64}$" };
@@ -197,25 +202,44 @@ export function createLocalBrokerClient({ socketPath, timeoutMs = 20_000, auth }
   });
 }
 
+export function brokerMethodForImplementation(implementationKey) {
+  const metadata = findBrokerMethodByImplementation(implementationKey);
+  if (!metadata) throw new Error(`broker registry implementation is missing: ${String(implementationKey)}`);
+  return metadata.method;
+}
+
 export function createHostApprovalClient({ socketPath, timeoutMs = 5 * 60_000, auth } = {}) {
   const client = createLocalBrokerClient({ socketPath, timeoutMs, auth });
   const requestHostApproval = async function requestHostApproval(request) {
-    const result = await client.request("host_approve_command", { request });
+    const result = await client.request(brokerMethodForImplementation("command.approve"), { request });
     return result?.approved === true;
   };
   Object.defineProperty(requestHostApproval, "timeoutMs", { value: timeoutMs, enumerable: true });
   return Object.freeze(requestHostApproval);
 }
 
-function tool(name, description, inputSchema, client) {
+const BROKER_TOOL_ADAPTERS = Object.freeze({
+  "file.list": Object.freeze({ description: "List an allowed non-sensitive local directory through the App-owned broker; symlinks are not followed.", inputSchema: localListInputSchema }),
+  "file.read": Object.freeze({ description: "Read a bounded UTF-8 local file through the App-owned broker and receive its SHA-256.", inputSchema: localReadInputSchema }),
+  "known-folder.list": Object.freeze({ description: "List desktop, downloads, or documents through a fixed known-folder root and relative path.", inputSchema: localListKnownFolderInputSchema }),
+  "known-folder.read": Object.freeze({ description: "Read desktop, downloads, or documents through a fixed known-folder root and relative path.", inputSchema: localReadKnownFolderInputSchema }),
+  "health.probe": Object.freeze({ description: "Probe only the fixed agent, tunnel, or github health targets through the App-owned broker.", inputSchema: localProbeHealthInputSchema }),
+  "access.sensitive.request": Object.freeze({ description: "Ask the desktop App for one-time native approval to list or read one sensitive path.", inputSchema: localRequestSensitiveAccessInputSchema }),
+  "access.host.request": Object.freeze({ description: "Ask the desktop App for explicit access to one ordinary Host path outside the workspace. Known folders and sensitive paths keep their dedicated authorization flows.", inputSchema: localRequestHostAccessInputSchema }),
+  "file-batch.stage": Object.freeze({ description: "Stage 1–20 SHA-bound non-sensitive file changes; this does not write files.", inputSchema: localStageChangesInputSchema }),
+  "file-batch.confirm": Object.freeze({ description: "Commit a previously staged local change batch. The App revalidates all SHA values and requests confirmation when required.", inputSchema: localConfirmBatchInputSchema }),
+  "command.run": Object.freeze({ description: "Run an argv-only command only when App-owned host integration is required. Prefer the sandboxed run_command tool for ordinary project execution. Shells and privilege escalation are unavailable.", inputSchema: localRunCommandInputSchema }),
+});
+
+function tool(metadata, adapter, client) {
   return Object.freeze({
-    name,
-    description,
-    inputSchema,
+    name: metadata.name,
+    description: adapter.description,
+    inputSchema: adapter.inputSchema,
     timeoutMs: client.timeoutMs,
     invoke(input) {
-      validateJsonSchema(input, inputSchema);
-      return client.request(name, input);
+      validateJsonSchema(input, adapter.inputSchema);
+      return client.request(metadata.brokerMethod, input);
     },
   });
 }
@@ -224,16 +248,13 @@ export function createLocalBrokerTools({ socketPath, auth } = {}) {
   if (typeof socketPath !== "string" || socketPath.length === 0) return [];
   const client = createLocalBrokerClient({ socketPath, auth });
   const interactiveClient = createLocalBrokerClient({ socketPath, timeoutMs: 5 * 60_000, auth });
-  return [
-    tool("local_list", "List an allowed non-sensitive local directory through the App-owned broker; symlinks are not followed.", localListInputSchema, client),
-    tool("local_read", "Read a bounded UTF-8 local file through the App-owned broker and receive its SHA-256.", localReadInputSchema, client),
-    tool("local_list_known_folder", "List desktop, downloads, or documents through a fixed known-folder root and relative path.", localListKnownFolderInputSchema, client),
-    tool("local_read_known_folder", "Read desktop, downloads, or documents through a fixed known-folder root and relative path.", localReadKnownFolderInputSchema, client),
-    tool("local_probe_health", "Probe only the fixed agent, tunnel, or github health targets through the App-owned broker.", localProbeHealthInputSchema, client),
-    tool("local_request_sensitive_access", "Ask the desktop App for one-time native approval to list or read one sensitive path.", localRequestSensitiveAccessInputSchema, interactiveClient),
-    tool("local_request_host_access", "Ask the desktop App for explicit access to one ordinary Host path outside the workspace. Known folders and sensitive paths keep their dedicated authorization flows.", localRequestHostAccessInputSchema, interactiveClient),
-    tool("local_stage_changes", "Stage 1–20 SHA-bound non-sensitive file changes; this does not write files.", localStageChangesInputSchema, client),
-    tool("local_confirm_batch", "Commit a previously staged local change batch. The App revalidates all SHA values and requests confirmation when required.", localConfirmBatchInputSchema, interactiveClient),
-    tool("local_run_command", "Run an argv-only command only when App-owned host integration is required. Prefer the sandboxed run_command tool for ordinary project execution. Shells and privilege escalation are unavailable.", localRunCommandInputSchema, interactiveClient),
-  ];
+  return listToolMetadata({ brokerEnabled: true })
+    .filter((metadata) => metadata.availability === "broker")
+    .map((metadata) => {
+      const brokerMetadata = getBrokerMethodMetadata(metadata.brokerMethod);
+      const adapter = brokerMetadata ? BROKER_TOOL_ADAPTERS[brokerMetadata.implementationKey] : null;
+      if (!brokerMetadata || !adapter) throw new Error(`broker registry adapter is missing: ${metadata.name}`);
+      const selectedClient = metadata.timeoutClass === "interactive-broker" ? interactiveClient : client;
+      return tool(metadata, adapter, selectedClient);
+    });
 }

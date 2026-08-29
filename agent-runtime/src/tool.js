@@ -12,7 +12,7 @@ import {
   LEGACY_GOAL_VERIFICATION_PROFILE,
   SUPPORTED_GOAL_VERIFICATION_PROFILES,
 } from "./goal-verification-profile.js";
-import { createLocalBrokerClient, createLocalBrokerTools } from "./local-broker-client.js";
+import { brokerMethodForImplementation, createLocalBrokerClient, createLocalBrokerTools } from "./local-broker-client.js";
 import {
   listWorkspaceDirectory,
   readWorkspaceFile,
@@ -501,7 +501,7 @@ export function createGitTool({ workspace, defaultTimeoutMs = 120_000, sandboxAd
         const cwd = resolveModelWorkspaceCwd(workspace, input.cwd ?? ".", { platform }).cwd;
         const argv = buildGitArgv(input);
         const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000, auth: localBrokerAuth })
-          .request("local_run_command", { argv, cwd });
+          .request(brokerMethodForImplementation("command.run"), { argv, cwd });
         return {
           status: "completed",
           exitCode: result?.code ?? -1,
@@ -576,7 +576,7 @@ export function createGitHubTool({ workspace, networkSandboxAdapter, networkSand
       if (typeof localBrokerSocket === "string" && localBrokerSocket) {
         const cwd = resolveModelWorkspaceCwd(workspace, input.cwd ?? ".", { platform }).cwd;
         const result = await createLocalBrokerClient({ socketPath: localBrokerSocket, timeoutMs: 5 * 60_000, auth: localBrokerAuth })
-          .request("local_run_command", { argv: buildGitHubArgv(input), cwd });
+          .request(brokerMethodForImplementation("command.run"), { argv: buildGitHubArgv(input), cwd });
         return {
           status: "completed",
           exitCode: result?.code ?? -1,

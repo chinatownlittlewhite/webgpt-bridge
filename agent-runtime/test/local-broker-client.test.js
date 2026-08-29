@@ -5,6 +5,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import {
   localConfirmBatchInputSchema,
   localListInputSchema,
@@ -18,6 +19,9 @@ import {
 } from "../src/local-broker-client.js";
 import { validateJsonSchema } from "../src/schema-validate.js";
 import { createCoreTools } from "../src/tool.js";
+
+const require = createRequire(import.meta.url);
+const { listBrokerToolNames } = require("../../shared/tool-registry.cjs");
 
 function testSocketPath(prefix) {
   if (process.platform === "win32") return `\\\\.\\pipe\\webgpt-bridge-${prefix}-${process.pid}-${Date.now()}`;
@@ -92,6 +96,21 @@ test("local broker schemas reject tokens, arbitrary repository controls, shells,
   assert.throws(() => validateJsonSchema({ argv: ["sudo", "true"], cwd: "/tmp" }, localRunCommandInputSchema), /does not match|required/);
   assert.throws(() => validateJsonSchema({ argv: ["sh", "-c", "echo unsafe"], cwd: "/tmp" }, localRunCommandInputSchema), /does not match|required/);
   assert.throws(() => validateJsonSchema({ argv: ["npm", "test"], cwd: "/tmp", shell: "npm test" }, localRunCommandInputSchema), /unexpected property shell/);
+});
+
+test("local broker tool catalog follows the canonical broker registry", () => {
+  const tools = createLocalBrokerTools({ socketPath: "/tmp/webgpt-bridge-tools-registry.sock", auth: TEST_AUTH });
+  assert.deepEqual(tools.map((tool) => tool.name), listBrokerToolNames({ brokerEnabled: true }));
+});
+
+test("broker method literals are resolved through the canonical registry", () => {
+  const clientSource = fs.readFileSync(new URL("../src/local-broker-client.js", import.meta.url), "utf8");
+  const toolSource = fs.readFileSync(new URL("../src/tool.js", import.meta.url), "utf8");
+  const worktreeSource = fs.readFileSync(new URL("../src/worktree.js", import.meta.url), "utf8");
+  assert.equal(clientSource.includes('client.request("host_approve_command"'), false);
+  assert.equal(toolSource.includes('.request("local_run_command"'), false);
+  assert.equal(worktreeSource.includes('.request("local_run_command"'), false);
+  assert.match(clientSource, /findBrokerMethodByImplementation|brokerMethodForImplementation/);
 });
 
 test("local broker tools appear only when the App-owned bridge socket is configured", () => {
