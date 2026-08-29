@@ -173,6 +173,8 @@ test("paused goal is persisted and resumes after controller restart", async () =
       goal: "Resume after agent restart",
       cwd: "project",
       acceptanceCriteria: ["persist pause"],
+      verificationProfile: "system-operation",
+      postcondition: "the operation remains recoverable after reconnect",
     });
     const paused = await first.pause({
       sessionId: started.sessionId,
@@ -192,16 +194,30 @@ test("paused goal is persisted and resumes after controller restart", async () =
     const restored = second.status(started.sessionId);
     assert.equal(restored.status, "paused");
     assert.equal(restored.mustContinue, false);
+    assert.equal(restored.verificationProfile, "system-operation");
+    assert.equal(restored.postcondition, "the operation remains recoverable after reconnect");
     assert.equal(restored.pause.nextAction, "resume after reconnect");
     const resumed = await second.resume(started.sessionId);
     assert.equal(resumed.status, "active");
     assert.equal(resumed.mustContinue, true);
     assert.equal(resumed.sessionId, started.sessionId);
     assert.equal(resumed.cwd, "project");
+    assert.equal(resumed.verificationProfile, "system-operation");
+    assert.equal(resumed.postcondition, "the operation remains recoverable after reconnect");
     assert.deepEqual(resumed.acceptanceCriteria, ["persist pause"]);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("legacy persisted sessions without profile fields hydrate to the legacy code-project profile", () => {
+  const store = createMemoryGoalSessionStore();
+  store.save(storedSession({ id: "legacy_profile_session", status: "paused", goal: "legacy persisted state" }));
+  const controller = createGoalController({ tools: [], sessionStore: store, verificationTasks: [] });
+  const restored = controller.status("legacy_profile_session");
+  assert.equal(restored.status, "paused");
+  assert.equal(restored.verificationProfile, "legacy-code-project");
+  assert.equal(restored.postcondition, null);
 });
 
 test("goal_list returns only bounded paused sessions in deterministic newest-first order and supports exact cwd filtering", () => {

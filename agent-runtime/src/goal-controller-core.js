@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { scopeGoalToolInput, validateGoalCwd } from "./goal-scope.js";
 import { createMemoryGoalSessionStore } from "./goal-store.js";
+import {
+  classifyGoalAction,
+  normalizeGoalVerificationProfile,
+} from "./goal-verification-profile.js";
 import { loadProjectContext } from "./project-context.js";
 import { validateJsonSchema } from "./schema-validate.js";
 
@@ -20,6 +24,7 @@ const MAX_PUBLIC_FEEDBACK_BYTES = 2_000;
 const MAX_PUBLIC_PAUSE_SUMMARY_BYTES = 4_000;
 const MAX_PUBLIC_PAUSE_ACTION_BYTES = 3_000;
 const MAX_PUBLIC_PAUSE_REASON_BYTES = 2_000;
+const MAX_PUBLIC_POSTCONDITION_BYTES = 6_000;
 const MAX_PUBLIC_PROJECT_INSTRUCTIONS_BYTES = 6_000;
 const MAX_VERIFICATION_DIAGNOSTIC_BYTES = 4_096;
 const TERMINAL = new Set(["completed", "canceled", "budget_exhausted", "stalled", "failed"]);
@@ -100,6 +105,17 @@ function positiveInteger(value, name, max) {
   return value;
 }
 
+function normalizePostcondition(value, verificationProfile) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.trim().length === 0 || value.trim().length > 8_192) {
+    throw new TypeError("postcondition must be a non-empty string up to 8192 characters when supplied");
+  }
+  if (verificationProfile !== "system-operation") {
+    throw new TypeError("postcondition is only valid for the system-operation verification profile");
+  }
+  return value.trim();
+}
+
 function normalizeStart(input = {}) {
   if (typeof input.goal !== "string" || input.goal.trim().length === 0) {
     throw new TypeError("goal must be a non-empty string");
@@ -116,6 +132,8 @@ function normalizeStart(input = {}) {
   if (Array.isArray(input.acceptanceCriteria) && input.acceptanceCriteria.length > 50) {
     throw new RangeError("acceptanceCriteria must contain at most 50 entries");
   }
+  const verificationProfile = normalizeGoalVerificationProfile(input.verificationProfile);
+  const postcondition = normalizePostcondition(input.postcondition, verificationProfile);
   const acceptanceCriteria = Array.isArray(input.acceptanceCriteria)
     ? [...new Set(input.acceptanceCriteria.map((entry) => {
         if (typeof entry !== "string" || entry.trim().length === 0 || entry.trim().length > 8_192) {
@@ -128,6 +146,8 @@ function normalizeStart(input = {}) {
     goal,
     cwd,
     acceptanceCriteria,
+    verificationProfile,
+    postcondition,
     maxSteps: positiveInteger(input.maxSteps ?? DEFAULT_MAX_STEPS, "maxSteps", 200),
     maxToolCalls: positiveInteger(input.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS, "maxToolCalls", 500),
     maxDurationMs: positiveInteger(input.maxDurationMs ?? DEFAULT_MAX_DURATION_MS, "maxDurationMs", 30 * 60_000),
@@ -183,6 +203,8 @@ function sessionView(session, includeHistory = false) {
     } : {}),
     status: session.status,
     mustContinue: session.status === "active",
+    verificationProfile: session.verificationProfile,
+    postcondition: boundedPublicText(session.postcondition, MAX_PUBLIC_POSTCONDITION_BYTES),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     verified: session.verified,
@@ -380,6 +402,10 @@ function hydrateStoredSession(raw, workspace) {
       goal: raw.goal,
       cwd: raw.cwd,
       acceptanceCriteria: raw.acceptanceCriteria,
+      verificationProfile: ["code-change", "read-only-audit", "system-operation"].includes(raw.verificationProfile)
+        ? raw.verificationProfile
+        : undefined,
+      postcondition: raw.postcondition,
       maxSteps: raw.maxSteps,
       maxToolCalls: raw.maxToolCalls,
       maxDurationMs: raw.maxDurationMs,
@@ -397,6 +423,7 @@ function hydrateStoredSession(raw, workspace) {
       updatedAt: boundedStoredTimestamp(raw.updatedAt, now),
       steps: boundedStoredInteger(raw.steps, 0, config.maxSteps),
       toolCalls: boundedStoredInteger(raw.toolCalls, 0, config.maxToolCalls),
+      sideEffectActionCount: boundedStoredInteger(raw.sideEffectActionCount, 0, config.maxToolCalls),
       activeElapsedMs: boundedStoredInteger(raw.activeElapsedMs, 0, config.maxDurationMs),
       history: normalizeStoredHistory(raw.history),
       lastFeedback:
@@ -543,6 +570,7 @@ export function createGoalController({
       updatedAt: now,
       steps: 0,
       toolCalls: 0,
+      sideEffectActionCount: 0,
       activeElapsedMs: 0,
       history: [],
       lastFeedback: null,
@@ -556,6 +584,7 @@ export function createGoalController({
       type: "goal_started",
       goal: session.goal,
       cwd: session.cwd,
+      verificationProfile: session.verificationProfile,
       projectInstructionFiles: projectContext?.files?.map((entry) => entry.path) ?? [],
     });
     const persisted = persistSession(session);
@@ -567,6 +596,8 @@ export function createGoalController({
       goal: session.goal,
       cwd: session.cwd,
       acceptanceCriteria: session.acceptanceCriteria,
+      verificationProfile: session.verificationProfile,
+      postcondition: session.postcondition,
       projectContext,
       next: "Read and follow projectContext instructions when present. Use goal_step for all goal-related tool actions, then call goal_finish only when the goal and every acceptance criterion appear complete.",
       budget: budget(session),
@@ -621,6 +652,20 @@ export function createGoalController({
         };
       }
 
+      const actionProfile = classifyGoalAction({ tool, input: scopedInput });
+      if (session.verificationProfile === "read-only-audit" && actionProfile.sideEffecting) {
+        session.status = "active";
+        session.lastFeedback = `read-only-audit verification profile forbids side-effecting Goal action '${tool}'`;
+        addEvent(session, { type: "profile_action_blocked", tool, rule: actionProfile.rule });
+        return {
+          status: "continue_required",
+          mustContinue: true,
+          sessionId,
+          feedback: session.lastFeedback,
+          budget: budget(session),
+        };
+      }
+
       const actionHash = hash({ tool, input: scopedInput });
       const approvalRetry = session.status === "blocked_approval" && session.pendingApprovalHash === actionHash;
       if (approvalRetry) {
@@ -646,6 +691,7 @@ export function createGoalController({
         };
       }
 
+      if (actionProfile.sideEffecting && !approvalRetry) session.sideEffectActionCount += 1;
       session.toolCalls += 1;
       const started = Date.now();
       let result;

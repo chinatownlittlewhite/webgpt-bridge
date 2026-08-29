@@ -148,6 +148,50 @@ test("strict verification prevents unverifiable completion", async () => {
   assert.match(result.feedback, /strict verification/);
 });
 
+test("goal sessions expose the effective profile and read-only audit blocks side-effecting actions before invocation", async () => {
+  let mutationInvoked = 0;
+  const readFile = makeTool("read_file", objectSchema, async () => ({ status: "completed", text: "ok" }));
+  const applyPatch = makeTool("apply_patch", objectSchema, async () => {
+    mutationInvoked += 1;
+    return { status: "completed" };
+  });
+  const controller = createGoalController({ tools: [readFile, applyPatch], verificationTasks: [] });
+
+  const legacy = controller.start({ goal: "legacy profile stays compatible" });
+  assert.equal(legacy.verificationProfile, "legacy-code-project");
+  assert.equal(controller.status(legacy.sessionId).verificationProfile, "legacy-code-project");
+
+  const audit = controller.start({ goal: "inspect only", verificationProfile: "read-only-audit" });
+  assert.equal(audit.verificationProfile, "read-only-audit");
+  assert.equal(controller.status(audit.sessionId).verificationProfile, "read-only-audit");
+
+  const inspected = await controller.step({ sessionId: audit.sessionId, tool: "read_file", input: {} });
+  assert.equal(inspected.status, "continue_required");
+  assert.equal(inspected.budget.toolCallsUsed, 1);
+
+  const blocked = await controller.step({ sessionId: audit.sessionId, tool: "apply_patch", input: {} });
+  assert.equal(blocked.status, "continue_required");
+  assert.match(blocked.feedback, /read-only-audit/i);
+  assert.equal(mutationInvoked, 0);
+  assert.equal(blocked.budget.toolCallsUsed, 1);
+});
+
+test("system-operation alone may persist a bounded postcondition", () => {
+  const controller = createGoalController({ tools: [], verificationTasks: [] });
+  assert.throws(
+    () => controller.start({ goal: "wrong profile", verificationProfile: "code-change", postcondition: "operation health is ready" }),
+    /postcondition.*system-operation/i,
+  );
+  const started = controller.start({
+    goal: "perform a system operation",
+    verificationProfile: "system-operation",
+    postcondition: "operation health is ready",
+  });
+  const status = controller.status(started.sessionId);
+  assert.equal(started.postcondition, "operation health is ready");
+  assert.equal(status.postcondition, "operation health is ready");
+});
+
 test("goal status returns only bounded recent history", async () => {
   const noop = makeTool(
     "noop",
