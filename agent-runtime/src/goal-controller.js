@@ -114,7 +114,11 @@ function wrapTool(tool, store, state) {
     ...tool,
     async invoke(input, trustedContext) {
       const sessionId = trustedContext?.goalSessionId;
-      if (typeof sessionId !== "string" || sessionId.length === 0) {
+      if (
+        typeof sessionId !== "string" ||
+        sessionId.length === 0 ||
+        trustedContext?.goalMutationProtected === true
+      ) {
         return tool.invoke(input, trustedContext);
       }
       if (!persistMutationIntent(store, state, sessionId, tool.name, input)) {

@@ -936,6 +936,7 @@ export function createGoalController({
     const goalTrustedContext = Object.freeze({
       goalSessionId: session.id,
       goalCwd: session.cwd,
+      goalMutationProtected: true,
     });
     try {
       const listed = await processList.invoke({}, goalTrustedContext);

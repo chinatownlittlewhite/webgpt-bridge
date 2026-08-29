@@ -264,6 +264,48 @@ test("goal_pause reclaims running processes owned by that Goal and never targets
   assert.equal(controller.status(goalB.sessionId).status, "active");
 });
 
+test("persistent v2 goal_pause uses one outer protected mutation while reclaiming owned processes", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-goal-pause-v2-cleanup-"));
+  try {
+    const kills = [];
+    const processList = makeTool("process_list", emptyObjectSchema, async () => ({
+      processes: [{ processId: "owned-running", status: "running" }],
+    }));
+    const processKill = makeTool("process_kill", {
+      type: "object",
+      additionalProperties: false,
+      required: ["processId"],
+      properties: { processId: { type: "string", minLength: 1 }, force: { type: "boolean" } },
+    }, async (input) => {
+      kills.push(input.processId);
+      return { status: "kill_requested", processId: input.processId };
+    });
+    const store = createFileGoalSessionStore({ workspace });
+    const controller = createGoalController({
+      workspace,
+      tools: [processList, processKill],
+      sessionStore: store,
+      verificationTasks: [],
+    });
+    const started = controller.start({ goal: "Pause durably", cwd: "." });
+
+    const paused = await controller.pause({ sessionId: started.sessionId, reason: "acceptance restart boundary" });
+
+    assert.equal(paused.status, "paused");
+    assert.equal(paused.mustContinue, false);
+    assert.deepEqual(kills, ["owned-running"]);
+    const restored = createGoalController({
+      workspace,
+      tools: [processList, processKill],
+      sessionStore: createFileGoalSessionStore({ workspace }),
+      verificationTasks: [],
+    });
+    assert.equal(restored.status(started.sessionId).status, "paused");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("new controller still hydrates legacy v1-style sessions that have no pause metadata", () => {
   const store = createMemoryGoalSessionStore();
   const now = Date.now();
