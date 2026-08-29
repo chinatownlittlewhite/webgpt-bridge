@@ -5,6 +5,7 @@ release-patched/
 .local/
 .webgpt-bridge/
 .webgpt-handoff/
+.worktrees/
 Library/
 agent-runtime/node_modules/
 agent-runtime/dist/
