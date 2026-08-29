@@ -17,12 +17,12 @@ test("desktop ownership lock precedes primary runtime construction and startup w
   const setUserData = main.indexOf('app.setPath("userData", desktopRuntimeConfig.userDataPath)');
   const ownership = main.indexOf("establishSingleInstanceOwnership({");
   const whenReady = main.indexOf("app.whenReady().then");
-  const supervisor = main.indexOf("runtimeSupervisor = createRuntimeSupervisor({");
-  const hostStart = main.indexOf('ipcMain.handle("host:start"');
+  const supervisor = main.indexOf("runtimeSupervisor = createRuntimeSupervisor(runtimeHost)");
+  const ipcRegistration = main.indexOf("registerHostIpc({");
 
   assert.ok(setUserData >= 0, "development userData must be selected before ownership");
   assert.ok(ownership > setUserData, "single-instance ownership must be acquired after the selected userData profile");
   assert.ok(whenReady > ownership, "secondary instances must stop before primary ready initialization is registered");
   assert.ok(supervisor > whenReady, "runtime supervisor must only be constructed on the primary ready path");
-  assert.ok(hostStart > supervisor, "host start IPC must be wired only after primary runtime construction");
+  assert.ok(ipcRegistration > supervisor, "host IPC must be wired only after primary runtime construction");
 });
