@@ -80,6 +80,30 @@ test("a sequence gap requests one bounded resync while it is in flight and keeps
   assert.equal(current.lastSeq, 650);
 });
 
+test("an unsolicited reset snapshot wins over an older in-flight resync response", async () => {
+  const { createRendererLogState } = loadHelper();
+  const staleSnapshot = deferred();
+  const snapshots = [];
+  const state = createRendererLogState({
+    capacity: 600,
+    requestSnapshot: () => staleSnapshot.promise,
+    onSnapshot: (_entries, metadata) => snapshots.push(metadata.generation),
+    onAppend: () => {},
+  });
+
+  const bootstrap = state.bootstrap();
+  await Promise.resolve();
+  await state.handle({ kind: "snapshot", generation: "g2", lastSeq: 0, entries: [] });
+  staleSnapshot.resolve({ kind: "snapshot", generation: "g1", lastSeq: 1, entries: [entry(1)] });
+  await bootstrap;
+
+  const current = state.getState();
+  assert.equal(current.generation, "g2");
+  assert.equal(current.lastSeq, 0);
+  assert.deepEqual(current.entries, []);
+  assert.deepEqual(snapshots, ["g2"]);
+});
+
 test("renderer loads the recovery helper before renderer.js and updates logs incrementally", () => {
   const html = fs.readFileSync(path.join(ROOT, "src", "renderer", "index.html"), "utf8");
   const renderer = fs.readFileSync(path.join(ROOT, "src", "renderer", "renderer.js"), "utf8");
