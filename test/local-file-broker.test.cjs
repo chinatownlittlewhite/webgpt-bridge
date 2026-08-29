@@ -85,7 +85,8 @@ test("generic read and list require scoped Host capabilities outside the workspa
   assert.throws(() => broker.read({ path: desktopFile }), (error) => error?.code === "HOST_CAPABILITY_REQUIRED");
   assert.throws(() => broker.read({ path: outsideFile }), (error) => error?.code === "HOST_CAPABILITY_REQUIRED");
 
-  const desktopGrant = capabilityStore.issue({ root: desktop, operations: ["read"], ttlMs: 60_000, maxUses: 4, className: "known-folder-read" });
+  const desktopRoot = classifyLocalPath(desktop, { ...policyOptions, operation: "read" }).path;
+  const desktopGrant = capabilityStore.issue({ root: desktopRoot, operations: ["read"], ttlMs: 60_000, maxUses: 4, className: "known-folder-read" });
   assert.equal(broker.read({ path: desktopFile, accessId: desktopGrant.accessId }).text, "desktop\n");
   assert.throws(() => broker.read({ path: documentsFile, accessId: desktopGrant.accessId }), (error) => error?.code === "HOST_CAPABILITY_SCOPE_MISMATCH");
   assert.throws(() => broker.list({ path: desktop, accessId: desktopGrant.accessId }), (error) => error?.code === "HOST_CAPABILITY_SCOPE_MISMATCH");
@@ -122,7 +123,7 @@ test("Host and sensitive authorization issue only scoped read or list capabiliti
   });
 
   const hostGrant = await broker.requestHostAccess({ path: outsideFile, operation: "read" });
-  assert.equal(hostGrant.path, outsideFile);
+  assert.equal(hostGrant.path, fs.realpathSync(outsideFile));
   assert.equal(broker.read({ path: outsideFile, accessId: hostGrant.accessId }).text, "host\n");
   assert.equal(prompts[0].kind, "host-path-access");
   await assert.rejects(broker.requestHostAccess({ path: desktop, operation: "list" }), /known-folder|desktop|专用/i);

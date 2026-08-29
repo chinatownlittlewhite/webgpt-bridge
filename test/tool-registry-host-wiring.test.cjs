@@ -16,11 +16,11 @@ test("canonical broker registry keeps internal approval separate from public bro
 });
 
 test("desktop broker resolves canonical method metadata before fixed implementation dispatch", () => {
-  const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
-  assert.match(main, /shared\/tool-registry\.cjs/);
-  assert.match(main, /getBrokerMethodMetadata\(method\)/);
-  assert.match(main, /implementationKey/);
-  assert.doesNotMatch(main, /Object\.hasOwn\(handlers,\s*method\)/);
+  const broker = fs.readFileSync(path.join(__dirname, "..", "src", "host", "broker-server.cjs"), "utf8");
+  assert.match(broker, /shared\/tool-registry\.cjs/);
+  assert.match(broker, /getBrokerMethodMetadata\(method\)/);
+  assert.match(broker, /implementationKey/);
+  assert.doesNotMatch(broker, /Object\.hasOwn\(handlers,\s*method\)/);
   for (const implementationKey of [
     "file.list",
     "file.read",
@@ -34,6 +34,6 @@ test("desktop broker resolves canonical method metadata before fixed implementat
     "command.run",
     "command.approve",
   ]) {
-    assert.ok(main.includes(`"${implementationKey}"`) || main.includes(`'${implementationKey}'`), implementationKey);
+    assert.ok(broker.includes(`"${implementationKey}"`) || broker.includes(`'${implementationKey}'`), implementationKey);
   }
 });

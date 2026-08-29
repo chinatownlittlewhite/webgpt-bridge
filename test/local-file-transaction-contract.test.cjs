@@ -20,9 +20,9 @@ test("local file broker uses durable transaction manager and has no legacy in-me
 });
 
 test("Desktop owns the transaction registry path under fixed userData state", () => {
-  const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
-  assert.match(main, /transactionRegistryPath:\s*path\.join\(app\.getPath\("userData"\),\s*"local-file-transactions\.json"\)/);
-  assert.doesNotMatch(main, /settings\.transactionRegistryPath/);
+  const broker = fs.readFileSync(path.join(__dirname, "..", "src", "host", "broker-server.cjs"), "utf8");
+  assert.match(broker, /transactionRegistryPath:\s*path\.join\(app\.getPath\("userData"\),\s*"local-file-transactions\.json"\)/);
+  assert.doesNotMatch(broker, /settings\.transactionRegistryPath/);
 });
 
 test("transaction manager freezes exactly the four durable recovery states", () => {
