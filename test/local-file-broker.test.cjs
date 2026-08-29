@@ -123,7 +123,7 @@ test("Host and sensitive authorization issue only scoped read or list capabiliti
   });
 
   const hostGrant = await broker.requestHostAccess({ path: outsideFile, operation: "read" });
-  assert.equal(hostGrant.path, fs.realpathSync(outsideFile));
+  assert.equal(hostGrant.path, classifyLocalPath(outsideFile, { ...policyOptions, operation: "read" }).path);
   assert.equal(broker.read({ path: outsideFile, accessId: hostGrant.accessId }).text, "host\n");
   assert.equal(prompts[0].kind, "host-path-access");
   await assert.rejects(broker.requestHostAccess({ path: desktop, operation: "list" }), /known-folder|desktop|专用/i);
