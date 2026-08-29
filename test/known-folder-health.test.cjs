@@ -17,18 +17,21 @@ test("known-folder access is limited to desktop/downloads/documents, relative pa
     read: (input) => { calls.push(["read", input]); return input; },
   };
   const authorizations = [];
+  let accessIndex = 0;
   const access = createKnownFolderAccess({
     roots: { desktop: "/Users/test/Desktop", downloads: "/Users/test/Downloads", documents: "/Users/test/Documents" },
     fileBroker,
-    authorize: async (request) => { authorizations.push(request); return true; },
+    issueCapability: async (request) => { authorizations.push(request); return { accessId: `known-${++accessIndex}` }; },
   });
 
   await access.list({ folder: "desktop", relativePath: "project", depth: 2 });
   await access.read({ folder: "documents", relativePath: "notes/todo.txt", startLine: 3, maxLines: 20 });
   assert.equal(calls[0][1].path, path.join("/Users/test/Desktop", "project"));
   assert.equal(calls[0][1].depth, 2);
+  assert.equal(calls[0][1].accessId, "known-1");
   assert.equal(calls[1][1].path, path.join("/Users/test/Documents", "notes", "todo.txt"));
   assert.equal(calls[1][1].startLine, 3);
+  assert.equal(calls[1][1].accessId, "known-2");
   assert.deepEqual(authorizations.map(({ folder, operation }) => ({ folder, operation })), [
     { folder: "desktop", operation: "list" },
     { folder: "documents", operation: "read" },
@@ -40,7 +43,7 @@ test("known-folder access is limited to desktop/downloads/documents, relative pa
   const denied = createKnownFolderAccess({
     roots: { desktop: "/Users/test/Desktop", downloads: "/Users/test/Downloads", documents: "/Users/test/Documents" },
     fileBroker,
-    authorize: async () => false,
+    issueCapability: async () => { throw new Error("known-folder 访问未获得用户授权。"); },
   });
   await assert.rejects(denied.read({ folder: "desktop", relativePath: "personal.txt" }), /授权|authorize|denied/i);
   assert.equal(calls.length, 2, "denied known-folder access must not reach the file broker");

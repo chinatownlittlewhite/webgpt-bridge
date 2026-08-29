@@ -31,7 +31,7 @@ test("rejects sensitive paths and aliases while allowing ordinary development fi
   fs.writeFileSync(path.join(workspace, ".env"), "TOKEN=secret\n");
   fs.symlinkSync(ssh, path.join(workspace, "ssh-alias"));
 
-  const options = { homeDir: home, appDataRoots: [appData], sensitiveRoots: [browser] };
+  const options = { homeDir: home, workspaceRoot: workspace, appDataRoots: [appData], sensitiveRoots: [browser] };
   assert.equal(classifyLocalPath(path.join(workspace, "index.js"), { operation: "read", ...options }).decision, "allow");
   assert.equal(classifyLocalPath(path.join(workspace, ".env"), { operation: "read", ...options }).decision, "deny");
   assert.equal(classifyLocalPath(path.join(ssh, "id_ed25519"), { operation: "read", ...options }).decision, "deny");
@@ -39,6 +39,39 @@ test("rejects sensitive paths and aliases while allowing ordinary development fi
   assert.equal(classifyLocalPath(path.join(appData, "settings.json"), { operation: "read", ...options }).decision, "deny");
   assert.equal(classifyLocalPath(path.join(workspace, "ssh-alias", "id_ed25519"), { operation: "read", ...options }).decision, "deny");
   assert.equal(classifyLocalPath(path.join(root, "System", "config"), { operation: "write", ...options, systemRoots: [path.join(root, "System")] }).decision, "deny");
+});
+
+test("classifies workspace known-folder ordinary-host sensitive and system scopes", (t) => {
+  const { classifyLocalPath } = api();
+  const { root, home, workspace } = makeFixture(t);
+  const desktop = path.join(home, "Desktop");
+  const documents = path.join(home, "Documents");
+  const downloads = path.join(home, "Downloads");
+  const outside = path.join(home, "Projects", "other");
+  const system = path.join(root, "System");
+  const ssh = path.join(home, ".ssh");
+  for (const directory of [desktop, documents, downloads, outside, system, ssh]) fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(workspace, "a.js"), "ok\n");
+  fs.writeFileSync(path.join(desktop, "notes.txt"), "desktop\n");
+  fs.writeFileSync(path.join(outside, "README.md"), "host\n");
+
+  const options = {
+    homeDir: home,
+    workspaceRoot: workspace,
+    knownFolderRoots: { desktop, documents, downloads },
+    systemRoots: [system],
+  };
+  assert.deepEqual(
+    [
+      classifyLocalPath(path.join(workspace, "a.js"), { ...options, operation: "read" }),
+      classifyLocalPath(path.join(desktop, "notes.txt"), { ...options, operation: "read" }),
+      classifyLocalPath(path.join(outside, "README.md"), { ...options, operation: "read" }),
+      classifyLocalPath(path.join(ssh, "config"), { ...options, operation: "read" }),
+      classifyLocalPath(path.join(system, "config"), { ...options, operation: "read" }),
+    ].map(({ decision, scope }) => [decision, scope]),
+    [["allow", "workspace"], ["confirm", "known-folder"], ["confirm", "ordinary-host"], ["deny", "sensitive"], ["deny", "system"]],
+  );
+  assert.equal(classifyLocalPath(path.join(outside, "README.md"), { ...options, operation: "terminal" }).decision, "allow");
 });
 
 test("allows safe reads but protects changes according to the persisted approval mode", () => {
@@ -75,7 +108,7 @@ test("full control preserves sensitive and system path boundaries", (t) => {
   fs.mkdirSync(ssh, { recursive: true });
   fs.mkdirSync(system, { recursive: true });
   fs.writeFileSync(path.join(workspace, "safe.txt"), "ok\n");
-  assert.equal(classifyLocalPath(path.join(workspace, "safe.txt"), { homeDir: home, approvalMode: "full_control" }).decision, "allow");
+  assert.equal(classifyLocalPath(path.join(workspace, "safe.txt"), { homeDir: home, workspaceRoot: workspace, approvalMode: "full_control" }).decision, "allow");
   assert.equal(classifyLocalPath(path.join(ssh, "config"), { homeDir: home, approvalMode: "full_control" }).decision, "deny");
   assert.equal(classifyLocalPath(path.join(system, "config"), { homeDir: home, systemRoots: [system], approvalMode: "full_control" }).decision, "deny");
 });

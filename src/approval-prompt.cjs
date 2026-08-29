@@ -148,6 +148,15 @@ function knownFolderPresentation(request) {
   };
 }
 
+function hostPathPresentation(request) {
+  const operation = request.operation === "list" ? "list" : "read";
+  return {
+    message: "允许访问工作区外的本机文件？",
+    detail: `权限：${operation === "list" ? "查看目录" : "读取文件"}\n范围：${String(request.path || "工作区外路径")}`,
+    rememberKey: request.permissionClass || `host-path:${operation}:${String(request.path || "unknown")}`,
+  };
+}
+
 function sensitivePresentation(request) {
   const sensitiveRoot = shortSensitivePath(request.path).split("/")[0] || "sensitive";
   return {
@@ -161,6 +170,7 @@ function approvalPrompt(request, approvalMode = "cautious") {
   if (request?.kind === "terminal-command") return terminalPresentation(request, approvalMode);
   if (request?.kind === "local-file-batch") return fileBatchPresentation(request, approvalMode);
   if (request?.kind === "known-folder-access") return knownFolderPresentation(request);
+  if (request?.kind === "host-path-access") return hostPathPresentation(request);
   return sensitivePresentation(request || {});
 }
 

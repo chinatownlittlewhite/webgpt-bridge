@@ -12,10 +12,10 @@ function normalizeRelativePath(value = "") {
   return segments.filter((segment) => segment && segment !== ".").join(path.sep);
 }
 
-function createKnownFolderAccess({ roots, fileBroker, authorize } = {}) {
+function createKnownFolderAccess({ roots, fileBroker, issueCapability } = {}) {
   if (!roots || typeof roots !== "object" || Array.isArray(roots)) throw new TypeError("known-folder roots 必须是对象。");
   if (!fileBroker || typeof fileBroker.list !== "function" || typeof fileBroker.read !== "function") throw new TypeError("known-folder access 需要本机文件 broker。");
-  if (typeof authorize !== "function") throw new TypeError("known-folder access 需要显式授权回调。");
+  if (typeof issueCapability !== "function") throw new TypeError("known-folder access 需要 capability 授权回调。");
   const normalizedRoots = {};
   for (const folder of ALLOWED_FOLDERS) {
     const root = roots[folder];
@@ -31,14 +31,16 @@ function createKnownFolderAccess({ roots, fileBroker, authorize } = {}) {
 
   async function list({ folder, relativePath = "", depth = 1, includeHidden = false } = {}) {
     const target = resolveTarget(folder, relativePath);
-    if (await authorize({ folder, operation: "list", path: target }) !== true) throw new Error("known-folder 访问未获得用户授权。");
-    return fileBroker.list({ path: target, depth, includeHidden });
+    const grant = await issueCapability({ folder, operation: "list", path: target });
+    if (!grant || typeof grant.accessId !== "string" || !grant.accessId) throw new Error("known-folder 访问未获得有效 capability。");
+    return fileBroker.list({ path: target, depth, includeHidden, accessId: grant.accessId });
   }
 
   async function read({ folder, relativePath = "", startLine = 1, maxLines = 200 } = {}) {
     const target = resolveTarget(folder, relativePath);
-    if (await authorize({ folder, operation: "read", path: target }) !== true) throw new Error("known-folder 访问未获得用户授权。");
-    return fileBroker.read({ path: target, startLine, maxLines });
+    const grant = await issueCapability({ folder, operation: "read", path: target });
+    if (!grant || typeof grant.accessId !== "string" || !grant.accessId) throw new Error("known-folder 访问未获得有效 capability。");
+    return fileBroker.read({ path: target, startLine, maxLines, accessId: grant.accessId });
   }
 
   return Object.freeze({ list, read });

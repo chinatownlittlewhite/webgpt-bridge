@@ -10,6 +10,10 @@ test("desktop broker wires known-folder and fixed health methods and clears help
   assert.match(main, /local_list_known_folder/);
   assert.match(main, /local_read_known_folder/);
   assert.match(main, /local_probe_health/);
+  assert.match(main, /local_request_host_access/);
+  assert.match(main, /createHostCapabilityStore/);
+  assert.match(main, /issueCapability/);
+  assert.match(main, /localCapabilityStore\?\.clear\(\)/);
   assert.match(main, /localKnownFolderAccess\s*=\s*undefined/);
   assert.match(main, /localHealthProbe\s*=\s*undefined/);
 });

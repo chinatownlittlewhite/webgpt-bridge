@@ -70,24 +70,51 @@ function classifyLocalPath(inputPath, options = {}) {
   const platform = options.platform || process.platform;
   const homeDir = options.homeDir || os.homedir();
   const fsImpl = options.fsImpl || fs;
+  const operation = options.operation;
+  const protectedRead = operation === undefined || operation === "read" || operation === "list";
   const target = canonicalPath(inputPath, fsImpl);
   const sensitiveRoots = [
     ...defaultSensitiveRoots(homeDir, platform),
     ...(options.appDataRoots || []),
     ...(options.sensitiveRoots || []),
-  ].map((entry) => canonicalPath(entry, fsImpl));
-  const systemRoots = (options.systemRoots || defaultSystemRoots(platform)).map((entry) => canonicalPath(entry, fsImpl));
+  ].filter((entry) => typeof entry === "string" && entry).map((entry) => canonicalPath(entry, fsImpl));
+  const systemRoots = (options.systemRoots || defaultSystemRoots(platform))
+    .filter((entry) => typeof entry === "string" && entry)
+    .map((entry) => canonicalPath(entry, fsImpl));
+  const knownFolderRoots = (Array.isArray(options.knownFolderRoots)
+    ? options.knownFolderRoots
+    : Object.values(options.knownFolderRoots || {}))
+    .filter((entry) => typeof entry === "string" && entry)
+    .map((entry) => canonicalPath(entry, fsImpl));
+  const workspaceRoot = typeof options.workspaceRoot === "string" && options.workspaceRoot
+    ? canonicalPath(options.workspaceRoot, fsImpl)
+    : "";
 
-  if (sensitiveRoots.some((root) => isWithin(target, root))) {
-    return { decision: "deny", reason: "该路径属于默认排除的敏感位置。", sensitive: true, path: target };
-  }
   if (systemRoots.some((root) => isWithin(target, root))) {
-    return { decision: "deny", reason: "系统路径不允许由本机代理访问。", sensitive: true, path: target };
+    return { decision: "deny", reason: "系统路径不允许由本机代理访问。", sensitive: true, path: target, scope: "system" };
   }
-  if (SENSITIVE_FILE_NAMES.has(path.basename(target).toLowerCase())) {
-    return { decision: "deny", reason: "该文件名通常包含凭据或密钥。", sensitive: true, path: target };
+  if (sensitiveRoots.some((root) => isWithin(target, root)) || SENSITIVE_FILE_NAMES.has(path.basename(target).toLowerCase())) {
+    return { decision: "deny", reason: "该路径属于默认排除的敏感位置。", sensitive: true, path: target, scope: "sensitive" };
   }
-  return { decision: "allow", reason: "普通本机路径。", sensitive: false, path: target };
+  if (workspaceRoot && isWithin(target, workspaceRoot)) {
+    return { decision: "allow", reason: "当前工作区路径。", sensitive: false, path: target, scope: "workspace" };
+  }
+  if (knownFolderRoots.some((root) => isWithin(target, root))) {
+    return {
+      decision: protectedRead ? "confirm" : "allow",
+      reason: protectedRead ? "固定用户目录需要显式授权。" : "普通本机路径。",
+      sensitive: false,
+      path: target,
+      scope: "known-folder",
+    };
+  }
+  return {
+    decision: protectedRead ? "confirm" : "allow",
+    reason: protectedRead ? "工作区外的本机路径需要授权。" : "普通本机路径。",
+    sensitive: false,
+    path: target,
+    scope: "ordinary-host",
+  };
 }
 
 function classifyLocalAction({ kind, approvalMode, sensitive = false, network = false, withinWorkspace = false } = {}) {

@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, shell, Tray } = require("electron");
 const { spawn, spawnSync } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const http = require("node:http");
@@ -13,6 +14,7 @@ const { approvalPrompt } = require("./approval-prompt.cjs");
 const { createApprovalSession } = require("./approval-session.cjs");
 const { classifyHostCommandApproval, classifyLocalAction, classifyLocalPath, normalizeApprovalMode } = require("./local-policy.cjs");
 const { createLocalFileBroker } = require("./local-file-broker.cjs");
+const { createHostCapabilityStore } = require("./host-capability-store.cjs");
 const { createKnownFolderAccess } = require("./known-folder-access.cjs");
 const { createLoopbackHealthProbe, defaultTcpProbe } = require("./loopback-health-probe.cjs");
 const { createLocalTerminalBroker } = require("./local-terminal-broker.cjs");
@@ -54,6 +56,7 @@ let tunnelProcess;
 let localBrokerServer;
 let localBrokerSocket = "";
 let localFileBroker;
+let localCapabilityStore;
 let localKnownFolderAccess;
 let localHealthProbe;
 let localTerminalBroker;
@@ -308,7 +311,7 @@ async function confirmHostCommandApproval(params) {
 }
 
 async function confirmLocalOperation(request) {
-  const explicitConsent = request?.kind === "sensitive-access" || request?.kind === "known-folder-access";
+  const explicitConsent = request?.kind === "sensitive-access" || request?.kind === "known-folder-access" || request?.kind === "host-path-access";
   if (!explicitConsent && localApprovalMode === "full_control") {
     appendLog("local-broker", "完全控制模式：自动批准本机权限请求");
     return true;
@@ -346,6 +349,8 @@ async function stopLocalBroker() {
   const socketPath = localBrokerSocket;
   localBrokerServer = undefined;
   localBrokerSocket = "";
+  localCapabilityStore?.clear();
+  localCapabilityStore = undefined;
   localFileBroker = undefined;
   localKnownFolderAccess = undefined;
   localHealthProbe = undefined;
@@ -362,6 +367,7 @@ function localBrokerDispatch(method, params, executionContext = {}) {
     local_read_known_folder: () => localKnownFolderAccess.read(params),
     local_probe_health: () => localHealthProbe.probe(params),
     local_request_sensitive_access: () => localFileBroker.requestSensitiveAccess(params),
+    local_request_host_access: () => localFileBroker.requestHostAccess(params),
     local_stage_changes: () => localFileBroker.stage(params),
     local_confirm_batch: () => localFileBroker.confirmBatch(params),
     local_run_command: () => localTerminalBroker.run(params, executionContext),
@@ -410,19 +416,48 @@ function attachLocalBrokerConnection(socket) {
 async function startLocalBroker(settings, runtime, { githubCliPath = "", proxyEnv = {} } = {}) {
   await stopLocalBroker();
   localApprovalMode = normalizeApprovalMode(settings.approvalMode);
-  const policyOptions = { appDataRoots: [app.getPath("userData")] };
+  const knownFolderRoots = {
+    desktop: app.getPath("desktop"),
+    downloads: app.getPath("downloads"),
+    documents: app.getPath("documents"),
+  };
+  const policyOptions = {
+    appDataRoots: [app.getPath("userData")],
+    workspaceRoot: settings.workspacePath,
+    knownFolderRoots,
+  };
   const pathPolicy = (target, options) => classifyLocalPath(target, { ...policyOptions, ...options, approvalMode: settings.approvalMode });
   const actionPolicy = (action) => classifyLocalAction({ ...action, approvalMode: settings.approvalMode });
   const policyModule = await import(pathToFileURL(path.join(runtime.runtimePath, "dist", "policy.js")).href);
-  localFileBroker = createLocalFileBroker({ workspaceRoot: settings.workspacePath, policy: pathPolicy, actionPolicy, confirm: confirmLocalOperation, audit: (entry) => appendLog("local-broker", `${entry.action}：${entry.result}`) });
+  localCapabilityStore = createHostCapabilityStore({ generation: crypto.randomUUID(), policyVersion: "v0.5-phase1" });
+  localFileBroker = createLocalFileBroker({
+    workspaceRoot: settings.workspacePath,
+    capabilityStore: localCapabilityStore,
+    policy: pathPolicy,
+    actionPolicy,
+    confirm: confirmLocalOperation,
+    audit: (entry) => appendLog("local-broker", `${entry.action}：${entry.result}`),
+  });
   localKnownFolderAccess = createKnownFolderAccess({
-    roots: {
-      desktop: app.getPath("desktop"),
-      downloads: app.getPath("downloads"),
-      documents: app.getPath("documents"),
-    },
+    roots: knownFolderRoots,
     fileBroker: localFileBroker,
-    authorize: (request) => confirmLocalOperation({ kind: "known-folder-access", ...request }),
+    issueCapability: async (request) => {
+      const classified = pathPolicy(request.path, { operation: request.operation });
+      if (classified.scope === "system" || classified.scope === "sensitive") {
+        throw new Error(classified.reason || "该 known-folder 目标不能通过普通目录授权访问。");
+      }
+      if (!await confirmLocalOperation({ kind: "known-folder-access", ...request })) {
+        throw new Error("known-folder 访问未获得用户授权。");
+      }
+      const grant = localCapabilityStore.issue({
+        root: classified.path || request.path,
+        operations: [request.operation],
+        ttlMs: 5 * 60_000,
+        maxUses: 100,
+        className: `known-folder-${request.operation}`,
+      });
+      return { accessId: grant.accessId };
+    },
   });
   localHealthProbe = createLoopbackHealthProbe({
     targets: {

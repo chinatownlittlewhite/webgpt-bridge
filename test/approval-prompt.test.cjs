@@ -90,6 +90,19 @@ test("host-provided permission classes override command-derived memory keys", ()
   assert.equal(prompt.rememberKey, "host:sandbox-expansion:read:/outside");
 });
 
+test("ordinary Host path access has a distinct connection-scoped permission prompt", () => {
+  const { approvalPrompt } = api();
+  const prompt = approvalPrompt({
+    kind: "host-path-access",
+    path: "/Users/test/Projects/other",
+    operation: "read",
+    permissionClass: "host-path:read:/Users/test/Projects/other",
+  }, "development");
+  assert.match(prompt.message, /本机文件|Host|工作区外/i);
+  assert.match(prompt.detail, /读取|read/i);
+  assert.equal(prompt.rememberKey, "host-path:read:/Users/test/Projects/other");
+});
+
 test("sensitive access is concise and remembered by sensitive root", () => {
   const { approvalPrompt } = api();
   const prompt = approvalPrompt({ kind: "sensitive-access", operation: "read", path: "/Users/me/.ssh/config" }, "auto");

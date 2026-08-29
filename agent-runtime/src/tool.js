@@ -772,7 +772,7 @@ const V09_TOOLS = Object.freeze([
 ]);
 const LOCAL_BROKER_TOOL_NAMES = Object.freeze([
   "local_list", "local_read", "local_list_known_folder", "local_read_known_folder", "local_probe_health",
-  "local_request_sensitive_access", "local_stage_changes", "local_confirm_batch", "local_run_command",
+  "local_request_sensitive_access", "local_request_host_access", "local_stage_changes", "local_confirm_batch", "local_run_command",
 ]);
 
 function runtimeToolNames(localBrokerSocket) {

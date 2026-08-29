@@ -8,6 +8,7 @@ import {
   localConfirmBatchInputSchema,
   localListInputSchema,
   localReadInputSchema,
+  localRequestHostAccessInputSchema,
   localRunCommandInputSchema,
   localStageChangesInputSchema,
   createHostApprovalClient,
@@ -27,19 +28,21 @@ const LOCAL_TOOL_NAMES = [
   "local_list",
   "local_read",
   "local_request_sensitive_access",
+  "local_request_host_access",
   "local_stage_changes",
   "local_confirm_batch",
   "local_run_command",
 ];
 
 test("local broker schemas reject tokens, arbitrary repository controls, shells, sudo, and approval bypasses", () => {
-  for (const schema of [localListInputSchema, localReadInputSchema, localStageChangesInputSchema, localConfirmBatchInputSchema, localRunCommandInputSchema]) {
+  for (const schema of [localListInputSchema, localReadInputSchema, localRequestHostAccessInputSchema, localStageChangesInputSchema, localConfirmBatchInputSchema, localRunCommandInputSchema]) {
     assert.equal(schema.additionalProperties, false);
     for (const forbidden of ["token", "repository", "shell", "sudo", "approvalGranted", "requestApproval", "skipConfirmation"]) {
       assert.equal(Object.hasOwn(schema.properties, forbidden), false);
     }
   }
   assert.throws(() => validateJsonSchema({ path: "/tmp", token: "secret" }, localListInputSchema), /unexpected property token/);
+  assert.throws(() => validateJsonSchema({ path: "/tmp/x", operation: "read", ttlMs: 999999 }, localRequestHostAccessInputSchema), /unexpected property ttlMs/);
   assert.throws(() => validateJsonSchema({ argv: ["sudo", "true"], cwd: "/tmp" }, localRunCommandInputSchema), /does not match|required/);
   assert.throws(() => validateJsonSchema({ argv: ["sh", "-c", "echo unsafe"], cwd: "/tmp" }, localRunCommandInputSchema), /does not match|required/);
   assert.throws(() => validateJsonSchema({ argv: ["npm", "test"], cwd: "/tmp", shell: "npm test" }, localRunCommandInputSchema), /unexpected property shell/);
@@ -69,6 +72,7 @@ test("interactive local broker tools allow a human-scale response window", () =>
   assert.equal(tools.get("local_read").timeoutMs, 20_000);
   assert.equal(tools.get("local_stage_changes").timeoutMs, 20_000);
   assert.equal(tools.get("local_request_sensitive_access").timeoutMs, 5 * 60_000);
+  assert.equal(tools.get("local_request_host_access").timeoutMs, 5 * 60_000);
   assert.equal(tools.get("local_confirm_batch").timeoutMs, 5 * 60_000);
   assert.equal(tools.get("local_run_command").timeoutMs, 5 * 60_000);
 });

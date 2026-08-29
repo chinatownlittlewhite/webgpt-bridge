@@ -51,6 +51,11 @@ export const localRequestSensitiveAccessInputSchema = Object.freeze({
   properties: { path: pathSchema, operation: { type: "string", enum: ["list", "read"] } },
 });
 
+export const localRequestHostAccessInputSchema = Object.freeze({
+  type: "object", additionalProperties: false, required: ["path", "operation"],
+  properties: { path: pathSchema, operation: { type: "string", enum: ["list", "read"] } },
+});
+
 export const localStageChangesInputSchema = Object.freeze({
   type: "object", additionalProperties: false, required: ["changes"],
   properties: {
@@ -159,6 +164,7 @@ export function createLocalBrokerTools({ socketPath } = {}) {
     tool("local_read_known_folder", "Read desktop, downloads, or documents through a fixed known-folder root and relative path.", localReadKnownFolderInputSchema, client),
     tool("local_probe_health", "Probe only the fixed agent, tunnel, or github health targets through the App-owned broker.", localProbeHealthInputSchema, client),
     tool("local_request_sensitive_access", "Ask the desktop App for one-time native approval to list or read one sensitive path.", localRequestSensitiveAccessInputSchema, interactiveClient),
+    tool("local_request_host_access", "Ask the desktop App for explicit access to one ordinary Host path outside the workspace. Known folders and sensitive paths keep their dedicated authorization flows.", localRequestHostAccessInputSchema, interactiveClient),
     tool("local_stage_changes", "Stage 1–20 SHA-bound non-sensitive file changes; this does not write files.", localStageChangesInputSchema, client),
     tool("local_confirm_batch", "Commit a previously staged local change batch. The App revalidates all SHA values and requests confirmation when required.", localConfirmBatchInputSchema, interactiveClient),
     tool("local_run_command", "Run an argv-only command only when App-owned host integration is required. Prefer the sandboxed run_command tool for ordinary project execution. Shells and privilege escalation are unavailable.", localRunCommandInputSchema, interactiveClient),

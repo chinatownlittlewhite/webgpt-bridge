@@ -27,9 +27,8 @@ function summarize(change) {
   };
 }
 
-function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = classifyLocalAction, confirm = async () => false, audit = () => {}, fsImpl = fs, workspaceRoot = "" } = {}) {
+function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = classifyLocalAction, confirm = async () => false, audit = () => {}, fsImpl = fs, workspaceRoot = "", capabilityStore } = {}) {
   const batches = new Map();
-  const sensitiveGrants = new Map();
   let workspace = "";
   if (typeof workspaceRoot === "string" && workspaceRoot) {
     workspace = canonicalPath(workspaceRoot, fsImpl);
@@ -50,15 +49,38 @@ function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = clas
     try { audit(entry); } catch { /* auditing must never change an authorization decision */ }
   }
 
+  function codedPolicyError(result) {
+    return Object.assign(new Error(result?.reason || "该路径不允许由本机文件代理访问。"), { code: result?.code || "LOCAL_PATH_DENIED" });
+  }
+
+  function requireCapability(accessId, target, operation) {
+    if (!capabilityStore || typeof capabilityStore.authorize !== "function") {
+      throw Object.assign(new Error("Host capability is required"), { code: "HOST_CAPABILITY_REQUIRED" });
+    }
+    return capabilityStore.authorize({ accessId, path: target, operation });
+  }
+
+  function pathScope(result) {
+    if (typeof result?.scope === "string") return result.scope;
+    return result?.sensitive ? "sensitive" : "";
+  }
+
   function authorize(inputPath, operation, accessId) {
     const result = policy(inputPath, { operation });
-    if (result.decision === "allow") return result.path || path.resolve(inputPath);
-    const grant = sensitiveGrants.get(accessId);
-    if (result.sensitive && grant && grant.operation === operation && grant.path === (result.path || path.resolve(inputPath))) {
-      sensitiveGrants.delete(accessId);
-      return grant.path;
+    const target = result.path || path.resolve(inputPath);
+    const scope = pathScope(result);
+    const protectedRead = operation === "read" || operation === "list";
+    if (scope === "system") throw codedPolicyError(result);
+    if (scope === "sensitive") {
+      if (!protectedRead) throw codedPolicyError(result);
+      return requireCapability(accessId, target, operation);
     }
-    throw new Error(result.reason || "该路径不允许由本机文件代理访问。");
+    if (protectedRead && (scope === "known-folder" || scope === "ordinary-host")) {
+      return requireCapability(accessId, target, operation);
+    }
+    if (result.decision === "allow") return target;
+    if (!protectedRead && (scope === "known-folder" || scope === "ordinary-host")) return target;
+    throw codedPolicyError(result);
   }
 
   function requireFile(target) {
@@ -97,7 +119,9 @@ function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = clas
         if (!includeHidden && entry.name.startsWith(".")) continue;
         if (entries.length >= MAX_LIST_ENTRIES) return;
         const entryPath = path.join(directory, entry.name);
-        if (policy(entryPath, { operation: "list" }).decision !== "allow") continue;
+        const entryPolicy = policy(entryPath, { operation: "list" });
+        const entryScope = pathScope(entryPolicy);
+        if (entryPolicy.decision === "deny" || entryScope === "system" || entryScope === "sensitive") continue;
         const type = entry.isSymbolicLink() ? "symlink" : entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other";
         entries.push({ name: entry.name, path: entryPath, type });
         if (type === "directory" && remaining > 1) visit(entryPath, remaining - 1);
@@ -127,17 +151,53 @@ function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = clas
   async function requestSensitiveAccess({ path: inputPath, operation } = {}) {
     if (operation !== "list" && operation !== "read") throw new Error("敏感访问只支持单次列目录或读取文件。");
     const result = policy(inputPath, { operation });
-    if (!result.sensitive) throw new Error("该路径不属于需要单次确认的敏感位置。");
+    const scope = pathScope(result);
+    if (scope === "system") throw codedPolicyError(result);
+    if (scope !== "sensitive") throw new Error("该路径不属于需要单次确认的敏感位置。");
     const target = result.path || path.resolve(inputPath);
+    if (operation === "read") requireFile(target);
+    else if (!fsImpl.statSync(target, { throwIfNoEntry: false })?.isDirectory()) throw new Error("列出目录需要一个存在的目录路径。");
     const approved = await confirm({ kind: "sensitive-access", path: target, operation });
     if (!approved) {
-      record({ action: "sensitive-access", result: "cancelled", path: target });
+      record({ action: "sensitive-access", result: "cancelled", path: target, operation });
       throw new Error("用户取消了敏感路径访问请求。");
     }
-    const accessId = crypto.randomUUID();
-    sensitiveGrants.set(accessId, { path: target, operation });
-    record({ action: "sensitive-access", result: "approved", path: target });
-    return { accessId, path: target, operation };
+    if (!capabilityStore || typeof capabilityStore.issue !== "function") {
+      throw Object.assign(new Error("Host capability store is not configured"), { code: "HOST_CAPABILITY_REQUIRED" });
+    }
+    const grant = capabilityStore.issue({ root: target, operations: [operation], ttlMs: 60_000, maxUses: 1, className: `sensitive-${operation}` });
+    record({ action: "sensitive-access", result: "approved", path: target, operation });
+    return { accessId: grant.accessId, path: target, operation };
+  }
+
+  async function requestHostAccess({ path: inputPath, operation } = {}) {
+    if (operation !== "list" && operation !== "read") throw new Error("Host access only supports list/read");
+    const result = policy(inputPath, { operation });
+    const scope = pathScope(result);
+    const target = result.path || path.resolve(inputPath);
+    if (scope === "workspace") throw new Error("workspace access does not require a Host capability");
+    if (scope === "system") throw codedPolicyError(result);
+    if (scope === "sensitive") throw new Error("use local_request_sensitive_access for sensitive paths");
+    if (scope === "known-folder") throw new Error("known-folder paths must use the dedicated known-folder tools");
+    if (scope !== "ordinary-host" || result.decision === "deny") throw codedPolicyError(result);
+    if (operation === "read") requireFile(target);
+    else if (!fsImpl.statSync(target, { throwIfNoEntry: false })?.isDirectory()) throw new Error("列出目录需要一个存在的目录路径。");
+    const approved = await confirm({
+      kind: "host-path-access",
+      path: target,
+      operation,
+      permissionClass: `host-path:${operation}:${target}`,
+    });
+    if (!approved) {
+      record({ action: "host-path-access", result: "cancelled", path: target, operation });
+      throw new Error("用户取消了工作区外本机路径访问请求。");
+    }
+    if (!capabilityStore || typeof capabilityStore.issue !== "function") {
+      throw Object.assign(new Error("Host capability store is not configured"), { code: "HOST_CAPABILITY_REQUIRED" });
+    }
+    const grant = capabilityStore.issue({ root: target, operations: [operation], ttlMs: 5 * 60_000, maxUses: 100, className: `host-path-${operation}` });
+    record({ action: "host-path-access", result: "approved", path: target, operation });
+    return { accessId: grant.accessId, path: target, operation };
   }
 
   function normalizeChange(change, lockedPaths) {
@@ -283,7 +343,7 @@ function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = clas
     return { batchId, applied: batch.changes.length, changes: summaries };
   }
 
-  return { list, read, requestSensitiveAccess, stage, confirmBatch };
+  return { list, read, requestSensitiveAccess, requestHostAccess, stage, confirmBatch };
 }
 
 module.exports = { MAX_BATCH_CHANGES, createLocalFileBroker, sha256 };

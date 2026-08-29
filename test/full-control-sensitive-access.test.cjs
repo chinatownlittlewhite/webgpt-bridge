@@ -12,8 +12,12 @@ test("full control cannot bypass the one-time sensitive-access confirmation", ()
   assert.notEqual(end, -1);
   const body = source.slice(start, end);
   const sensitiveGuard = body.indexOf('request?.kind === "sensitive-access"');
+  const knownFolderGuard = body.indexOf('request?.kind === "known-folder-access"');
+  const hostPathGuard = body.indexOf('request?.kind === "host-path-access"');
   const fullControl = body.indexOf('localApprovalMode === "full_control"');
   assert.ok(sensitiveGuard >= 0, "sensitive access needs an explicit confirmation guard");
+  assert.ok(knownFolderGuard >= 0, "known-folder access needs an explicit confirmation guard");
+  assert.ok(hostPathGuard >= 0, "ordinary Host access needs an explicit confirmation guard");
   assert.ok(fullControl >= 0);
-  assert.ok(sensitiveGuard < fullControl, "sensitive access must be handled before full-control auto approval");
+  assert.ok(Math.max(sensitiveGuard, knownFolderGuard, hostPathGuard) < fullControl, "explicit Host boundaries must be handled before full-control auto approval");
 });
