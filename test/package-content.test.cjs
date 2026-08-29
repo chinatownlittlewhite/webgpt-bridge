@@ -86,16 +86,22 @@ test("canonical tool registry is part of the packaged shared runtime payload", (
 
 test("desktop host enables the dedicated network-tool sandbox", () => {
   const mainSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
-  assert.match(mainSource, /LPC_ENABLE_NETWORK_TOOLS:\s*"true"/);
+  const runtimeHost = fs.readFileSync(path.join(__dirname, "..", "src", "host", "runtime-host.cjs"), "utf8");
+  assert.match(mainSource, /createRuntimeHost/);
+  assert.match(runtimeHost, /LPC_ENABLE_NETWORK_TOOLS:\s*"true"/);
 });
 
 test("desktop host re-resolves GitHub CLI for every agent start and passes a trusted binding", () => {
   const mainSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
+  const runtimeHost = fs.readFileSync(path.join(__dirname, "..", "src", "host", "runtime-host.cjs"), "utf8");
+  const broker = fs.readFileSync(path.join(__dirname, "..", "src", "host", "broker-server.cjs"), "utf8");
   assert.match(mainSource, /resolveDesktopGitHubCli/);
-  assert.match(mainSource, /LPC_GITHUB_CLI_PATH:\s*githubCliPath/);
-  assert.match(mainSource, /const trustedExecutables = \{[\s\S]{0,260}githubCliPath \? \{ gh: githubCliPath \} : \{\}/);
-  assert.match(mainSource, /createLocalTerminalBroker\(\{[\s\S]{0,500}trustedExecutables,/);
-  assert.match(mainSource, /additionalPaths:[\s\S]*path\.dirname\(githubCliPath\)/);
+  assert.match(mainSource, /createStartupPreflight\([\s\S]{0,1000}resolveDesktopGitHubCli/);
+  assert.match(runtimeHost, /startupPreflight\.prepare/);
+  assert.match(runtimeHost, /LPC_GITHUB_CLI_PATH:\s*githubCliPath/);
+  assert.match(broker, /const trustedExecutables = \{[\s\S]{0,260}githubCliPath \? \{ gh: githubCliPath \} : \{\}/);
+  assert.match(broker, /createLocalTerminalBroker\(\{[\s\S]{0,500}trustedExecutables,/);
+  assert.match(runtimeHost, /additionalPaths:[\s\S]*path\.dirname\(githubCliPath\)/);
 });
 
 test("desktop UI exposes four permission levels without a development Agent mode", () => {
