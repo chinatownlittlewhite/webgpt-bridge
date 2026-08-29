@@ -13,6 +13,7 @@ function publicGitHubCliState(value) {
   if (!value || typeof value !== "object") return value;
   return Object.freeze({
     status: typeof value.status === "string" ? value.status : "unknown",
+    resolvedPath: null,
     version: typeof value.version === "string" ? value.version : null,
     reason: safePublicText(value.reason),
     remediation: safePublicText(value.remediation),
