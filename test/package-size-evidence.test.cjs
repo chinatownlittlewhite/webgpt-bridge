@@ -6,7 +6,7 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 
 function source(relative) {
-  return fs.readFileSync(path.join(root, relative), "utf8");
+  return fs.readFileSync(path.join(root, relative), "utf8").replace(/\r\n/g, "\n");
 }
 
 function assertMacSizeReporterReceivesAbsoluteApp(workflow) {
