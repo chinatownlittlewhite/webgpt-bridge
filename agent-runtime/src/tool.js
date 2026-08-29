@@ -25,6 +25,14 @@ import { createProjectTaskRunner } from "./project-task.js";
 import { createCommandRunner } from "./runner.js";
 import { sandboxSummary } from "./sandbox.js";
 import { searchFiles } from "./search-files.js";
+import {
+  TOOL_REGISTRY_VERSION,
+  goalEligibleRuntimeTools,
+  listBrokerToolNames,
+  listGoalToolNames,
+  listToolNames,
+  orderRuntimeTools,
+} from "./tool-registry.js";
 import { INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
 function audit(logger, event) {
@@ -770,24 +778,6 @@ export function createMoveFileTool({ workspace, auditLogger } = {}) {
   };
 }
 
-const V09_TOOLS = Object.freeze([
-  "run_command", "run_project_task", "git", "dependency_sync", "github",
-  "process_start", "process_poll", "process_input", "process_kill", "process_list",
-  "read_file", "list_dir", "search_text", "search_files",
-  "apply_patch", "delete_file", "move_file",
-  "goal_mode", "goal_step", "goal_finish", "goal_status", "goal_cancel", "goal_pause", "goal_resume", "goal_list", "get_capabilities",
-]);
-const LOCAL_BROKER_TOOL_NAMES = Object.freeze([
-  "local_list", "local_read", "local_list_known_folder", "local_read_known_folder", "local_probe_health",
-  "local_request_sensitive_access", "local_request_host_access", "local_stage_changes", "local_confirm_batch", "local_run_command",
-]);
-
-function runtimeToolNames(localBrokerSocket) {
-  if (typeof localBrokerSocket !== "string" || !localBrokerSocket) return [...V09_TOOLS];
-  const goalIndex = V09_TOOLS.indexOf("goal_mode");
-  return [...V09_TOOLS.slice(0, goalIndex), ...LOCAL_BROKER_TOOL_NAMES, ...V09_TOOLS.slice(goalIndex)];
-}
-
 export function createCapabilitiesTool({
   sandboxAdapter,
   networkSandboxAdapter,
@@ -808,11 +798,15 @@ export function createCapabilitiesTool({
     invoke() {
       const sandbox = sandboxSummary(sandboxAdapter);
       const networkSandbox = resolveNetworkSandboxState({ networkSandboxState, networkSandboxAdapter, platform });
+      const brokerEnabled = typeof localBrokerSocket === "string" && localBrokerSocket.length > 0;
       return {
         version: "0.9.3",
         releaseStage: "stable",
         platform: normalizedPlatform(platform),
-        tools: runtimeToolNames(localBrokerSocket),
+        tools: listToolNames({ brokerEnabled }),
+        goalTools: listGoalToolNames({ brokerEnabled }),
+        brokerTools: listBrokerToolNames({ brokerEnabled }),
+        toolRegistry: { version: TOOL_REGISTRY_VERSION },
         sandbox,
         networkSandbox: {
           ...networkSandbox,
@@ -894,7 +888,8 @@ export function createCoreTools(options = {}) {
     auditLogger: options.auditLogger,
     maxProcesses: options.maxProcesses ?? 32,
   });
-  const baseTools = [
+  const brokerEnabled = typeof options.localBrokerSocket === "string" && options.localBrokerSocket.length > 0;
+  const baseTools = orderRuntimeTools([
     createRunCommandTool(options),
     createRunProjectTaskTool(options),
     createGitTool(options),
@@ -909,7 +904,7 @@ export function createCoreTools(options = {}) {
     createDeleteFileTool(options),
     createMoveFileTool(options),
     ...createLocalBrokerTools({ socketPath: options.localBrokerSocket, auth: options.localBrokerAuth }),
-  ];
+  ], { brokerEnabled });
   const goalSessionStore = options.goalSessionStore ?? (
     options.goalPersistSessions === true
       ? createFileGoalSessionStore({ workspace: options.workspace, directoryName: options.goalSessionDirectory ?? `${INTERNAL_STATE_DIR}/goals` })
@@ -917,7 +912,7 @@ export function createCoreTools(options = {}) {
   );
   const goalController = createGoalController({
     workspace: options.workspace,
-    tools: baseTools,
+    tools: goalEligibleRuntimeTools(baseTools, { brokerEnabled }),
     sessionStore: goalSessionStore,
     verificationTasks: options.goalVerificationTasks ?? ["test", "lint", "typecheck"],
     strictVerification: options.goalStrictVerification === true,
@@ -926,7 +921,7 @@ export function createCoreTools(options = {}) {
     maxSessions: options.goalMaxSessions ?? 100,
     sessionTtlMs: options.goalSessionTtlMs ?? 24 * 60 * 60_000,
   });
-  return [
+  return orderRuntimeTools([
     ...baseTools,
     createGoalModeTool(goalController),
     createGoalStepTool(goalController),
@@ -937,5 +932,5 @@ export function createCoreTools(options = {}) {
     createGoalResumeTool(goalController),
     createGoalListTool(goalController),
     createCapabilitiesTool({ ...options, goalSessionStore, localBrokerSocket: options.localBrokerSocket }),
-  ];
+  ], { brokerEnabled, requireComplete: true });
 }
