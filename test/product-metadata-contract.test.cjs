@@ -19,6 +19,7 @@ function assertNoSensitiveDiagnosticMaterial(value) {
     "/secret/broker.sock",
     "/secret/gh",
     "/Users/private/workspace",
+    "C:\\secret\\host-prep.exe",
   ]) {
     assert.equal(text.includes(forbidden), false, `diagnostic output leaked ${forbidden}`);
   }
@@ -75,11 +76,18 @@ test("Agent get_capabilities adds shared product facts without leaking Host path
     sandboxAdapter: sandboxModule.createNoSandboxAdapter(),
     networkSandboxState: { status: "disabled", usable: false, enabled: false, platform: process.platform, allowNetwork: true, reason: "disabled", recoverable: false },
     githubCliState: { status: "ready", resolvedPath: "/secret/gh", version: "2.0.0", reason: null, remediation: null },
-    windowsHostPreparationState: { status: "unsupported", usable: false, capabilityName: "test", reason: "n/a", remediation: null },
+    windowsHostPreparationState: {
+      status: "ready",
+      usable: true,
+      capabilityName: "test",
+      expectedPath: "C:\\secret\\host-prep.exe",
+      reason: "prepared",
+      remediation: null,
+    },
     workspace: "/Users/private/workspace",
     localBrokerSocket: "/secret/broker.sock",
     goalPersistSessions: true,
-    platform: process.platform,
+    platform: "win32",
     auditLogger: { enabled: false },
   }).invoke();
 
@@ -101,6 +109,8 @@ test("Agent get_capabilities adds shared product facts without leaking Host path
   assert.equal(capabilities.version, shared.agentVersion, "legacy version field must remain compatible");
   assert.equal(capabilities.mcp.protocolRevision, shared.mcpProtocolRevision);
   assert.deepEqual(capabilities.goalMode.supportedVerificationProfiles, shared.supportedGoalVerificationProfiles);
+  assert.equal(capabilities.githubCli.resolvedPath, null);
+  assert.equal(capabilities.windowsHostPreparation.expectedPath, null);
   assertNoSensitiveDiagnosticMaterial(capabilities);
 });
 
