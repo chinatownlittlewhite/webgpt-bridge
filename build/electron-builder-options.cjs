@@ -1,3 +1,4 @@
+const fs = require("node:fs");
 const path = require("node:path");
 const { normalizeNodePtyMacPayload } = require("../scripts/node-pty-macos-payload.cjs");
 
@@ -5,6 +6,15 @@ function required(env, name) {
   const value = String(env[name] || "").trim();
   if (!value) throw new Error(`Missing formal release configuration: ${name}`);
   return value;
+}
+
+function agentDevDependencyExcludes() {
+  const lockPath = path.join(__dirname, "..", "agent-runtime", "package-lock.json");
+  const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+  return Object.entries(lock.packages || {})
+    .filter(([packagePath, metadata]) => packagePath.startsWith("node_modules/") && metadata?.dev === true)
+    .map(([packagePath]) => `!agent-runtime/${packagePath}/**/*`)
+    .sort();
 }
 
 async function normalizeMacNodePtyAfterPack(context) {
@@ -41,6 +51,7 @@ function createBuilderConfig(env = process.env) {
       "!src/update-e2e-control.cjs",
       "agent-runtime/dist/**/*",
       "agent-runtime/node_modules/**/*",
+      ...agentDevDependencyExcludes(),
       "agent-runtime/package.json",
       "agent-runtime/native/windows-host/bin/release/**/*",
       "shared/**/*",
