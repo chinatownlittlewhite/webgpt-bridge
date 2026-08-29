@@ -75,3 +75,16 @@ test("package-content gate explicitly covers the canonical shared registry", () 
   const packageTestSource = fs.readFileSync(new URL("../../test/package-content.test.cjs", import.meta.url), "utf8");
   assert.match(packageTestSource, /tool-registry\.cjs/);
 });
+
+test("Agent runtime keeps a sandbox-local byte-identical projection of the canonical registry", () => {
+  const canonical = fs.readFileSync(new URL("../../shared/tool-registry.cjs", import.meta.url));
+  const projectedUrl = new URL("../shared/tool-registry.cjs", import.meta.url);
+  assert.equal(fs.existsSync(projectedUrl), true, "Agent-local canonical registry projection must exist");
+  assert.deepEqual(fs.readFileSync(projectedUrl), canonical, "Agent projection must be byte-identical to the canonical registry");
+
+  for (const relative of ["../src/tool-registry.js", "../src/goal-verification-profile.js"]) {
+    const source = fs.readFileSync(new URL(relative, import.meta.url), "utf8");
+    assert.match(source, /\.\.\/shared\/tool-registry\.cjs/);
+    assert.doesNotMatch(source, /\.\.\/\.\.\/shared\/tool-registry\.cjs/);
+  }
+});
