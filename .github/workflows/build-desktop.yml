@@ -52,6 +52,8 @@ jobs:
           APP="$(find release -type d -name 'WebGPT Bridge.app' -print -quit)"
           npm run verify:mac-native-artifact -- "$APP"
           npm run verify:mac-packaged-pty -- "$APP"
+          node scripts/report-package-size.cjs "$APP" > release/macos-package-size.json
+          cat release/macos-package-size.json
       - uses: actions/upload-artifact@v4
         with:
           name: webgpt-bridge-macos-universal
@@ -60,6 +62,7 @@ jobs:
             release/WebGPT-Bridge-*-mac-universal.zip
             release/*.blockmap
             release/latest-mac.yml
+            release/macos-package-size.json
 
   windows:
     name: Windows x64
