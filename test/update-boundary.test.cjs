@@ -5,6 +5,9 @@ const test = require("node:test");
 
 const root = path.join(__dirname, "..");
 const main = fs.readFileSync(path.join(root, "src", "main.cjs"), "utf8");
+const ipcController = fs.readFileSync(path.join(root, "src", "host", "ipc-controller.cjs"), "utf8");
+const runtimeHost = fs.readFileSync(path.join(root, "src", "host", "runtime-host.cjs"), "utf8");
+const trayController = fs.readFileSync(path.join(root, "src", "host", "tray-controller.cjs"), "utf8");
 const preload = fs.readFileSync(path.join(root, "src", "preload.cjs"), "utf8");
 const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
 const renderer = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
@@ -12,7 +15,7 @@ const styles = fs.readFileSync(path.join(root, "src", "renderer", "styles.css"),
 
 test("renderer update IPC has no URL repository path or installer arguments", () => {
   for (const channel of ["update:get-state", "update:check", "update:download", "update:install"]) {
-    assert.match(main, new RegExp(channel.replace(":", "\\:")));
+    assert.match(ipcController, new RegExp(channel.replace(":", "\\:")));
   }
   assert.match(preload, /getUpdateState:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("update:get-state"\)/);
   assert.match(preload, /checkForUpdates:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("update:check"\)/);
@@ -32,7 +35,8 @@ test("main process routes quit and update install through AppLifecycleCoordinato
   assert.doesNotMatch(updateBlock, /stopRuntime|setQuitting/);
 
   assert.match(main, /app\.on\("before-quit",\s*\(event\)\s*=>\s*\{?[^}]*appLifecycle\.handleBeforeQuit\(event\)/s);
-  assert.match(main, /appLifecycle\.requestQuit\("tray-quit"\)/);
+  assert.match(main, /requestQuit:\s*\(reason\)\s*=>\s*appLifecycle\.requestQuit\(reason\)/);
+  assert.match(trayController, /requestQuit\("tray-quit"\)/);
   assert.match(main, /appLifecycle\.nativeQuitAllowed\(\)/);
   assert.doesNotMatch(main, /let isQuitting\b/);
 });
@@ -40,7 +44,8 @@ test("main process routes quit and update install through AppLifecycleCoordinato
 test("main process delegates runtime preparation to StartupPreflight without synchronous Node version probing", () => {
   assert.match(main, /createStartupPreflight/);
   assert.match(main, /startupPreflight\s*=\s*createStartupPreflight\s*\(/);
-  assert.match(main, /startupPreflight\.prepare\s*\(/);
+  assert.match(main, /createRuntimeHost\(\{[\s\S]*startupPreflight/);
+  assert.match(runtimeHost, /startupPreflight\.prepare\s*\(/);
   assert.doesNotMatch(main, /function\s+nodeVersion\s*\(/);
   assert.doesNotMatch(main, /selectSupportedNode\s*\(/);
   assert.doesNotMatch(main, /spawnSync\([^\n]*\["--version"\]/);
@@ -51,11 +56,11 @@ test("tunnel startup reuses Host-owned profiles and connected waits for readyz",
   assert.match(main, /tunnelProfileDir/);
   assert.doesNotMatch(main, /initializedTunnelPreflights/);
 
-  const startIndex = main.indexOf("async function startRuntimeTunnel");
-  const readyIndex = main.indexOf("async function waitRuntimeTunnelReady", startIndex);
-  const stopIndex = main.indexOf("async function stopRuntimeResource", readyIndex);
-  const startBlock = main.slice(startIndex, readyIndex);
-  const readyBlock = main.slice(readyIndex, stopIndex);
+  const startIndex = runtimeHost.indexOf("async function startTunnel");
+  const readyIndex = runtimeHost.indexOf("async function waitTunnelReady", startIndex);
+  const stopIndex = runtimeHost.indexOf("async function stopResource", readyIndex);
+  const startBlock = runtimeHost.slice(startIndex, readyIndex);
+  const readyBlock = runtimeHost.slice(readyIndex, stopIndex);
 
   assert.match(startBlock, /tunnelProfile/);
   assert.match(startBlock, /"run"/);
@@ -67,18 +72,18 @@ test("tunnel startup reuses Host-owned profiles and connected waits for readyz",
 });
 
 test("main process does not expose host-prep mutation through update IPC", () => {
-  const updateSection = main.slice(main.indexOf("update:get-state"));
-  assert.doesNotMatch(updateSection, /windows-host-prep|--apply|--remove|schtasks/i);
+  assert.match(main, /registerHostIpc/);
+  assert.doesNotMatch(ipcController, /windows-host-prep|--apply|--remove|schtasks/i);
 });
 
 test("macOS child shutdown waits for real exit before fallback kill", () => {
-  const processLive = main.match(/function processIsLive\(child\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+  const processLive = runtimeHost.match(/function processIsLive\(child\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(processLive, /child\.exitCode\s*===\s*null/);
   assert.doesNotMatch(processLive, /child\.killed/);
 
-  const stopStart = main.indexOf("async function stopChild");
-  const stopEnd = main.indexOf("async function stopAll", stopStart);
-  const stop = main.slice(stopStart, stopEnd);
+  const stopStart = runtimeHost.indexOf("async function stopChild");
+  const stopEnd = runtimeHost.indexOf("async function prepare", stopStart);
+  const stop = runtimeHost.slice(stopStart, stopEnd);
   const gracefulWait = stop.indexOf("waitForChildExit(child, 5000)");
   const term = stop.indexOf('child.kill("SIGTERM")');
   const forcedWait = stop.indexOf("waitForChildExit(child, 2000)");
@@ -109,10 +114,11 @@ test("renderer exposes one bounded update panel and a fixed GitHub release actio
 });
 
 test("tray can surface a downloaded or available update without installing it", () => {
-  assert.match(main, /发现更新/);
-  assert.match(main, /更新已下载/);
-  const trayStart = main.indexOf("function updateTray");
-  const trayEnd = main.indexOf("function createTray", trayStart);
-  const tray = main.slice(trayStart, trayEnd);
+  assert.match(main, /createTrayController/);
+  assert.match(trayController, /发现更新/);
+  assert.match(trayController, /更新已下载/);
+  const trayStart = trayController.indexOf("function updateTray");
+  const trayEnd = trayController.indexOf("function createTray", trayStart);
+  const tray = trayController.slice(trayStart, trayEnd);
   assert.doesNotMatch(tray, /update:install|installUpdateAndRestart|quitAndInstall/);
 });
