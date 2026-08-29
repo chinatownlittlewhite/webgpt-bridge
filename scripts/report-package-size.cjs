@@ -11,13 +11,18 @@ function treeBytes(target) {
 }
 
 function collectPackageSizes(rootPath) {
+  const resources = path.join(rootPath, "Contents", "Resources");
+  const unpacked = path.join(resources, "app.asar.unpacked");
+  const agentRuntime = path.join(unpacked, "agent-runtime");
   return {
     totalBytes: treeBytes(rootPath),
     frameworksBytes: treeBytes(path.join(rootPath, "Contents", "Frameworks")),
-    resourcesBytes: treeBytes(path.join(rootPath, "Contents", "Resources")),
-    appAsarBytes: treeBytes(path.join(rootPath, "Contents", "Resources", "app.asar")),
-    appAsarUnpackedBytes: treeBytes(path.join(rootPath, "Contents", "Resources", "app.asar.unpacked")),
-    tunnelClientBytes: treeBytes(path.join(rootPath, "Contents", "Resources", "tunnel-client")),
+    resourcesBytes: treeBytes(resources),
+    appAsarBytes: treeBytes(path.join(resources, "app.asar")),
+    appAsarUnpackedBytes: treeBytes(unpacked),
+    agentRuntimeBytes: treeBytes(agentRuntime),
+    nodePtyBytes: treeBytes(path.join(agentRuntime, "node_modules", "node-pty")),
+    tunnelClientBytes: treeBytes(path.join(resources, "tunnel-client")),
   };
 }
 
