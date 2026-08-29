@@ -1,3 +1,4 @@
+// RED recovery gate: production Host decomposition must make this pass.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
