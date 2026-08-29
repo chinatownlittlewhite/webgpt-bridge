@@ -449,10 +449,11 @@ export function createGoalController({
   }
   const sessions = new Map();
   const mutatingSessions = new Set();
-  let storedSessions = [];
+  let storedSessions;
   try {
     storedSessions = store.loadAll();
-  } catch {
+  } catch (error) {
+    if (store.persistent === true) throw error;
     storedSessions = [];
   }
   for (const raw of storedSessions) {

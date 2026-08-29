@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +16,21 @@ function makeStateDirectory() {
 function readJournal(journalPath) {
   const text = fs.readFileSync(journalPath, "utf8").trim();
   return text ? text.split("\n").map((line) => JSON.parse(line)) : [];
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
+}
+
+function checksum(body) {
+  return createHash("sha256").update(JSON.stringify(canonicalize(body))).digest("hex");
+}
+
+function withFreshChecksum(record) {
+  const { checksum: _checksum, ...body } = record;
+  return { ...body, checksum: checksum(body) };
 }
 
 function inFlightSession(id = "g1") {
@@ -128,6 +144,42 @@ test("snapshot compaction waits while a protected Goal mutation is pending", () 
     const snapshotAfter = JSON.parse(fs.readFileSync(store.snapshotPath, "utf8"));
     assert.equal(snapshotAfter.sequence, 2);
     assert.equal(fs.readFileSync(store.journalPath, "utf8"), "");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("goal store v2 rejects a journal checksum mismatch instead of guessing state", () => {
+  const { root, directory } = makeStateDirectory();
+  try {
+    const store = createGoalStoreV2({ directory, snapshotEvery: 32 });
+    store.save({ id: "g1", status: "active", goal: "trusted" });
+    const records = readJournal(store.journalPath);
+    records[1].session.goal = "tampered";
+    fs.writeFileSync(store.journalPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+
+    assert.throws(
+      () => createGoalStoreV2({ directory, snapshotEvery: 32 }),
+      /journal integrity failure|checksum mismatch/i,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("goal store v2 rejects a validly-checksummed journal sequence gap", () => {
+  const { root, directory } = makeStateDirectory();
+  try {
+    const store = createGoalStoreV2({ directory, snapshotEvery: 32 });
+    store.save({ id: "g1", status: "active", goal: "trusted" });
+    const records = readJournal(store.journalPath);
+    records[1] = withFreshChecksum({ ...records[1], sequence: 3 });
+    fs.writeFileSync(store.journalPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+
+    assert.throws(
+      () => createGoalStoreV2({ directory, snapshotEvery: 32 }),
+      /sequence is discontinuous/i,
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

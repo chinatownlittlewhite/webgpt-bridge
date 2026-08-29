@@ -163,12 +163,12 @@ export function createFileGoalSessionStore({ workspace, directoryName = `${INTER
   const legacySessions = readLegacySessions(directory);
 
   if (fs.existsSync(stateDirectory)) {
-    try {
-      return openPublishedV2(directory, stateDirectory);
-    } catch (error) {
+    const stat = fs.lstatSync(stateDirectory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
       if (legacySessions.length > 0) return createLegacyFileGoalSessionStore(directory);
-      throw error;
+      throw new Error("goal store v2 state path must be a plain directory");
     }
+    return openPublishedV2(directory, stateDirectory);
   }
 
   try {

@@ -104,6 +104,27 @@ test("file goal store transactionally migrates valid v1 sessions once and preser
   fs.rmSync(workspace, { recursive: true, force: true });
 });
 
+test("completed v2 corruption never falls back to preserved legacy v1 state", () => {
+  const workspace = makeWorkspace();
+  const goalsDir = path.join(workspace, INTERNAL_STATE_DIR, "goals");
+  fs.mkdirSync(goalsDir, { recursive: true });
+  fs.writeFileSync(path.join(goalsDir, "legacy.json"), `${JSON.stringify({
+    version: 1,
+    session: { id: "legacy", status: "active", goal: "old state" },
+  })}\n`, "utf8");
+
+  const first = createFileGoalSessionStore({ workspace });
+  first.save({ id: "newer", status: "active", goal: "new v2 state" });
+  fs.writeFileSync(first.journalPath, "{corrupt journal\n", "utf8");
+
+  assert.throws(
+    () => createFileGoalSessionStore({ workspace }),
+    /journal|integrity|corrupt|invalid/i,
+  );
+  assert.equal(fs.existsSync(path.join(goalsDir, "legacy.json")), true);
+  fs.rmSync(workspace, { recursive: true, force: true });
+});
+
 test("migration publication failure leaves valid v1 Goal state readable and writable", () => {
   const workspace = makeWorkspace();
   const goalsDir = path.join(workspace, INTERNAL_STATE_DIR, "goals");
@@ -132,6 +153,22 @@ test("file goal store rejects path-like session ids and escaping store directori
     /escapes the configured workspace/,
   );
   fs.rmSync(workspace, { recursive: true, force: true });
+});
+
+test("persistent Goal store hydration errors are startup-fatal instead of becoming empty history", () => {
+  const store = {
+    kind: "corrupt-persistent",
+    persistent: true,
+    loadAll() {
+      throw new Error("persistent goal store integrity failure");
+    },
+    save() {},
+    remove() {},
+  };
+  assert.throws(
+    () => createGoalController({ tools: [], sessionStore: store, verificationTasks: [] }),
+    /persistent goal store integrity failure/,
+  );
 });
 
 test("a new goal controller restores persisted active sessions after restart", () => {
@@ -239,6 +276,46 @@ test("persisted timestamps and history are bounded again during hydration", () =
   assert.equal(restored.history.length, 1);
   assert.equal(restored.history[0].truncated, true);
   assert.match(restored.history[0].sha256, /^[a-f0-9]{64}$/);
+  fs.rmSync(workspace, { recursive: true, force: true });
+});
+
+test("v2 unmatched protected intent fails closed after restart and is never replayed", async () => {
+  const workspace = makeWorkspace();
+  const store = createFileGoalSessionStore({ workspace });
+  let calls = 0;
+  const tool = {
+    name: "side_effect",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    async invoke() {
+      calls += 1;
+      return { status: "completed" };
+    },
+  };
+  const first = createGoalController({ workspace, tools: [tool], sessionStore: store, verificationTasks: [] });
+  const started = first.start({ goal: "Recover uncertain v2 effect", cwd: "project" });
+  const raw = store.loadAll().find((session) => session.id === started.sessionId);
+  store.save({
+    ...raw,
+    inFlightMutation: {
+      kind: "goal_tool",
+      tool: "side_effect",
+      inputHash: "b".repeat(64),
+      startedAt: Date.now(),
+    },
+  });
+
+  const restarted = createGoalController({
+    workspace,
+    tools: [tool],
+    sessionStore: createFileGoalSessionStore({ workspace }),
+    verificationTasks: [],
+  });
+  const recovered = restarted.status(started.sessionId);
+  assert.equal(recovered.status, "failed");
+  assert.match(recovered.lastFeedback, /interrupted.*mutation|mutation.*interrupted/i);
+  const replay = await restarted.step({ sessionId: started.sessionId, tool: "side_effect", input: {} });
+  assert.equal(replay.status, "already_terminal");
+  assert.equal(calls, 0);
   fs.rmSync(workspace, { recursive: true, force: true });
 });
 
