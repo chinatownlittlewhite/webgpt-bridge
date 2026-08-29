@@ -16,7 +16,9 @@ test("GitHub health never runs gh auth status synchronously on the Electron main
 });
 
 test("async GitHub health keeps connectivity binary readiness and authentication as distinct bounded facts", () => {
-  const source = read("src/github-health-probe.cjs");
+  const modulePath = path.join(ROOT, "src", "github-health-probe.cjs");
+  assert.equal(fs.existsSync(modulePath), true, "Stage 12 requires a dedicated async GitHub health helper");
+  const source = fs.readFileSync(modulePath, "utf8");
 
   assert.match(source, /execFile/);
   assert.match(source, /timeoutMs/);
