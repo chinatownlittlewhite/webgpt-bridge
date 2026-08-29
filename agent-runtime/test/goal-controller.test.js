@@ -192,6 +192,147 @@ test("system-operation alone may persist a bounded postcondition", () => {
   assert.equal(status.postcondition, "operation health is ready");
 });
 
+test("explicit code-change cannot self-report completion after a side-effecting action", async () => {
+  const edit = makeTool("edit", objectSchema, async () => ({ status: "completed" }));
+  const controller = createGoalController({ tools: [edit], verificationTasks: [], strictVerification: false });
+  const started = controller.start({ goal: "change code", verificationProfile: "code-change" });
+  await controller.step({ sessionId: started.sessionId, tool: "edit", input: {} });
+  const result = await controller.finish({ sessionId: started.sessionId, summary: "done" });
+  assert.equal(result.status, "continue_required");
+  assert.match(result.feedback, /code-change|project check|trusted verifier/i);
+});
+
+test("explicit code-change completes when a configured project check succeeds", async () => {
+  const edit = makeTool("edit", objectSchema, async () => ({ status: "completed" }));
+  const projectTask = makeTool("run_project_task", objectSchema, async () => ({ status: "completed", exitCode: 0 }));
+  const controller = createGoalController({ tools: [edit, projectTask], verificationTasks: ["test"] });
+  const started = controller.start({ goal: "change code safely", verificationProfile: "code-change" });
+  await controller.step({ sessionId: started.sessionId, tool: "edit", input: {} });
+  const result = await controller.finish({ sessionId: started.sessionId, summary: "done" });
+  assert.equal(result.status, "completed");
+  assert.equal(result.verified, true);
+});
+
+test("read-only-audit completion skips project scripts and uses the enforced no-side-effect invariant", async () => {
+  let projectChecks = 0;
+  const readFile = makeTool("read_file", objectSchema, async () => ({ status: "completed", text: "ok" }));
+  const projectTask = makeTool("run_project_task", objectSchema, async () => {
+    projectChecks += 1;
+    return { status: "completed", exitCode: 1 };
+  });
+  const controller = createGoalController({ tools: [readFile, projectTask], verificationTasks: ["test"] });
+  const started = controller.start({ goal: "audit only", verificationProfile: "read-only-audit" });
+  await controller.step({ sessionId: started.sessionId, tool: "read_file", input: {} });
+  const result = await controller.finish({ sessionId: started.sessionId, summary: "audit complete" });
+  assert.equal(result.status, "completed");
+  assert.equal(result.verified, true);
+  assert.equal(projectChecks, 0);
+  assert.equal(result.verification.profile.method, "read-only-invariant");
+});
+
+test("read-only-audit fails closed when restored state reports a prior side-effecting action", async () => {
+  const now = Date.now();
+  const store = {
+    persistent: false,
+    kind: "test",
+    loadAll() {
+      return [{
+        id: "audit_side_effect",
+        goal: "audit restored state",
+        cwd: ".",
+        verificationProfile: "read-only-audit",
+        postcondition: null,
+        acceptanceCriteria: [],
+        maxSteps: 50,
+        maxToolCalls: 100,
+        maxDurationMs: 600_000,
+        status: "active",
+        verified: false,
+        createdAt: now - 1,
+        updatedAt: now,
+        steps: 1,
+        toolCalls: 1,
+        sideEffectActionCount: 1,
+        activeElapsedMs: 0,
+        history: [],
+      }];
+    },
+    save() {},
+    remove() {},
+  };
+  const controller = createGoalController({ tools: [], sessionStore: store, verificationTasks: [] });
+  const result = await controller.finish({ sessionId: "audit_side_effect", summary: "done" });
+  assert.equal(result.status, "continue_required");
+  assert.match(result.feedback, /read-only-audit|side-effect/i);
+});
+
+test("system-operation requires postcondition evidence or a trusted verifier and skips project checks", async () => {
+  let projectChecks = 0;
+  const projectTask = makeTool("run_project_task", objectSchema, async () => {
+    projectChecks += 1;
+    return { status: "completed", exitCode: 0 };
+  });
+  const controller = createGoalController({ tools: [projectTask], verificationTasks: ["test"] });
+
+  const missing = controller.start({ goal: "system change", verificationProfile: "system-operation" });
+  const missingResult = await controller.finish({ sessionId: missing.sessionId, summary: "done" });
+  assert.equal(missingResult.status, "continue_required");
+  assert.match(missingResult.feedback, /postcondition|trusted verifier/i);
+  assert.equal(projectChecks, 0);
+
+  const evidenced = controller.start({
+    goal: "system change with postcondition",
+    verificationProfile: "system-operation",
+    postcondition: "health reports ready",
+  });
+  const evidencedResult = await controller.finish({
+    sessionId: evidenced.sessionId,
+    summary: "done",
+    postconditionEvidence: "health probe returned ready",
+  });
+  assert.equal(evidencedResult.status, "completed");
+  assert.equal(evidencedResult.verified, true);
+  assert.equal(evidencedResult.verification.profile.method, "postcondition-evidence");
+  assert.equal(projectChecks, 0);
+});
+
+test("system-operation trusted verifier receives profile and postcondition fields", async () => {
+  let received;
+  const controller = createGoalController({ tools: [], verificationTasks: [] });
+  const started = controller.start({ goal: "trusted system operation", verificationProfile: "system-operation" });
+  const result = await controller.finish(
+    { sessionId: started.sessionId, summary: "done" },
+    {
+      verifyCompletion(input) {
+        received = input;
+        return { completed: true };
+      },
+    },
+  );
+  assert.equal(result.status, "completed");
+  assert.equal(received.verificationProfile, "system-operation");
+  assert.equal(received.postcondition, null);
+  assert.equal(received.postconditionEvidence, null);
+});
+
+test("acceptance evidence is checked before explicit profile verification", async () => {
+  let verifierCalls = 0;
+  const controller = createGoalController({ tools: [], verificationTasks: [] });
+  const started = controller.start({
+    goal: "system operation with criterion",
+    verificationProfile: "system-operation",
+    postcondition: "operation is healthy",
+    acceptanceCriteria: ["requested state is present"],
+  });
+  const result = await controller.finish(
+    { sessionId: started.sessionId, summary: "done", postconditionEvidence: "healthy" },
+    { verifyCompletion() { verifierCalls += 1; return { completed: true }; } },
+  );
+  assert.equal(result.status, "continue_required");
+  assert.match(result.feedback, /criteriaEvidence|acceptance/i);
+  assert.equal(verifierCalls, 0);
+});
+
 test("goal status returns only bounded recent history", async () => {
   const noop = makeTool(
     "noop",

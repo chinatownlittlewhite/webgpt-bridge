@@ -743,15 +743,41 @@ export function createGoalController({
     }
   }
 
-  async function runVerificationChecks(session, trustedContext) {
+  async function runVerificationChecks(session, trustedContext, postconditionEvidence) {
+    const profileName = session.verificationProfile;
+    if (profileName === "read-only-audit") {
+      const clean = session.sideEffectActionCount === 0;
+      return {
+        passed: clean,
+        verified: clean,
+        checks: [],
+        profile: { name: profileName, verified: clean, method: "read-only-invariant" },
+        ...(clean ? {} : { feedback: "read-only-audit cannot complete after a tracked side-effecting Goal action" }),
+      };
+    }
+    if (profileName === "system-operation") {
+      const evidenced = typeof session.postcondition === "string" && typeof postconditionEvidence === "string";
+      return {
+        passed: true,
+        verified: evidenced,
+        checks: [],
+        profile: { name: profileName, verified: evidenced, method: evidenced ? "postcondition-evidence" : null },
+      };
+    }
+
     const projectTask = availableTools.get("run_project_task");
     if (!projectTask || verificationTasks.length === 0) {
-      return { passed: true, verified: false, checks: [] };
+      return {
+        passed: true,
+        verified: false,
+        checks: [],
+        profile: { name: profileName, verified: false, method: null },
+      };
     }
     const checks = [];
     for (const task of verificationTasks) {
       const stopped = stopForBudget(session);
-      if (stopped) return { passed: false, terminal: stopped, checks };
+      if (stopped) return { passed: false, terminal: stopped, checks, profile: { name: profileName, verified: false, method: "project-check" } };
       session.toolCalls += 1;
       const started = Date.now();
       let result;
@@ -761,30 +787,50 @@ export function createGoalController({
         const message = error instanceof Error ? error.message : String(error);
         session.activeElapsedMs += Date.now() - started;
         if (TERMINAL.has(session.status)) {
-          return { passed: false, terminal: terminalSessionResult(session), checks };
+          return { passed: false, terminal: terminalSessionResult(session), checks, profile: { name: profileName, verified: false, method: "project-check" } };
         }
         if (/no safe '.+' task was found/.test(message)) {
           checks.push({ task, status: "not_available", exitCode: null });
           continue;
         }
-        return { passed: false, verified: true, checks, feedback: `${task} verification failed to run: ${message}` };
+        return {
+          passed: false,
+          verified: true,
+          checks,
+          profile: { name: profileName, verified: false, method: "project-check" },
+          feedback: `${task} verification failed to run: ${message}`,
+        };
       }
       session.activeElapsedMs += Date.now() - started;
       if (TERMINAL.has(session.status)) {
-        return { passed: false, terminal: terminalSessionResult(session), checks };
+        return { passed: false, terminal: terminalSessionResult(session), checks, profile: { name: profileName, verified: false, method: "project-check" } };
       }
-      if (approvalBlock(result)) return { passed: false, blocked: true, checks, result };
+      if (approvalBlock(result)) {
+        return { passed: false, blocked: true, checks, result, profile: { name: profileName, verified: false, method: "project-check" } };
+      }
       const passed = result.status === "completed" && result.exitCode === 0;
       checks.push(verificationCheck(task, result, !passed));
       if (!passed) {
-        return { passed: false, verified: true, checks, feedback: `${task} verification did not pass` };
+        return {
+          passed: false,
+          verified: true,
+          checks,
+          profile: { name: profileName, verified: false, method: "project-check" },
+          feedback: `${task} verification did not pass`,
+        };
       }
     }
     const executed = checks.filter((check) => check.status !== "not_available");
-    return { passed: true, verified: executed.length > 0, checks };
+    const verified = executed.length > 0;
+    return {
+      passed: true,
+      verified,
+      checks,
+      profile: { name: profileName, verified, method: verified ? "project-check" : null },
+    };
   }
 
-  async function finish({ sessionId, summary, evidence = [], criteriaEvidence = [] }, trustedContext = {}) {
+  async function finish({ sessionId, summary, evidence = [], criteriaEvidence = [], postconditionEvidence }, trustedContext = {}) {
     const session = find(sessionId);
     if (!session) return { status: "not_found", mustContinue: false, sessionId };
     if (TERMINAL.has(session.status)) return { status: "already_terminal", mustContinue: false, session: sessionView(session) };
@@ -803,6 +849,16 @@ export function createGoalController({
         evidence.some((entry) => typeof entry !== "string" || entry.length === 0 || entry.length > 8_192)
       ) {
         throw new TypeError("goal_finish evidence must contain at most 50 non-empty strings up to 8192 characters");
+      }
+      let normalizedPostconditionEvidence = null;
+      if (postconditionEvidence !== undefined && postconditionEvidence !== null) {
+        if (typeof postconditionEvidence !== "string" || postconditionEvidence.trim().length === 0 || postconditionEvidence.trim().length > 8_192) {
+          throw new TypeError("goal_finish postconditionEvidence must be a non-empty string up to 8192 characters when supplied");
+        }
+        if (session.verificationProfile !== "system-operation") {
+          throw new TypeError("goal_finish postconditionEvidence is only valid for system-operation verification");
+        }
+        normalizedPostconditionEvidence = postconditionEvidence.trim();
       }
       if (
         !Array.isArray(criteriaEvidence) ||
@@ -841,7 +897,7 @@ export function createGoalController({
         };
       }
 
-      const checks = await runVerificationChecks(session, trustedContext);
+      const checks = await runVerificationChecks(session, trustedContext, normalizedPostconditionEvidence);
       addEvent(session, { type: "verification", checks });
       if (checks.terminal) return checks.terminal;
       if (checks.blocked) {
@@ -885,6 +941,9 @@ export function createGoalController({
             criteriaEvidence: acceptance.evidence,
             summary: summary.trim(),
             evidence: evidence.slice(0, 50),
+            verificationProfile: session.verificationProfile,
+            postcondition: session.postcondition,
+            postconditionEvidence: normalizedPostconditionEvidence,
             checks: checks.checks,
             history: session.history.slice(-40),
           });
@@ -924,6 +983,37 @@ export function createGoalController({
       }
 
       const verified = checks.verified || custom?.completed === true;
+      const profileVerification = {
+        ...checks.profile,
+        verified,
+        method: custom?.completed === true ? "trusted-verifier" : checks.profile?.method ?? null,
+      };
+      const verification = { ...checks, profile: profileVerification, custom };
+
+      if (session.verificationProfile === "code-change" && session.sideEffectActionCount > 0 && !verified) {
+        session.status = "active";
+        session.lastFeedback = "code-change completion after side-effecting Goal actions requires a successful project check or trusted verifier";
+        return {
+          status: "continue_required",
+          mustContinue: true,
+          sessionId,
+          feedback: session.lastFeedback,
+          verification,
+          budget: budget(session),
+        };
+      }
+      if (session.verificationProfile === "system-operation" && !verified) {
+        session.status = "active";
+        session.lastFeedback = "system-operation completion requires postcondition evidence or a trusted verifier";
+        return {
+          status: "continue_required",
+          mustContinue: true,
+          sessionId,
+          feedback: session.lastFeedback,
+          verification,
+          budget: budget(session),
+        };
+      }
       if (strictVerification && !verified) {
         session.status = "active";
         session.lastFeedback = "strict verification is enabled but no check or trusted verifier confirmed completion";
@@ -932,7 +1022,7 @@ export function createGoalController({
           mustContinue: true,
           sessionId,
           feedback: session.lastFeedback,
-          verification: checks,
+          verification,
           budget: budget(session),
         };
       }
@@ -956,7 +1046,7 @@ export function createGoalController({
         evidence: evidence.slice(0, 50),
         acceptance,
         verified,
-        verification: { ...checks, custom },
+        verification,
         budget: budget(session),
       };
     } finally {
