@@ -179,7 +179,8 @@ button:disabled { cursor: default; opacity: .56; transform: none; }
 .status-list span { display: block; color: var(--muted); font-size: 10.5px; }
 .status-list strong { display: block; margin-top: 5px; font-size: 12.5px; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.inset-panel {
+.inset-panel,
+.update-card {
   margin-top: 18px;
   padding: 15px 16px;
   border: 1px solid rgba(20,35,29,.07);

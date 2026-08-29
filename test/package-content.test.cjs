@@ -105,9 +105,9 @@ test("desktop UI exposes four permission levels without a development Agent mode
   assert.match(html, />谨慎</);
   assert.match(html, />工作区自动（推荐）</);
   assert.match(html, />高自治</);
-  assert.match(html, /value="full_control">完全控制（无确认）</);
-  assert.match(html, /同类权限.*本次连接.*自动记住/);
-  assert.match(html, /完全控制.*无需管理员权限.*不会绕过敏感路径、shell、SSH 或提权安全边界/);
+  assert.match(html, /value="full_control">完全控制（保留安全边界）</);
+  assert.match(html, /同类低风险权限.*本次连接内记住/);
+  assert.match(html, /完全控制.*只减少允许范围内的确认.*不会绕过敏感路径、Shell、SSH 校验、提权或沙箱边界/);
   assert.doesNotMatch(html, /桌面开发版|developmentPath|Agent 模式/);
 });
 
