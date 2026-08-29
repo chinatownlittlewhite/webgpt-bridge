@@ -36,15 +36,18 @@ function phaseFixture() {
 test("v0.5 phase one keeps host access capability-scoped and broker authenticated", () => {
   const root = path.join(__dirname, "..");
   const main = fs.readFileSync(path.join(root, "src", "main.cjs"), "utf8");
+  const broker = fs.readFileSync(path.join(root, "src", "host", "broker-server.cjs"), "utf8");
+  const runtimeHost = fs.readFileSync(path.join(root, "src", "host", "runtime-host.cjs"), "utf8");
   const agent = fs.readFileSync(path.join(root, "agent-runtime", "src", "local-broker-client.js"), "utf8");
   const protocol = fs.readFileSync(path.join(root, "shared", "local-broker-protocol.cjs"), "utf8");
   assert.match(main, /establishSingleInstanceOwnership/);
-  assert.match(main, /createHostCapabilityStore/);
-  assert.match(main, /createBrokerChallenge/);
-  assert.match(main, /verifyBrokerProof/);
-  assert.match(main, /LPC_LOCAL_BROKER_PROTOCOL/);
-  assert.match(main, /LPC_LOCAL_BROKER_SESSION/);
-  assert.match(main, /LPC_LOCAL_BROKER_SECRET/);
+  assert.match(main, /createHostBrokerServer/);
+  assert.match(broker, /createHostCapabilityStore/);
+  assert.match(broker, /createBrokerChallenge/);
+  assert.match(broker, /verifyBrokerProof/);
+  assert.match(runtimeHost, /LPC_LOCAL_BROKER_PROTOCOL/);
+  assert.match(runtimeHost, /LPC_LOCAL_BROKER_SESSION/);
+  assert.match(runtimeHost, /LPC_LOCAL_BROKER_SECRET/);
   assert.match(agent, /createBrokerProof/);
   assert.match(agent, /BROKER_AUTH_FAILED/);
   assert.match(agent, /BROKER_PROTOCOL_MISMATCH/);
