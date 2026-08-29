@@ -11,6 +11,7 @@ const { createRuntimeHost } = require("./host/runtime-host.cjs");
 const { createWindowController } = require("./host/window-controller.cjs");
 const { createTrayController } = require("./host/tray-controller.cjs");
 const { registerHostIpc } = require("./host/ipc-controller.cjs");
+const { createHostLogBuffer } = require("./host-log-buffer.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
 const { ensureTunnelProfile } = require("./tunnel-profile-manager.cjs");
@@ -48,7 +49,7 @@ const MAX_LOG_LINES = 600;
 let windowController;
 let trayController;
 let disposeIpc;
-let logLines = [];
+let disposeLogSubscription;
 let updateService;
 let runtimeSupervisor;
 let appLifecycle;
@@ -106,18 +107,19 @@ const startupPreflight = createStartupPreflight({
   resolveDesktopGitHubCli,
 });
 
+const hostLogBuffer = createHostLogBuffer({
+  capacity: MAX_LOG_LINES,
+  maxBatchEntries: 64,
+  maxBatchBytes: 64 * 1024,
+});
+
 function emit(type, value) {
   windowController?.getWindow()?.webContents.send("host:event", { type, value });
   if (type === "status") updateTray();
 }
 
 function appendLog(source, data) {
-  for (const line of String(data).split(/\r?\n/)) {
-    if (!line) continue;
-    logLines.push({ source, line, at: new Date().toISOString() });
-  }
-  if (logLines.length > MAX_LOG_LINES) logLines = logLines.slice(-MAX_LOG_LINES);
-  emit("logs", logLines);
+  hostLogBuffer.append(source, data);
 }
 
 function getStatus() {
@@ -153,7 +155,6 @@ const hostBroker = createHostBrokerServer({
   endpoints: { mcpHost: MCP_HOST, mcpPort: MCP_PORT, tunnelHealthHost: TUNNEL_HEALTH_HOST, tunnelHealthPort: TUNNEL_HEALTH_PORT },
   platform: process.platform,
   pid: process.pid,
-  spawnSync,
 });
 
 const runtimeHost = createRuntimeHost({
@@ -161,10 +162,7 @@ const runtimeHost = createRuntimeHost({
   startupPreflight,
   hostBroker,
   appendLog,
-  resetLogs: () => {
-    logLines = [];
-    emit("logs", logLines);
-  },
+  resetLogs: () => hostLogBuffer.reset(),
   spawnSync,
   endpoints: { mcpHost: MCP_HOST, mcpPort: MCP_PORT },
   platform: process.platform,
@@ -181,6 +179,7 @@ function updateTray() {
 
 if (singleInstanceOwnership.primary) {
   app.whenReady().then(() => {
+    disposeLogSubscription = hostLogBuffer.subscribe((event) => emit("logs", event));
     runtimeSupervisor = createRuntimeSupervisor(runtimeHost);
     runtimeSupervisor.subscribe(() => emit("status", getStatus()));
     appLifecycle = createAppLifecycleCoordinator({
@@ -188,6 +187,7 @@ if (singleInstanceOwnership.primary) {
       supervisor: runtimeSupervisor,
       disposeHostServices: async () => {
         disposeIpc?.();
+        disposeLogSubscription?.();
         trayController?.dispose();
         singleInstanceOwnership.dispose();
         updateService?.dispose();
@@ -240,7 +240,7 @@ if (singleInstanceOwnership.primary) {
       getWindow: () => windowController.getWindow(),
       runtimeSupervisor,
       getStatus,
-      getLogs: () => logLines,
+      getLogs: () => hostLogBuffer.snapshot(),
       shell,
       updateService,
     });

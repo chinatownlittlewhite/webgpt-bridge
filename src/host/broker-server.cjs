@@ -9,12 +9,14 @@ const { classifyLocalAction, classifyLocalPath } = require("../local-policy.cjs"
 const { createLocalFileBroker } = require("../local-file-broker.cjs");
 const { createHostCapabilityStore } = require("../host-capability-store.cjs");
 const { createKnownFolderAccess } = require("../known-folder-access.cjs");
-const { createLoopbackHealthProbe, defaultTcpProbe } = require("../loopback-health-probe.cjs");
+const { createLoopbackHealthProbe } = require("../loopback-health-probe.cjs");
+const { createGitHubHealthProbe } = require("../github-health-probe.cjs");
 const { createLocalTerminalBroker } = require("../local-terminal-broker.cjs");
 const { validateSshCommand } = require("../ssh-policy.cjs");
 
-function createHostBrokerServer({ app, hostSecurity, appendLog, endpoints, platform = process.platform, pid = process.pid, spawnSync }) {
+function createHostBrokerServer({ app, hostSecurity, appendLog, endpoints, platform = process.platform, pid = process.pid }) {
   const { mcpHost, mcpPort, tunnelHealthHost, tunnelHealthPort } = endpoints;
+  const probeGitHubHealth = createGitHubHealthProbe();
   let brokerServer;
   let brokerSocket = "";
   let fileBroker;
@@ -219,25 +221,7 @@ function createHostBrokerServer({ app, hostSecurity, appendLog, endpoints, platf
         agent: { kind: "http", host: mcpHost, port: mcpPort, path: "/healthz" },
         tunnel: { kind: "http", host: tunnelHealthHost, port: tunnelHealthPort, path: "/readyz" },
       },
-      githubProbe: async () => {
-        const connectivity = await defaultTcpProbe({ host: "github.com", port: 443 });
-        if (!githubCliPath) {
-          return { ok: false, connectivity: connectivity.ok === true, binaryReady: false, authenticated: false };
-        }
-        const auth = spawnSync(githubCliPath, ["auth", "status"], {
-          shell: false,
-          windowsHide: true,
-          timeout: 10_000,
-          stdio: "ignore",
-        });
-        const authenticated = !auth.error && auth.status === 0;
-        return {
-          ok: connectivity.ok === true && authenticated,
-          connectivity: connectivity.ok === true,
-          binaryReady: true,
-          authenticated,
-        };
-      },
+      githubProbe: () => probeGitHubHealth({ githubCliPath }),
     });
     const sshExecutable = settings.sshEnabled && platform !== "win32" ? "/usr/bin/ssh" : "";
     const trustedExecutables = {
