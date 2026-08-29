@@ -641,7 +641,7 @@ export function createProcessTools(processManager) {
 export function createGoalModeTool(goalController) {
   return {
     name: "goal_mode",
-    description: "Start a bounded coding goal. Continue goal_step/goal_finish in the same assistant turn while mustContinue=true; never ask the user to type 'continue' for normal progress.",
+    description: "Start a bounded Goal with an optional verification profile. Continue goal_step/goal_finish in the same assistant turn while mustContinue=true; never ask the user to type 'continue' for normal progress.",
     inputSchema: goalModeInputSchema,
     invoke: (input) => goalController.start(input),
   };
@@ -659,7 +659,7 @@ export function createGoalStepTool(goalController) {
 export function createGoalFinishTool(goalController) {
   return {
     name: "goal_finish",
-    description: "Attempt completion with acceptance and project verification. On continue_required, fix the issue in the same assistant turn and retry.",
+    description: "Attempt completion with acceptance and the session's verification profile; system-operation may supply postconditionEvidence. On continue_required, fix the issue in the same assistant turn and retry.",
     inputSchema: goalFinishInputSchema,
     invoke: (input, trustedContext = {}) => goalController.finish(input, trustedContext),
   };

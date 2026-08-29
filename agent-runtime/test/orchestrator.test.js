@@ -40,6 +40,46 @@ test("external orchestrator drives an explicit Goal session to completion across
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("external orchestrator forwards verification profile, postcondition, and postcondition evidence exactly once", async () => {
+  let startInput = null;
+  let finishInput = null;
+  const session = {
+    status: "active",
+    mustContinue: true,
+    sessionId: "profile-session",
+    goal: "restart service",
+    cwd: ".",
+  };
+  const tools = [
+    { name: "goal_mode", invoke(input) { startInput = structuredClone(input); return { ...session }; } },
+    { name: "goal_step", async invoke() { throw new Error("goal_step must not be used"); } },
+    { name: "goal_finish", async invoke(input) { finishInput = structuredClone(input); return { status: "completed", mustContinue: false, sessionId: session.sessionId }; } },
+    { name: "goal_status", invoke() { return { ...session }; } },
+    { name: "goal_cancel", async invoke() { return { status: "canceled", mustContinue: false, sessionId: session.sessionId }; } },
+    { name: "goal_pause", async invoke() { return { status: "paused", mustContinue: false, sessionId: session.sessionId }; } },
+    { name: "goal_resume", async invoke() { return { ...session }; } },
+  ];
+  const run = createExternalGoalOrchestrator({ tools, maxModelTurns: 2 });
+
+  const result = await run({
+    goal: "restart service",
+    verificationProfile: "system-operation",
+    postcondition: "service health is ready",
+  }, {
+    modelStep: async () => ({
+      type: "finish",
+      summary: "service restarted",
+      postconditionEvidence: "health probe returned ready",
+    }),
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(startInput.verificationProfile, "system-operation");
+  assert.equal(startInput.postcondition, "service health is ready");
+  assert.equal(finishInput.postconditionEvidence, "health probe returned ready");
+  assert.equal(Object.hasOwn(finishInput, "verificationProfile"), false);
+});
+
 test("external orchestrator stops only for real user-input blockers", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-orchestrator-block-"));
   const tools = createCoreTools({ workspace: root, goalVerificationTasks: [] });

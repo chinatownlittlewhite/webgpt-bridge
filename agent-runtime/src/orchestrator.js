@@ -23,6 +23,7 @@ function normalizeDecision(decision) {
       summary: decision.summary,
       evidence: Array.isArray(decision.evidence) ? decision.evidence : [],
       criteriaEvidence: Array.isArray(decision.criteriaEvidence) ? decision.criteriaEvidence : [],
+      ...(typeof decision.postconditionEvidence === "string" ? { postconditionEvidence: decision.postconditionEvidence } : {}),
     };
   }
   if (decision.type === "user_input_required") {
@@ -66,6 +67,8 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
     goal,
     cwd = ".",
     acceptanceCriteria = [],
+    verificationProfile,
+    postcondition,
     budgets = {},
   } = {}, {
     modelStep,
@@ -98,6 +101,8 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
         goal,
         cwd,
         acceptanceCriteria,
+        ...(typeof verificationProfile === "string" ? { verificationProfile } : {}),
+        ...(typeof postcondition === "string" ? { postcondition } : {}),
         ...(budgets.maxSteps ? { maxSteps: budgets.maxSteps } : {}),
         ...(budgets.maxToolCalls ? { maxToolCalls: budgets.maxToolCalls } : {}),
         ...(budgets.maxDurationMs ? { maxDurationMs: budgets.maxDurationMs } : {}),
@@ -159,6 +164,7 @@ export function createExternalGoalOrchestrator({ tools = [], auditLogger, maxMod
             summary: decision.summary,
             evidence: decision.evidence,
             criteriaEvidence: decision.criteriaEvidence,
+            ...(typeof decision.postconditionEvidence === "string" ? { postconditionEvidence: decision.postconditionEvidence } : {}),
           }, trustedContext);
 
       if (result.status === "completed" || result.mustContinue === false) {
