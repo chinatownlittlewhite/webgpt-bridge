@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { classifyToolSideEffect } = require("../../shared/tool-registry.cjs");
+const { classifyToolSideEffect } = require("../shared/tool-registry.cjs");
 
 export const SUPPORTED_GOAL_VERIFICATION_PROFILES = Object.freeze([
   "code-change",
