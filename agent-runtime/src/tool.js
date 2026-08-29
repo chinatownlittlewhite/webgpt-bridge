@@ -20,6 +20,21 @@ function publicGitHubCliState(value) {
   });
 }
 
+function publicWindowsHostPreparationState(value) {
+  if (!value || typeof value !== "object") return value;
+  return Object.freeze({
+    status: typeof value.status === "string" ? value.status : "unknown",
+    usable: value.usable === true,
+    capabilityName: safePublicText(value.capabilityName),
+    expectedPath: null,
+    capabilitySid: safePublicText(value.capabilitySid),
+    target: safePublicText(value.target),
+    errorCode: Number.isInteger(value.errorCode) ? value.errorCode : null,
+    reason: safePublicText(value.reason),
+    remediation: safePublicText(value.remediation),
+  });
+}
+
 function decorateCapabilities(value, { brokerEnabled }) {
   const metadata = createProductMetadata({ brokerEnabled });
   return Object.freeze({
@@ -27,6 +42,7 @@ function decorateCapabilities(value, { brokerEnabled }) {
     ...metadata,
     version: metadata.agentVersion,
     githubCli: publicGitHubCliState(value.githubCli),
+    windowsHostPreparation: publicWindowsHostPreparationState(value.windowsHostPreparation),
     mcp: Object.freeze({
       ...value.mcp,
       protocolRevision: metadata.mcpProtocolRevision,
