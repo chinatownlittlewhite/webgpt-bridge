@@ -8,6 +8,9 @@ const { createHostSettingsStore } = require("./host/settings-store.cjs");
 const { createHostSecurity } = require("./host/host-security.cjs");
 const { createHostBrokerServer } = require("./host/broker-server.cjs");
 const { createRuntimeHost } = require("./host/runtime-host.cjs");
+const { createWindowController } = require("./host/window-controller.cjs");
+const { createTrayController } = require("./host/tray-controller.cjs");
+const { registerHostIpc } = require("./host/ipc-controller.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
 const { ensureTunnelProfile } = require("./tunnel-profile-manager.cjs");
@@ -42,8 +45,9 @@ const TUNNEL_HEALTH_PORT = desktopRuntimeConfig.tunnelHealthPort;
 const TUNNEL_HEALTH_LISTEN_ADDR = `${TUNNEL_HEALTH_HOST}:${TUNNEL_HEALTH_PORT}`;
 const MAX_LOG_LINES = 600;
 
-let windowRef;
-let trayRef;
+let windowController;
+let trayController;
+let disposeIpc;
 let logLines = [];
 let updateService;
 let runtimeSupervisor;
@@ -103,7 +107,7 @@ const startupPreflight = createStartupPreflight({
 });
 
 function emit(type, value) {
-  windowRef?.webContents.send("host:event", { type, value });
+  windowController?.getWindow()?.webContents.send("host:event", { type, value });
   if (type === "status") updateTray();
 }
 
@@ -137,7 +141,7 @@ function getStatus() {
 }
 
 function dialogOwner() {
-  return windowRef && !windowRef.isDestroyed() ? windowRef : undefined;
+  return windowController?.dialogOwner();
 }
 
 const hostSecurity = createHostSecurity({ dialog, dialogOwner, appendLog });
@@ -167,85 +171,12 @@ const runtimeHost = createRuntimeHost({
   env: process.env,
 });
 
-function trayIcon() {
-  const image = nativeImage.createFromDataURL(trayIconDataUrl(process.platform));
-  if (image.isEmpty()) throw new Error("无法创建系统托盘图标。");
-  if (process.platform === "darwin") image.setTemplateImage(true);
-  return image;
-}
-
-function dockIcon() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><linearGradient id="b" x1="180" y1="96" x2="850" y2="920"><stop stop-color="#26312e"/><stop offset="1" stop-color="#0d1211"/></linearGradient><linearGradient id="a" x1="322" y1="384" x2="712" y2="650"><stop stop-color="#cff9e9"/><stop offset="1" stop-color="#56d6ae"/></linearGradient></defs><rect width="1024" height="1024" rx="226" fill="url(#b)"/><path d="M282 596c0-88 71-159 159-159h64" fill="none" stroke="#f3f7f5" stroke-width="92" stroke-linecap="round"/><path d="M742 428c0 88-71 159-159 159h-64" fill="none" stroke="url(#a)" stroke-width="92" stroke-linecap="round"/><circle cx="282" cy="596" r="62" fill="#f3f7f5"/><circle cx="742" cy="428" r="62" fill="#56d6ae"/></svg>`;
-  return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
-}
-
 function showWindow() {
-  if (!windowRef || windowRef.isDestroyed()) createWindow();
-  windowRef.show();
-  windowRef.focus();
+  return windowController?.showWindow();
 }
 
 function updateTray() {
-  if (!trayRef) return;
-  const status = getStatus();
-  const connected = status.connected;
-  const update = updateService?.getState();
-  const updateItem = update?.status === "downloaded"
-    ? { label: `更新已下载 · v${update.availableVersion}`, enabled: false }
-    : update?.status === "available"
-      ? { label: `发现更新 · v${update.availableVersion}`, enabled: false }
-      : null;
-  trayRef.setToolTip(`WebGPT Bridge · ${connected ? "已连接" : "未连接"}`);
-  trayRef.setContextMenu(Menu.buildFromTemplate([
-    { label: connected ? "已连接到 ChatGPT" : "未连接", enabled: false },
-    ...(updateItem ? [updateItem] : []),
-    { type: "separator" },
-    { label: "显示控制器", click: showWindow },
-    {
-      label: "启动连接",
-      enabled: !connected,
-      click: () => runtimeSupervisor.start().catch((error) => appendLog("host", `启动失败：${error.message}`)),
-    },
-    { label: "停止服务", enabled: status.server || status.tunnel, click: () => { void runtimeSupervisor.stop("tray"); } },
-    { type: "separator" },
-    {
-      label: "退出 WebGPT Bridge",
-      click: () => {
-        void appLifecycle.requestQuit("tray-quit").catch((error) => appendLog("host", `${error.code || "SHUTDOWN_FAILED"}：${error.message}`));
-      },
-    },
-  ]));
-}
-
-function createTray() {
-  trayRef = new Tray(trayIcon());
-  trayRef.on("click", showWindow);
-  updateTray();
-}
-
-function createWindow() {
-  windowRef = new BrowserWindow({
-    width: 720,
-    height: 660,
-    minWidth: 560,
-    minHeight: 540,
-    backgroundColor: "#edf1ef",
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
-    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
-    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true },
-  });
-  windowRef.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http://") || url.startsWith("https://")) void shell.openExternal(url);
-    return { action: "deny" };
-  });
-  windowRef.webContents.on("will-navigate", (event) => event.preventDefault());
-  windowRef.on("close", (event) => {
-    if (appLifecycle.nativeQuitAllowed()) return;
-    event.preventDefault();
-    windowRef.hide();
-  });
-  windowRef.on("closed", () => { windowRef = undefined; });
-  windowRef.loadFile(path.join(__dirname, "renderer", "index.html"));
+  trayController?.updateTray();
 }
 
 if (singleInstanceOwnership.primary) {
@@ -256,19 +187,43 @@ if (singleInstanceOwnership.primary) {
       app,
       supervisor: runtimeSupervisor,
       disposeHostServices: async () => {
+        disposeIpc?.();
+        trayController?.dispose();
         singleInstanceOwnership.dispose();
         updateService?.dispose();
       },
     });
 
-    if (process.platform === "darwin" && app.dock) app.dock.setIcon(dockIcon());
+    windowController = createWindowController({
+      BrowserWindow,
+      shell,
+      preloadPath: path.join(__dirname, "preload.cjs"),
+      rendererPath: path.join(__dirname, "renderer", "index.html"),
+      platform: process.platform,
+      nativeQuitAllowed: () => appLifecycle.nativeQuitAllowed(),
+    });
+    trayController = createTrayController({
+      Tray,
+      Menu,
+      nativeImage,
+      trayIconDataUrl,
+      platform: process.platform,
+      getStatus,
+      getUpdateState: () => updateService?.getState(),
+      showWindow,
+      start: () => runtimeSupervisor.start(),
+      stop: (reason) => runtimeSupervisor.stop(reason),
+      requestQuit: (reason) => appLifecycle.requestQuit(reason),
+      appendLog,
+    });
+    if (process.platform === "darwin" && app.dock) app.dock.setIcon(trayController.dockIcon());
     updateService = createUpdateService({
       updater: autoUpdater,
       currentVersion: app.getVersion(),
       isPackaged: app.isPackaged,
       prepareForInstall: () => appLifecycle.prepareForUpdateInstall(),
       emitState: (state) => {
-        windowRef?.webContents?.send("update:state", state);
+        windowController?.getWindow()?.webContents?.send("update:state", state);
         updateTray();
       },
       log: (line) => appendLog("update", line),
@@ -278,25 +233,18 @@ if (singleInstanceOwnership.primary) {
     const { session } = require("electron");
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
-    ipcMain.handle("settings:load", () => settingsStore.loadSettings());
-    ipcMain.handle("settings:save", async (_event, payload) => {
-      if (!payload || typeof payload !== "object") throw new Error("设置格式无效。");
-      if (typeof payload.runtimeKey === "string" && payload.runtimeKey.trim()) await settingsStore.saveRuntimeKey(payload.runtimeKey.trim());
-      return { ...(await settingsStore.writeSettings(payload)), hasRuntimeKey: settingsStore.hasRuntimeKey() };
+    disposeIpc = registerHostIpc({
+      ipcMain,
+      settingsStore,
+      dialog,
+      getWindow: () => windowController.getWindow(),
+      runtimeSupervisor,
+      getStatus,
+      getLogs: () => logLines,
+      shell,
+      updateService,
     });
-    ipcMain.handle("settings:clear-key", () => settingsStore.clearRuntimeKey());
-    ipcMain.handle("dialog:directory", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openDirectory"] })).filePaths[0] || "");
-    ipcMain.handle("dialog:file", async () => (await dialog.showOpenDialog(windowRef, { properties: ["openFile"] })).filePaths[0] || "");
-    ipcMain.handle("host:start", () => runtimeSupervisor.start());
-    ipcMain.handle("host:stop", () => runtimeSupervisor.stop("ipc"));
-    ipcMain.handle("host:status", () => getStatus());
-    ipcMain.handle("host:logs", () => logLines);
-    ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
-    ipcMain.handle("update:get-state", () => updateService.getState());
-    ipcMain.handle("update:check", () => updateService.checkForUpdates());
-    ipcMain.handle("update:download", () => updateService.downloadUpdate());
-    ipcMain.handle("update:install", () => updateService.installUpdateAndRestart());
-    createTray();
+    trayController.createTray();
     showWindow();
     if (packageMetadata.WEBGPT_UPDATE_E2E_BUILD === true) {
       const { runUpdateE2EControl } = require("./update-e2e-control.cjs");

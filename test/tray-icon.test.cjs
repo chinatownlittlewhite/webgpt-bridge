@@ -103,13 +103,15 @@ test("macOS keeps a template-capable monochrome PNG while Windows uses a distinc
 
 test("main process creates the tray from the platform PNG helper and keeps macOS template behavior", () => {
   const main = fs.readFileSync(path.join(root, "src", "main.cjs"), "utf8");
+  const trayController = fs.readFileSync(path.join(root, "src", "host", "tray-controller.cjs"), "utf8");
   assert.match(main, /require\("\.\/tray-icon\.cjs"\)/);
-  assert.match(main, /trayIconDataUrl\(process\.platform\)/);
-  assert.match(main, /image\.isEmpty\(\)/);
-  assert.match(main, /process\.platform === "darwin"[\s\S]*setTemplateImage\(true\)/);
-  const trayStart = main.indexOf("function trayIcon()");
-  const trayEnd = main.indexOf("\nfunction dockIcon()", trayStart);
+  assert.match(main, /createTrayController\(\{[\s\S]*trayIconDataUrl[\s\S]*platform:\s*process\.platform/);
+  assert.match(trayController, /trayIconDataUrl\(platform\)/);
+  assert.match(trayController, /image\.isEmpty\(\)/);
+  assert.match(trayController, /platform === "darwin"[\s\S]*setTemplateImage\(true\)/);
+  const trayStart = trayController.indexOf("function trayIcon()");
+  const trayEnd = trayController.indexOf("\n  function dockIcon()", trayStart);
   assert.ok(trayStart >= 0 && trayEnd > trayStart);
-  const traySource = main.slice(trayStart, trayEnd);
+  const traySource = trayController.slice(trayStart, trayEnd);
   assert.doesNotMatch(traySource, /image\/svg\+xml/);
 });
