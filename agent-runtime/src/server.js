@@ -23,6 +23,7 @@ import { createProcessManager } from "./process-manager.js";
 import { loadProjectContext } from "./project-context.js";
 import { createHostApprovalClient } from "./local-broker-client.js";
 import { createCoreTools } from "./tool.js";
+import { createRuntimeToolRegistry } from "./tool-registry.js";
 import { resolveWorkspace } from "./workspace.js";
 
 const VERSION = "0.9.3";
@@ -241,17 +242,6 @@ function writeEmpty(res, status) {
   res.end();
 }
 
-function toolAnnotations(name) {
-  const readOnly = new Set(["process_poll", "process_list", "read_file", "list_dir", "search_text", "search_files", "goal_status", "get_capabilities"]);
-  const destructive = new Set(["delete_file", "move_file", "process_kill"]);
-  return {
-    readOnlyHint: readOnly.has(name),
-    destructiveHint: destructive.has(name),
-    idempotentHint: readOnly.has(name),
-    openWorldHint: ["dependency_sync", "github"].includes(name),
-  };
-}
-
 function buildMcpServer({ tools, auditLogger, instructions, hostApproval }) {
   const server = new McpServer(
     { name: "webgpt-bridge", version: VERSION },
@@ -261,23 +251,24 @@ function buildMcpServer({ tools, auditLogger, instructions, hostApproval }) {
     },
   );
 
-  for (const tool of tools) {
+  const registry = createRuntimeToolRegistry(tools, { requireComplete: true });
+  for (const descriptor of registry) {
     server.registerTool(
-      tool.name,
+      descriptor.name,
       {
-        description: tool.description,
-        inputSchema: fromJsonSchema(tool.inputSchema),
-        annotations: toolAnnotations(tool.name),
+        description: descriptor.description,
+        inputSchema: fromJsonSchema(descriptor.inputSchema),
+        annotations: descriptor.mcpAnnotations,
       },
       async (args, ctx) => {
         try {
           const trustedContext = trustedContextFromMcp(ctx, hostApproval);
-          const result = await tool.invoke(args, trustedContext);
-          return callToolResult(tool.name, result);
+          const result = await descriptor.invoke(args, trustedContext);
+          return callToolResult(descriptor.name, result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          auditLogger.record({ type: "mcp_tool_error", tool: tool.name, error: message });
-          return callToolResult(tool.name, { status: "tool_error", error: message });
+          auditLogger.record({ type: "mcp_tool_error", tool: descriptor.name, error: message });
+          return callToolResult(descriptor.name, { status: "tool_error", error: message });
         }
       },
     );
