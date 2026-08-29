@@ -29,6 +29,13 @@ function renderStatus(status) {
   connection.querySelector("b").textContent = status.tunnel ? "已连接" : "未连接";
 }
 
+function renderDiagnostics(diagnostics) {
+  byId("diagnosticVersions").textContent = `Desktop v${diagnostics.desktopVersion} · Agent v${diagnostics.agentVersion}`;
+  byId("diagnosticProtocols").textContent = `MCP ${diagnostics.mcpProtocolRevision} · Broker v${diagnostics.brokerProtocolVersion}`;
+  byId("diagnosticGoalStore").textContent = `v${diagnostics.goalStoreVersion} · ${diagnostics.supportedGoalVerificationProfiles.join(" / ")}`;
+  byId("diagnosticToolCounts").textContent = `全部 ${diagnostics.tools.length} · Goal ${diagnostics.goalTools.length} · Broker ${diagnostics.brokerTools.length}`;
+}
+
 function formatLogEntry({ at, source, line }) {
   const time = String(at || "").slice(11, 19).padEnd(8);
   return `${time}  ${String(source || "host").padEnd(12)} ${String(line || "")}`;
@@ -173,6 +180,7 @@ api.onUpdateState(renderUpdate);
   byId("sshAllowedHosts").value = Array.isArray(settings.sshAllowedHosts) ? settings.sshAllowedHosts.join("\n") : "";
   byId("keyStatus").textContent = settings.hasRuntimeKey ? "此电脑的密钥已安全保存" : "尚未保存运行时密钥";
   renderStatus(await api.status());
+  renderDiagnostics(await api.diagnostics());
   await logState.bootstrap();
   renderUpdate(await api.getUpdateState());
 })();

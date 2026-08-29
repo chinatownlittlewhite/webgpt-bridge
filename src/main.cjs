@@ -11,6 +11,7 @@ const { createRuntimeHost } = require("./host/runtime-host.cjs");
 const { createWindowController } = require("./host/window-controller.cjs");
 const { createTrayController } = require("./host/tray-controller.cjs");
 const { registerHostIpc } = require("./host/ipc-controller.cjs");
+const { createDiagnosticsService } = require("./host/diagnostics-service.cjs");
 const { createHostLogBuffer } = require("./host-log-buffer.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
@@ -107,6 +108,7 @@ const startupPreflight = createStartupPreflight({
   resolveDesktopGitHubCli,
 });
 
+const diagnosticsService = createDiagnosticsService({ brokerEnabled: true });
 const hostLogBuffer = createHostLogBuffer({
   capacity: MAX_LOG_LINES,
   maxBatchEntries: 64,
@@ -241,6 +243,7 @@ if (singleInstanceOwnership.primary) {
       runtimeSupervisor,
       getStatus,
       getLogs: () => hostLogBuffer.snapshot(),
+      diagnosticsService,
       shell,
       updateService,
     });

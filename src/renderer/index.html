@@ -128,10 +128,10 @@
           <span>只显示有界信息</span>
         </div>
         <div class="diagnostic-grid" aria-label="诊断范围">
-          <div><span>Desktop / Build</span><strong>本机应用与版本</strong></div>
-          <div><span>Agent / Protocol</span><strong>MCP 与 Broker</strong></div>
-          <div><span>Sandbox / Tunnel</span><strong>隔离与连通性</strong></div>
-          <div><span>GitHub / Goal</span><strong>CLI 与持久化验证</strong></div>
+          <div><span>Desktop / Agent</span><strong id="diagnosticVersions">读取中…</strong></div>
+          <div><span>MCP / Broker</span><strong id="diagnosticProtocols">读取中…</strong></div>
+          <div><span>Goal Store / Verify</span><strong id="diagnosticGoalStore">读取中…</strong></div>
+          <div><span>Tools</span><strong id="diagnosticToolCounts">读取中…</strong></div>
         </div>
         <details class="logs diagnostic-logs">
           <summary>运行日志 <span>仅用于排查问题</span></summary>

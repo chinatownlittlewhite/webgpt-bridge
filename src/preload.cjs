@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("localAgentHost", {
   openChatGPT: () => ipcRenderer.invoke("chatgpt:open"),
   status: () => ipcRenderer.invoke("host:status"),
   logs: () => ipcRenderer.invoke("host:logs"),
+  diagnostics: () => ipcRenderer.invoke("host:diagnostics"),
   getUpdateState: () => ipcRenderer.invoke("update:get-state"),
   checkForUpdates: () => ipcRenderer.invoke("update:check"),
   downloadUpdate: () => ipcRenderer.invoke("update:download"),

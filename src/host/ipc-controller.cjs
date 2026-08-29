@@ -1,4 +1,4 @@
-function registerHostIpc({ ipcMain, settingsStore, dialog, getWindow, runtimeSupervisor, getStatus, getLogs, shell, updateService }) {
+function registerHostIpc({ ipcMain, settingsStore, dialog, getWindow, runtimeSupervisor, getStatus, getLogs, diagnosticsService, shell, updateService }) {
   const channels = [];
   const handle = (channel, handler) => {
     channels.push(channel);
@@ -20,6 +20,7 @@ function registerHostIpc({ ipcMain, settingsStore, dialog, getWindow, runtimeSup
   handle("host:stop", () => runtimeSupervisor.stop("ipc"));
   handle("host:status", () => getStatus());
   handle("host:logs", () => getLogs());
+  handle("host:diagnostics", () => diagnosticsService.snapshot());
   handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
   handle("update:get-state", () => updateService.getState());
   handle("update:check", () => updateService.checkForUpdates());
