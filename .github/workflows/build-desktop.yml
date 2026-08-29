@@ -50,6 +50,7 @@ jobs:
             exit 1
           fi
           APP="$(find release -type d -name 'WebGPT Bridge.app' -print -quit)"
+          APP="$(pwd -P)/$APP"
           npm run verify:mac-native-artifact -- "$APP"
           npm run verify:mac-packaged-pty -- "$APP"
           node scripts/report-package-size.cjs "$APP" > release/macos-package-size.json
