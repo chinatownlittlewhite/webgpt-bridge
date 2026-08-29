@@ -9,6 +9,13 @@ function api() {
   return require(modulePath);
 }
 
+test("SSH parser delegates normalized authorization to the canonical policy core", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "ssh-policy.cjs"), "utf8");
+  assert.match(source, /security-policy-core\.cjs/);
+  assert.match(source, /authorizeSecurityOperation/);
+  assert.match(source, /type:\s*"ssh"/);
+});
+
 test("SSH allows only private/local or explicitly allowlisted hosts and requires a remote command", () => {
   const { validateSshCommand } = api();
   assert.doesNotThrow(() => validateSshCommand(["ssh", "10.0.0.8", "uptime"], { allowedHosts: [] }));

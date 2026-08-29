@@ -1,11 +1,8 @@
 const { spawn } = require("node:child_process");
 const path = require("node:path");
+const { isImmutableDeniedExecutable } = require("../shared/security-policy-core.cjs");
 const { classifyLocalTerminalApproval, normalizeApprovalMode } = require("./local-policy.cjs");
 
-const BLOCKED_EXECUTABLES = new Set([
-  "sudo", "su", "doas", "scp", "sftp",
-  "sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "pwsh",
-]);
 const NETWORK_GIT_SUBCOMMANDS = new Set(["clone", "fetch", "pull", "push", "ls-remote", "submodule"]);
 const NETWORK_PACKAGE_SUBCOMMANDS = new Set(["install", "i", "ci", "publish", "update", "outdated", "view", "info", "ping", "audit"]);
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -16,7 +13,7 @@ function assertArgv(argv) {
     if (typeof value !== "string" || !value || value.includes("\0")) throw new TypeError("argv 每项必须是非空且不含 NUL 的字符串。");
   }
   if (argv[0].includes("/") || argv[0].includes("\\")) throw new TypeError("可执行文件必须通过受信任的 PATH 名称解析，不能提供路径。");
-  if (BLOCKED_EXECUTABLES.has(argv[0].toLowerCase())) throw new Error(`${argv[0]} 不允许通过本机终端代理执行。`);
+  if (isImmutableDeniedExecutable(argv[0], "host-terminal")) throw new Error(`${argv[0]} 不允许通过本机终端代理执行。`);
 }
 
 function logicalExecutable(value) {

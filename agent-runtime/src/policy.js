@@ -1,11 +1,8 @@
 import path from "node:path";
+import securityPolicyCore from "../../shared/security-policy-core.cjs";
 
+const { authorizeSecurityOperation, isImmutableDeniedExecutable } = securityPolicyCore;
 const SAFE_NPM_RUN_SCRIPTS = new Set(["test", "lint", "build", "typecheck", "check"]);
-const ALWAYS_DENY = new Set([
-  "sudo", "su", "scp", "sftp",
-  "sh", "bash", "zsh", "fish",
-  "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe",
-]);
 const APPROVAL_COMMANDS = new Set([
   "curl",
   "wget",
@@ -45,54 +42,35 @@ function gitReadOperationNeedsApproval(args) {
   );
 }
 
+function fromCore(commandClass, reason) {
+  const authorization = authorizeSecurityOperation({ type: "agent-command", commandClass });
+  return {
+    decision: authorization.decision === "confirm" ? "approval_required" : authorization.decision,
+    reason: reason || authorization.reason,
+    rule: authorization.rule,
+  };
+}
+
 function classifyGit(args) {
   const subcommand = args[0] ?? "";
   const rest = args.slice(1);
 
-  if (subcommand === "status") {
-    return {
-      decision: "allow",
-      reason: "git status is read-only",
-      rule: "git-read-only",
-    };
-  }
+  if (subcommand === "status") return fromCore("git-read", "git status is read-only");
 
   if (["log", "show"].includes(subcommand)) {
-    if (gitReadOperationNeedsApproval(rest)) {
-      return {
-        decision: "approval_required",
-        reason: `git ${subcommand} options can write output or invoke external helpers`,
-        rule: "git-path-sensitive",
-      };
-    }
-    return {
-      decision: "allow",
-      reason: `git ${subcommand} is read-only with the selected options`,
-      rule: "git-read-only",
-    };
+    return gitReadOperationNeedsApproval(rest)
+      ? fromCore("git-path-sensitive", `git ${subcommand} options can write output or invoke external helpers`)
+      : fromCore("git-read", `git ${subcommand} is read-only with the selected options`);
   }
 
   if (subcommand === "diff") {
-    if (rest.includes("--no-index") || gitReadOperationNeedsApproval(rest)) {
-      return {
-        decision: "approval_required",
-        reason: "git diff options can access arbitrary paths, write output, or invoke external helpers",
-        rule: "git-path-sensitive",
-      };
-    }
-    return {
-      decision: "allow",
-      reason: "git diff is read-only inside the repository",
-      rule: "git-read-only",
-    };
+    return rest.includes("--no-index") || gitReadOperationNeedsApproval(rest)
+      ? fromCore("git-path-sensitive", "git diff options can access arbitrary paths, write output, or invoke external helpers")
+      : fromCore("git-read", "git diff is read-only inside the repository");
   }
 
   if (subcommand === "worktree" && rest[0] === "list") {
-    return {
-      decision: "allow",
-      reason: "git worktree list is read-only",
-      rule: "git-read-only",
-    };
+    return fromCore("git-read", "git worktree list is read-only");
   }
 
   if (subcommand === "branch") {
@@ -104,20 +82,10 @@ function classifyGit(args) {
         arg === "--contains" ||
         arg.startsWith("--format="),
       );
-    if (readOnly) {
-      return {
-        decision: "allow",
-        reason: "git branch invocation is read-only",
-        rule: "git-read-only",
-      };
-    }
+    if (readOnly) return fromCore("git-read", "git branch invocation is read-only");
   }
 
-  return {
-    decision: "approval_required",
-    reason: "Git mutations or path-sensitive operations require approval",
-    rule: "git-mutation",
-  };
+  return fromCore("git-mutation", "Git mutations or path-sensitive operations require approval");
 }
 
 export function executableName(argv) {
@@ -129,103 +97,53 @@ export function classifyCommand(argv) {
   const command = executableName(argv);
   const args = argv.slice(1);
 
-  if (ALWAYS_DENY.has(command)) {
-    return {
-      decision: "deny",
-      reason: `${command} is blocked by the default policy`,
-      rule: "always-deny",
-    };
+  if (isImmutableDeniedExecutable(command, "agent")) {
+    return fromCore("immutable-deny", `${command} is blocked by the default policy`);
   }
-
-  if (command === "ssh") {
-    return {
-      decision: "approval_required",
-      reason: "SSH requires App-owned host validation and approval",
-      rule: "ssh-network",
-    };
-  }
-
-  if (command === "git") {
-    return classifyGit(args);
-  }
+  if (command === "ssh") return fromCore("ssh", "SSH requires App-owned host validation and approval");
+  if (command === "git") return classifyGit(args);
 
   if (["npm", "pnpm", "yarn"].includes(command)) {
-    if (args[0] === "test") {
-      return { decision: "allow", reason: "test command", rule: "project-check" };
-    }
+    if (args[0] === "test") return fromCore("project-check", "test command");
     if (args[0] === "run" && SAFE_NPM_RUN_SCRIPTS.has(args[1] ?? "")) {
-      return { decision: "allow", reason: "known project check", rule: "project-check" };
+      return fromCore("project-check", "known project check");
     }
-    return {
-      decision: "approval_required",
-      reason: "Package-manager mutations or arbitrary scripts require approval",
-      rule: "package-manager",
-    };
+    return fromCore("package-manager", "Package-manager mutations or arbitrary scripts require approval");
   }
 
   if (command === "node") {
-    if (args[0] === "--test") {
-      return { decision: "allow", reason: "Node test runner", rule: "project-check" };
-    }
-    return {
-      decision: "approval_required",
-      reason: "Arbitrary Node execution requires approval",
-      rule: "runtime-execution",
-    };
+    return args[0] === "--test"
+      ? fromCore("project-check", "Node test runner")
+      : fromCore("runtime-execution", "Arbitrary Node execution requires approval");
   }
 
-  if (command === "pytest" || command === "ruff") {
-    return { decision: "allow", reason: "Python project check", rule: "project-check" };
-  }
+  if (command === "pytest" || command === "ruff") return fromCore("project-check", "Python project check");
 
   if (command === "python" || command === "python3") {
-    if (args[0] === "-m" && ["pytest", "ruff"].includes(args[1] ?? "")) {
-      return { decision: "allow", reason: "Python project check", rule: "project-check" };
-    }
-    return {
-      decision: "approval_required",
-      reason: "Arbitrary Python execution requires approval",
-      rule: "runtime-execution",
-    };
+    return args[0] === "-m" && ["pytest", "ruff"].includes(args[1] ?? "")
+      ? fromCore("project-check", "Python project check")
+      : fromCore("runtime-execution", "Arbitrary Python execution requires approval");
   }
 
   if (command === "cargo") {
-    if (["test", "check"].includes(args[0] ?? "")) {
-      return { decision: "allow", reason: "Rust project check", rule: "project-check" };
-    }
-    return {
-      decision: "approval_required",
-      reason: "Rust build or mutation commands require approval",
-      rule: "runtime-execution",
-    };
+    return ["test", "check"].includes(args[0] ?? "")
+      ? fromCore("project-check", "Rust project check")
+      : fromCore("runtime-execution", "Rust build or mutation commands require approval");
   }
 
   if (command === "go") {
-    if (args[0] === "test") {
-      return { decision: "allow", reason: "Go tests", rule: "project-check" };
-    }
-    return {
-      decision: "approval_required",
-      reason: "Go build or mutation commands require approval",
-      rule: "runtime-execution",
-    };
+    return args[0] === "test"
+      ? fromCore("project-check", "Go tests")
+      : fromCore("runtime-execution", "Go build or mutation commands require approval");
   }
 
   if (command === "make" && ["test", "lint", "check", "build"].includes(args[0] ?? "")) {
-    return { decision: "allow", reason: "known Make target", rule: "project-check" };
+    return fromCore("project-check", "known Make target");
   }
 
   if (APPROVAL_COMMANDS.has(command)) {
-    return {
-      decision: "approval_required",
-      reason: `${command} can modify the workspace or access external resources`,
-      rule: "sensitive-command",
-    };
+    return fromCore("sensitive-command", `${command} can modify the workspace or access external resources`);
   }
 
-  return {
-    decision: "approval_required",
-    reason: "Unknown commands require approval by default",
-    rule: "default-ask",
-  };
+  return fromCore("default-ask", "Unknown commands require approval by default");
 }

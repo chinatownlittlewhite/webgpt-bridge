@@ -1,15 +1,14 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { authorizeSecurityOperation, normalizeApprovalPreset } = require("../shared/security-policy-core.cjs");
 
-const APPROVAL_MODES = new Set(["cautious", "development", "auto", "full_control"]);
-const DESTRUCTIVE_ACTIONS = new Set(["delete", "move", "overwrite"]);
 const SENSITIVE_FILE_NAMES = new Set([
   ".env", ".npmrc", ".netrc", ".pypirc", ".pgpass", ".git-credentials",
 ]);
 
 function normalizeApprovalMode(mode) {
-  return APPROVAL_MODES.has(mode) ? mode : "development";
+  return normalizeApprovalPreset(mode);
 }
 
 function canonicalPath(input, fsImpl = fs) {
@@ -71,7 +70,6 @@ function classifyLocalPath(inputPath, options = {}) {
   const homeDir = options.homeDir || os.homedir();
   const fsImpl = options.fsImpl || fs;
   const operation = options.operation;
-  const protectedRead = operation === undefined || operation === "read" || operation === "list";
   const target = canonicalPath(inputPath, fsImpl);
   const sensitiveRoots = [
     ...defaultSensitiveRoots(homeDir, platform),
@@ -90,51 +88,34 @@ function classifyLocalPath(inputPath, options = {}) {
     ? canonicalPath(options.workspaceRoot, fsImpl)
     : "";
 
-  if (systemRoots.some((root) => isWithin(target, root))) {
-    return { decision: "deny", reason: "系统路径不允许由本机代理访问。", sensitive: true, path: target, scope: "system" };
-  }
-  if (sensitiveRoots.some((root) => isWithin(target, root)) || SENSITIVE_FILE_NAMES.has(path.basename(target).toLowerCase())) {
-    return { decision: "deny", reason: "该路径属于默认排除的敏感位置。", sensitive: true, path: target, scope: "sensitive" };
-  }
-  if (workspaceRoot && isWithin(target, workspaceRoot)) {
-    return { decision: "allow", reason: "当前工作区路径。", sensitive: false, path: target, scope: "workspace" };
-  }
-  if (knownFolderRoots.some((root) => isWithin(target, root))) {
-    return {
-      decision: protectedRead ? "confirm" : "allow",
-      reason: protectedRead ? "固定用户目录需要显式授权。" : "普通本机路径。",
-      sensitive: false,
-      path: target,
-      scope: "known-folder",
-    };
-  }
+  let scope = "ordinary-host";
+  if (systemRoots.some((root) => isWithin(target, root))) scope = "system";
+  else if (sensitiveRoots.some((root) => isWithin(target, root)) || SENSITIVE_FILE_NAMES.has(path.basename(target).toLowerCase())) scope = "sensitive";
+  else if (workspaceRoot && isWithin(target, workspaceRoot)) scope = "workspace";
+  else if (knownFolderRoots.some((root) => isWithin(target, root))) scope = "known-folder";
+
+  const authorization = authorizeSecurityOperation({
+    type: "filesystem-path",
+    scope,
+    kind: operation || "read",
+  });
   return {
-    decision: protectedRead ? "confirm" : "allow",
-    reason: protectedRead ? "工作区外的本机路径需要授权。" : "普通本机路径。",
-    sensitive: false,
+    ...authorization,
+    sensitive: scope === "system" || scope === "sensitive",
     path: target,
-    scope: "ordinary-host",
+    scope,
   };
 }
 
 function classifyLocalAction({ kind, approvalMode, sensitive = false, network = false, withinWorkspace = false } = {}) {
-  const mode = normalizeApprovalMode(approvalMode);
-  if (sensitive) {
-    if (kind === "read" || kind === "list") return { decision: "confirm", reason: "敏感位置仅可进行单次确认读取。" };
-    return { decision: "deny", reason: "敏感位置不允许修改或执行。" };
-  }
-  if (mode === "full_control") return { decision: "allow", reason: "完全控制模式不要求普通本机操作确认。" };
-  if (network || kind === "network") return { decision: "confirm", reason: "任意网络操作仍需要确认。" };
-  if (DESTRUCTIVE_ACTIONS.has(kind)) {
-    return mode !== "cautious" && withinWorkspace
-      ? { decision: "allow", reason: "当前模式允许工作区内的删除、移动或覆盖。" }
-      : { decision: "confirm", reason: "工作区外的删除、移动或覆盖仍需要确认。" };
-  }
-  if (kind === "read" || kind === "list") return { decision: "allow", reason: "普通读取无需确认。" };
-  if (kind === "update" || kind === "create") {
-    return { decision: "allow", reason: "普通文件新建或更新无需确认。" };
-  }
-  return { decision: "confirm", reason: "未知操作需要确认。" };
+  return authorizeSecurityOperation({
+    type: "filesystem-action",
+    kind,
+    preset: normalizeApprovalMode(approvalMode),
+    sensitive,
+    network,
+    withinWorkspace,
+  });
 }
 
 function hasExpandedSandboxAccess(sandboxAccess) {
@@ -144,10 +125,10 @@ function hasExpandedSandboxAccess(sandboxAccess) {
   );
 }
 
-function sandboxAccessPermissionKey(sandboxAccess = {}) {
+function sandboxAccessScopeKey(sandboxAccess = {}) {
   const read = Array.isArray(sandboxAccess.read) ? [...sandboxAccess.read].sort().join(",") : "";
   const write = Array.isArray(sandboxAccess.write) ? [...sandboxAccess.write].sort().join(",") : "";
-  return `host:sandbox-expansion:read:${read}|write:${write}`;
+  return `read:${read}|write:${write}`;
 }
 
 function isVerifiedSandboxRequest(request) {
@@ -237,60 +218,50 @@ function isHighAutonomyWorkspaceUtility(argv) {
 }
 
 function classifyLocalTerminalApproval({ argv, classification, approvalMode } = {}) {
-  const mode = normalizeApprovalMode(approvalMode);
   const command = path.basename(Array.isArray(argv) ? argv[0] || "" : "").toLowerCase();
-  if (!classification || classification.decision === "deny") return { decision: "deny", reason: classification?.reason || "命令策略已拒绝该操作。" };
-  if (mode === "full_control") return { decision: "allow", reason: "完全控制模式不要求普通本机终端确认。" };
-  if (classification.rule === "runtime-execution" || isProjectPackageScript(argv)) return { decision: "allow", reason: "项目运行和项目脚本不再要求执行确认。" };
-  if (["curl", "wget"].includes(command) || classification.rule === "network") return { decision: "confirm", reason: "本机终端网络命令需要确认。" };
-  if (classification.decision === "allow") return { decision: "allow", reason: "命令分类器已允许该本机操作。" };
-  if (isGitHubRead(argv)) return { decision: "allow", reason: "只读 GitHub 查询可由 App-owned broker 自动执行。" };
-  if (isGitReadOnlyRemote(argv)) return { decision: "allow", reason: "只读或仅更新 Git 元数据的远端查询可自动执行。" };
-  if (isSafeDependencySync(argv)) return { decision: "allow", reason: "禁用安装脚本的依赖同步可自动执行。" };
-  if (isSafeWorkspaceUtility(argv)) return { decision: "allow", reason: "低风险工作区工具无需确认。" };
-  return { decision: "confirm", reason: "宿主终端命令未在低风险自动批准范围内。" };
+  return authorizeSecurityOperation({
+    type: "terminal-command",
+    preset: normalizeApprovalMode(approvalMode),
+    baseDecision: classification ? classification.decision : "deny",
+    baseRule: classification?.rule || "default-ask",
+    baseReason: classification?.reason,
+    projectScript: isProjectPackageScript(argv),
+    networkCommand: ["curl", "wget"].includes(command) || classification?.rule === "network",
+    githubRead: isGitHubRead(argv),
+    gitReadOnlyRemote: isGitReadOnlyRemote(argv),
+    safeDependencySync: isSafeDependencySync(argv),
+    safeWorkspaceUtility: isSafeWorkspaceUtility(argv),
+  });
 }
 
 function classifyHostCommandApproval(request, approvalMode) {
-  const mode = normalizeApprovalMode(approvalMode);
   const argv = Array.isArray(request?.argv) ? request.argv : [];
   const command = path.basename(argv[0] || "").toLowerCase();
   const rule = request?.policy?.rule || "default-ask";
-
-  if (request?.policy?.decision === "deny") return { decision: "deny", reason: "命令策略已拒绝该操作。" };
-  if (hasExpandedSandboxAccess(request?.sandboxAccess)) return { decision: "confirm", reason: "扩大沙箱访问范围需要确认。", rememberKey: sandboxAccessPermissionKey(request.sandboxAccess) };
-  if (!isVerifiedSandboxRequest(request)) return { decision: "confirm", reason: "只有已验证的系统沙箱命令可以自动审批。", rememberKey: `host:unverified-execution:${command || rule}` };
-  if (mode === "full_control") return { decision: "allow", reason: "完全控制模式自动批准已验证沙箱内的普通 Host 请求。" };
-  if (rule === "runtime-execution" || isProjectPackageScript(argv)) return { decision: "allow", reason: "受验证沙箱内的项目运行不再要求执行确认。" };
-  if (request?.policy?.decision === "allow") return { decision: "allow", reason: "命令分类器已确认该操作为低风险。" };
-  if (isGitTrustedSync(argv)) return { decision: "allow", reason: "已验证沙箱内的受控 Git 同步自动批准。" };
-  if (isGitHubRead(argv)) return { decision: "allow", reason: "已验证网络沙箱内的只读 GitHub 操作自动批准。" };
-  if (isSafeDependencySync(argv)) return { decision: "allow", reason: "禁用安装脚本的依赖同步自动批准。" };
-  if (isSafeWorkspaceUtility(argv)) return { decision: "allow", reason: "已验证沙箱内的常规工作区工具自动批准。" };
-  if (mode === "cautious") return { decision: "confirm", reason: "谨慎模式只确认具有明显副作用或跨边界的权限。" };
-  if (["curl", "wget"].includes(command) || isGitPush(argv) || isGitRiskyRemoteOperation(argv) || isGitHubExternalWrite(argv)) {
-    return { decision: "confirm", reason: "自由网络访问或远端写入需要确认。" };
-  }
-  if (rule === "package-manager") {
-    return isSafeDependencySync(argv) || isProjectPackageScript(argv)
-      ? { decision: "allow", reason: "已验证沙箱内的项目脚本或禁用安装脚本的依赖同步自动批准。" }
-      : { decision: "confirm", reason: "依赖安装脚本或非标准包管理操作需要确认。" };
-  }
-  if (rule === "git-mutation") {
-    if (isDevelopmentGitMutation(argv)) return { decision: "allow", reason: "已验证沙箱内的受控本地 Git 变更自动批准。" };
-    return { decision: "confirm", reason: "可能丢失工作区内容的 Git 变更需要确认。" };
-  }
-  if (rule === "runtime-execution") return { decision: "allow", reason: "已验证沙箱内的项目运行时命令自动批准。" };
-  if (rule === "sensitive-command") {
-    if (["rm", "mv", "cp"].includes(command)) {
-      return { decision: "allow", reason: "已验证沙箱把文件变更限制在工作区内。" };
-    }
-    return { decision: "confirm", reason: "Docker 或权限类命令仍需要确认。" };
-  }
-  if (mode !== "cautious" && isHighAutonomyWorkspaceUtility(argv)) {
-    return { decision: "allow", reason: "已验证沙箱内的签名/验证工具自动批准。" };
-  }
-  return { decision: "confirm", reason: "未知命令仍需要确认。" };
+  return authorizeSecurityOperation({
+    type: "host-command",
+    preset: normalizeApprovalMode(approvalMode),
+    baseDecision: request?.policy?.decision,
+    baseRule: rule,
+    baseReason: request?.policy?.reason,
+    commandName: command || rule,
+    sandboxVerified: isVerifiedSandboxRequest(request),
+    sandboxExpanded: hasExpandedSandboxAccess(request?.sandboxAccess),
+    sandboxScopeKey: sandboxAccessScopeKey(request?.sandboxAccess),
+    projectScript: isProjectPackageScript(argv),
+    safeDependencySync: isSafeDependencySync(argv),
+    gitTrustedSync: isGitTrustedSync(argv),
+    gitReadOnlyRemote: isGitReadOnlyRemote(argv),
+    developmentGitMutation: isDevelopmentGitMutation(argv),
+    gitPush: isGitPush(argv),
+    gitRiskyRemote: isGitRiskyRemoteOperation(argv),
+    githubRead: isGitHubRead(argv),
+    githubExternalWrite: isGitHubExternalWrite(argv),
+    safeWorkspaceUtility: isSafeWorkspaceUtility(argv),
+    highAutonomyUtility: isHighAutonomyWorkspaceUtility(argv),
+    networkCommand: ["curl", "wget"].includes(command),
+    workspaceFileMutation: ["rm", "mv", "cp"].includes(command),
+  });
 }
 
 module.exports = {

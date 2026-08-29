@@ -1,4 +1,5 @@
 const net = require("node:net");
+const { authorizeSecurityOperation } = require("../shared/security-policy-core.cjs");
 
 const SSH_FORCED_OPTIONS = Object.freeze([
   "BatchMode=yes",
@@ -96,8 +97,19 @@ function validateSshCommand(argv, { allowedHosts = [] } = {}) {
   const target = argv[index];
   if (!target) throw new TypeError("SSH 缺少目标主机。");
   const { host } = parseTarget(target);
-  if (!isAllowedSshHost(host, allowedHosts)) throw new Error("SSH 目标必须是私有/本地主机或出现在明确允许列表中。");
+  const targetAllowed = isAllowedSshHost(host, allowedHosts);
   const remoteCommand = argv.slice(index + 1);
+  const authorization = authorizeSecurityOperation({
+    type: "ssh",
+    safeOptions: true,
+    targetAllowed,
+    hasRemoteCommand: remoteCommand.length > 0,
+  });
+  if (authorization.decision === "deny") {
+    if (!targetAllowed) throw new Error("SSH 目标必须是私有/本地主机或出现在明确允许列表中。");
+    if (remoteCommand.length === 0) throw new Error("SSH 必须提供非交互远程命令。");
+    throw new Error(authorization.reason);
+  }
   validateRemoteCommand(remoteCommand);
 
   const forced = SSH_FORCED_OPTIONS.flatMap((option) => ["-o", option]);

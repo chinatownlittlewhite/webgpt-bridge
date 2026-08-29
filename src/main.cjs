@@ -312,7 +312,7 @@ async function confirmHostCommandApproval(params) {
     argv: request.argv,
     cwd: request.cwd,
     policy: { ...request.policy, reason: authorization.reason || request.policy?.reason },
-    rememberKey: authorization.rememberKey,
+    rememberKey: authorization.rememberScope === "connection" ? authorization.permissionClass : undefined,
   });
   appendLog("local-broker", `Agent 命令审批：${approved ? "已批准" : "已取消"}`);
   return { approved };

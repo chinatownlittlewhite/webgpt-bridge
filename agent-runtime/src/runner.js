@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import securityPolicyCore from "../../shared/security-policy-core.cjs";
 import { createApprovalRequest, requestHostApproval } from "./approval.js";
 import { discoverManagedWorktreeGitAccess } from "./git-metadata.js";
 import { normalizedPlatform, resolvePlatformArgv, stageWindowsNodeCliRuntime } from "./platform.js";
@@ -9,6 +10,7 @@ import { killProcessTree, wrapWithParentGuard } from "./process-tree.js";
 import { normalizeSandboxAdapter, sandboxSummary, wrapWithSandbox } from "./sandbox.js";
 import { createWorkspaceTemp, INTERNAL_STATE_DIR, resolveModelWorkspaceCwd } from "./workspace.js";
 
+const { authorizeSecurityOperation } = securityPolicyCore;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -110,14 +112,26 @@ function createCollector(maxBytes) {
 }
 
 export function effectiveCommandPolicy(basePolicy, sandbox) {
-  if (basePolicy.decision !== "allow" || sandbox.autoRunSafe) return basePolicy;
+  const authorization = authorizeSecurityOperation({
+    type: "agent-execution",
+    baseDecision: basePolicy?.decision,
+    baseRule: basePolicy?.rule,
+    baseReason: basePolicy?.reason,
+    sandboxVerified: sandbox?.autoRunSafe === true,
+    sandboxEnforced: sandbox?.enforced === true,
+    sandboxName: sandbox?.name,
+  });
+  const decision = authorization.decision === "confirm" ? "approval_required" : authorization.decision;
+  if (decision === basePolicy?.decision && authorization.rule === basePolicy?.rule && authorization.reason === basePolicy?.reason) {
+    return basePolicy;
+  }
   return {
-    decision: "approval_required",
-    reason: sandbox.enforced
-      ? `OS sandbox '${sandbox.name}' is present but not verified for unattended execution`
-      : `OS sandbox '${sandbox.name}' is not enforced; host approval is required before spawning`,
-    rule: sandbox.enforced ? "unverified-sandbox" : "unsandboxed-execution",
-    baseRule: basePolicy.rule,
+    decision,
+    reason: authorization.reason,
+    rule: authorization.rule,
+    ...(authorization.rule === "unverified-sandbox" || authorization.rule === "unsandboxed-execution"
+      ? { baseRule: basePolicy?.rule }
+      : {}),
   };
 }
 
