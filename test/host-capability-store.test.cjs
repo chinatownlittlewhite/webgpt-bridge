@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const { createHostCapabilityStore } = require("../src/host-capability-store.cjs");
@@ -64,6 +66,35 @@ test("host capability covers only its canonical subtree and clear revokes all gr
   assert.equal(store.size(), 0);
   expectCode(() => store.authorize({ accessId: first.accessId, path: root, operation: "read" }), "HOST_CAPABILITY_REQUIRED");
   expectCode(() => store.authorize({ accessId: second.accessId, path: root, operation: "list" }), "HOST_CAPABILITY_REQUIRED");
+});
+
+test("host capability canonicalizes real path aliases before scope comparison", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "webgpt-host-capability-alias-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const realRoot = path.join(root, "real");
+  const aliasRoot = path.join(root, "alias");
+  fs.mkdirSync(realRoot);
+  const file = path.join(realRoot, "note.txt");
+  fs.writeFileSync(file, "ok\n");
+  try {
+    fs.symlinkSync(realRoot, aliasRoot, "dir");
+  } catch (error) {
+    t.skip(`symlink creation unavailable: ${error.code || error.message}`);
+    return;
+  }
+
+  const store = createHostCapabilityStore({
+    generation: "session-alias",
+    policyVersion: "v0.5-phase1",
+    randomId: () => "cap-alias",
+  });
+  const grant = store.issue({ root: aliasRoot, operations: ["read"], maxUses: 2 });
+  const canonicalRoot = fs.realpathSync.native(realRoot);
+  const canonicalFile = fs.realpathSync.native(file);
+
+  assert.equal(grant.root, canonicalRoot);
+  assert.equal(store.authorize({ accessId: grant.accessId, path: file, operation: "read" }), canonicalFile);
+  assert.equal(store.authorize({ accessId: grant.accessId, path: path.join(aliasRoot, "note.txt"), operation: "read" }), canonicalFile);
 });
 
 test("host capability validates bounded grant inputs and does not accept caller-supplied authority metadata", () => {
