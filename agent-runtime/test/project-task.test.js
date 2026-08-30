@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   appendProjectTaskFailureDiagnostic,
   discoverProjectTask,
+  PROJECT_TASK_RUNTIME_READ_PATHS,
 } from "../src/project-task.js";
 
 function makeWorkspace() {
@@ -47,6 +49,18 @@ test("project task discovery rejects unsupported task names", () => {
     () => discoverProjectTask({ workspace, cwd: "node-project", task: "deploy" }),
     /unsupported project task/,
   );
+});
+
+test("project checks receive only the fixed shared runtime as an extra read grant", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const root = path.resolve(here, "..", "..");
+  const sharedRoot = path.join(root, "shared");
+  assert.deepEqual(PROJECT_TASK_RUNTIME_READ_PATHS, [sharedRoot]);
+  assert.equal(fs.existsSync(path.join(sharedRoot, "tool-registry.cjs")), true);
+
+  const source = fs.readFileSync(path.join(root, "agent-runtime", "src", "project-task.js"), "utf8");
+  assert.match(source, /sandboxExtraReadPaths:\s*PROJECT_TASK_RUNTIME_READ_PATHS/);
+  assert.doesNotMatch(source, /sandboxExtraWritePaths:\s*PROJECT_TASK_RUNTIME_READ_PATHS/);
 });
 
 test("failed project tasks append a bounded TAP failure block after long output", () => {
