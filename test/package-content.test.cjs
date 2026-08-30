@@ -124,7 +124,7 @@ test("bundled tunnel-client is the default and custom path is advanced-only", ()
 
   const extras = builderConfig.extraResources || [];
   assert.ok(extras.some((item) => item.from === "build/tunnel-client" && item.to === "tunnel-client"));
-  assert.match(packageJson.scripts["dist:mac"], /prepare:tunnel-client:mac/);
+  assert.match(packageJson.scripts["dist:mac"], /node scripts\/build-macos-variants\.cjs$/);
   assert.match(packageJson.scripts["dist:win"], /prepare:tunnel-client:win/);
 
   const manifest = require("../scripts/tunnel-client-release.json");
@@ -137,10 +137,14 @@ test("bundled tunnel-client is the default and custom path is advanced-only", ()
   assert.equal(manifest.assets["darwin-amd64"].file, "tunnel-client-v0.0.13-darwin-amd64.zip");
   assert.equal(manifest.assets["darwin-amd64"].sha256, "c683e15d84fb997f5af1cc7c4cb55008e19a555a9ed2ec0f89a5ff426d85f85c");
   const prepare = fs.readFileSync(path.join(__dirname, "..", "scripts", "prepare-tunnel-client.cjs"), "utf8");
+  const macVariants = fs.readFileSync(path.join(__dirname, "..", "scripts", "build-macos-variants.cjs"), "utf8");
   assert.match(prepare, /darwin-universal/);
   assert.match(prepare, /\/usr\/bin\/lipo/);
   assert.match(prepare, /darwin-arm64/);
   assert.match(prepare, /darwin-amd64/);
+  assert.match(macVariants, /darwin-arm64/);
+  assert.match(macVariants, /darwin-x64/);
+  assert.match(macVariants, /darwin-universal/);
 });
 
 test("formal mac builder signs embedded native binaries and notarizes", () => {
@@ -290,8 +294,12 @@ test("platform dist scripts enforce desktop tests and native Agent acceptance be
   for (const name of ["dist:mac", "dist:win"]) {
     assert.match(packageJson.scripts[name], /npm run verify:desktop/);
     assert.match(packageJson.scripts[name], /npm --prefix agent-runtime run acceptance/);
-    assert.match(packageJson.scripts[name], /electron-builder .*--publish never/);
   }
+  assert.match(packageJson.scripts["dist:win"], /electron-builder .*--publish never/);
+  assert.match(packageJson.scripts["dist:mac"], /node scripts\/build-macos-variants\.cjs$/);
+  const macVariants = fs.readFileSync(path.join(__dirname, "..", "scripts", "build-macos-variants.cjs"), "utf8");
+  assert.match(macVariants, /electron-builder/);
+  assert.match(macVariants, /"--publish",\s*"never"/);
 });
 
 test("root package exposes standard safe test and lint entrypoints for project verification", () => {
@@ -321,7 +329,9 @@ test("mac packaging uses a reproducible generated icns asset", () => {
   assert.equal(builderConfig.mac.icon, "build/icon.icns");
   assert.equal(packageJson.scripts["build:icon"], "node scripts/build-icon.cjs");
   assert.match(packageJson.scripts["dist:mac"], /npm run build:icon/);
-  assert.match(packageJson.scripts["dist:mac"], /--universal/);
+  assert.match(packageJson.scripts["dist:mac"], /node scripts\/build-macos-variants\.cjs$/);
+  const macVariants = fs.readFileSync(path.join(__dirname, "..", "scripts", "build-macos-variants.cjs"), "utf8");
+  assert.match(macVariants, /universal:\s*"--universal"/);
   const generator = fs.readFileSync(path.join(__dirname, "..", "scripts", "build-icon.cjs"), "utf8");
   assert.match(generator, /function renderPng/);
   assert.match(generator, /function buildIcns/);
