@@ -90,7 +90,7 @@ function copyBundleFrom(staged) {
   for (const candidate of ["LICENSE", "LICENSE.txt", "NOTICE", "NOTICE.txt"]) {
     const source = findFile(staged.extracted, candidate);
     if (source && !fs.existsSync(path.join(output, path.basename(source)))) {
-      fs.copyFileSync(source, path.join(output, path.basename(source));
+      fs.copyFileSync(source, path.join(output, path.basename(source)));
     }
   }
 }
