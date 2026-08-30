@@ -2,6 +2,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const DARWIN_ARCHES = Object.freeze(["darwin-arm64", "darwin-x64"]);
+const DARWIN_VARIANT_ARCHES = Object.freeze({
+  arm64: Object.freeze(["darwin-arm64"]),
+  x64: Object.freeze(["darwin-x64"]),
+  universal: DARWIN_ARCHES,
+});
 const SHORT_HELPER_DIR = "node-pty-helper";
 const SHORT_HELPER_PATCH_MARKER = "webgpt-bridge:darwin-short-spawn-helper";
 const UNIX_TERMINAL_ANCHOR = "helperPath = helperPath.replace('node_modules.asar', 'node_modules.asar.unpacked');";
@@ -10,6 +15,18 @@ function invalid(message) {
   const error = new Error(message);
   error.code = "NATIVE_PTY_PAYLOAD_INVALID";
   return error;
+}
+
+function normalizeMacPackageVariant(value = "universal") {
+  const variant = String(value || "universal").trim();
+  if (!Object.hasOwn(DARWIN_VARIANT_ARCHES, variant)) {
+    throw invalid(`macOS package variant must be arm64, x64, or universal: ${variant || "(missing)"}`);
+  }
+  return variant;
+}
+
+function darwinArchesForVariant(variant = "universal") {
+  return DARWIN_VARIANT_ARCHES[normalizeMacPackageVariant(variant)];
 }
 
 function resourcesRoot(appRoot) {
@@ -50,26 +67,29 @@ function assertRegularFile(root, candidate, label) {
   return Object.freeze({ path: candidate, mode: stat.mode & 0o777, size: stat.size });
 }
 
-function inspectNodePtyMacPayload(appRoot) {
+function inspectNodePtyMacPayload(appRoot, { variant = "universal" } = {}) {
   const root = payloadRoot(appRoot);
+  const arches = darwinArchesForVariant(variant);
   const helpers = [];
   const nativeModules = [];
-  for (const arch of DARWIN_ARCHES) {
+  for (const arch of arches) {
     const archRoot = path.join(root, arch);
     helpers.push(assertRegularFile(root, path.join(archRoot, "spawn-helper"), `${arch} spawn-helper`));
     nativeModules.push(assertRegularFile(root, path.join(archRoot, "pty.node"), `${arch} pty.node`));
   }
   return Object.freeze({
     root,
+    variant: normalizeMacPackageVariant(variant),
+    arches,
     helpers: Object.freeze(helpers),
     nativeModules: Object.freeze(nativeModules),
   });
 }
 
-function inspectPackagedNodePtyMacPayload(appRoot) {
-  const base = inspectNodePtyMacPayload(appRoot);
+function inspectPackagedNodePtyMacPayload(appRoot, { variant = "universal" } = {}) {
+  const base = inspectNodePtyMacPayload(appRoot, { variant });
   const shortRoot = shortHelperRoot(appRoot);
-  const shortHelpers = DARWIN_ARCHES.map((arch) => (
+  const shortHelpers = base.arches.map((arch) => (
     assertRegularFile(shortRoot, path.join(shortRoot, arch, "spawn-helper"), `${arch} short spawn-helper`)
   ));
   for (const helper of [...base.helpers, ...shortHelpers]) {
@@ -116,41 +136,46 @@ if (process.platform === 'darwin') {
   fs.writeFileSync(unixTerminalPath, source.replace(UNIX_TERMINAL_ANCHOR, injected), "utf8");
 }
 
-function stageShortHelpers(appRoot, helpers) {
+function stageShortHelpers(appRoot, payload) {
   const root = shortHelperRoot(appRoot);
-  for (let index = 0; index < DARWIN_ARCHES.length; index += 1) {
-    const arch = DARWIN_ARCHES[index];
-    const source = helpers[index].path;
+  const sourceByArch = new Map(payload.arches.map((arch, index) => [arch, payload.helpers[index].path]));
+  fs.rmSync(root, { recursive: true, force: true });
+  for (const arch of payload.arches) {
+    const source = sourceByArch.get(arch);
+    const sourceInfo = payload.helpers[payload.arches.indexOf(arch)];
     const dir = path.join(root, arch);
     fs.mkdirSync(dir, { recursive: true });
     const target = path.join(dir, "spawn-helper");
     fs.copyFileSync(source, target);
-    fs.chmodSync(target, helpers[index].mode | 0o111);
+    fs.chmodSync(target, sourceInfo.mode | 0o111);
   }
 }
 
-function normalizeNodePtyMacPayload(appRoot) {
-  const before = inspectNodePtyMacPayload(appRoot);
+function normalizeNodePtyMacPayload(appRoot, { variant = "universal" } = {}) {
+  const normalizedVariant = normalizeMacPackageVariant(variant);
+  const before = inspectNodePtyMacPayload(appRoot, { variant: normalizedVariant });
   for (const helper of before.helpers) {
     const nextMode = helper.mode | 0o111;
     if (nextMode !== helper.mode) fs.chmodSync(helper.path, nextMode);
   }
 
-  const executable = inspectNodePtyMacPayload(appRoot);
+  const executable = inspectNodePtyMacPayload(appRoot, { variant: normalizedVariant });
   for (const helper of executable.helpers) {
     if ((helper.mode & 0o111) !== 0o111) {
       throw invalid(`spawn-helper is not executable after normalization: ${helper.path}`);
     }
   }
 
-  stageShortHelpers(appRoot, executable.helpers);
+  stageShortHelpers(appRoot, executable);
   patchUnixTerminalForShortHelper(appRoot);
-  return inspectPackagedNodePtyMacPayload(appRoot);
+  return inspectPackagedNodePtyMacPayload(appRoot, { variant: normalizedVariant });
 }
 
 module.exports = {
   DARWIN_ARCHES,
+  darwinArchesForVariant,
   inspectNodePtyMacPayload,
   inspectPackagedNodePtyMacPayload,
+  normalizeMacPackageVariant,
   normalizeNodePtyMacPayload,
 };
