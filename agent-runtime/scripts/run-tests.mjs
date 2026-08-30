@@ -20,6 +20,19 @@ export const NESTED_WINDOWS_TEST_FILES = Object.freeze([
   "windows-appcontainer-temp.test.js",
 ]);
 
+export const NESTED_MACOS_TEST_FILES = Object.freeze([
+  "acceptance-script.test.js",
+  "approval.test.js",
+  "goal-controller.test.js",
+  "goal-mode.test.js",
+  "goal-session.test.js",
+  "platform.test.js",
+  "policy.test.js",
+  "sandbox.test.js",
+  "schema-validate.test.js",
+  "test-entrypoint.test.js",
+]);
+
 export function isNestedWindowsAppContainer({
   platform = process.platform,
   userProfile = process.env.USERPROFILE,
@@ -71,15 +84,24 @@ async function runStandardSuite() {
   if (signal || code !== 0) process.exitCode = Number.isInteger(code) ? code : 1;
 }
 
-async function runNestedWindowsSuite() {
-  console.log(`[test] nested Windows AppContainer: running ${NESTED_WINDOWS_TEST_FILES.length} sandbox-compatible regression files`);
-  for (const file of NESTED_WINDOWS_TEST_FILES) {
+async function runImportedSuite(label, files) {
+  console.log(`[test] ${label}: running ${files.length} sandbox-compatible regression files`);
+  for (const file of files) {
     await import(pathToFileURL(path.join(root, "test", file)).href);
   }
 }
 
+async function runNestedWindowsSuite() {
+  await runImportedSuite("nested Windows AppContainer", NESTED_WINDOWS_TEST_FILES);
+}
+
+async function runNestedMacOSSuite() {
+  await runImportedSuite("nested macOS managed runner", NESTED_MACOS_TEST_FILES);
+}
+
 export async function main() {
   if (isNestedWindowsAppContainer()) await runNestedWindowsSuite();
+  else if (isNestedMacOSManagedRunner()) await runNestedMacOSSuite();
   else await runStandardSuite();
 }
 
