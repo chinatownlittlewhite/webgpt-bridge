@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+// Step 12 release orchestration contract; executed against the integration-equivalent CI base.
 const root = path.join(__dirname, "..");
 const orchestratorPath = path.join(root, "scripts", "build-macos-variants.cjs");
 const launcherPath = path.join(root, "scripts", "launch-tunnel-client-prepare.cjs");
