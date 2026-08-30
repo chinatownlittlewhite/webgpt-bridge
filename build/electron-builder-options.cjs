@@ -2,6 +2,8 @@ const path = require("node:path");
 const { normalizeNodePtyMacPayload } = require("../scripts/node-pty-macos-payload.cjs");
 const { prunePackagedAgentRuntime } = require("../scripts/package-payload-pruner.cjs");
 
+const MAC_PACKAGE_VARIANTS = new Set(["arm64", "x64", "universal"]);
+
 function required(env, name) {
   const value = String(env[name] || "").trim();
   if (!value) throw new Error(`Missing formal release configuration: ${name}`);
@@ -15,25 +17,39 @@ function builderArchName(arch) {
   return String(arch ?? "");
 }
 
-async function normalizeAndPruneAfterPack(context) {
-  if (context.electronPlatformName === "darwin") {
-    const productFilename = context.packager.appInfo.productFilename;
-    const appRoot = path.join(context.appOutDir, `${productFilename}.app`);
-    normalizeNodePtyMacPayload(appRoot);
-    prunePackagedAgentRuntime({
-      resourcesRoot: path.join(appRoot, "Contents", "Resources"),
-      platform: "darwin",
-      arch: builderArchName(context.arch),
-    });
-    return;
+function resolveMacPackageVariant(env) {
+  const variant = String(env.WEBGPT_MAC_PACKAGE_VARIANT || "universal").trim();
+  if (!MAC_PACKAGE_VARIANTS.has(variant)) {
+    throw new Error("WEBGPT_MAC_PACKAGE_VARIANT must be arm64, x64, or universal");
   }
-  if (context.electronPlatformName === "win32") {
-    prunePackagedAgentRuntime({
-      resourcesRoot: path.join(context.appOutDir, "resources"),
-      platform: "win32",
-      arch: builderArchName(context.arch),
-    });
-  }
+  return variant;
+}
+
+function createAfterPack(macPackageVariant) {
+  return async function normalizeAndPruneAfterPack(context) {
+    if (context.electronPlatformName === "darwin") {
+      const builderArch = builderArchName(context.arch);
+      if (macPackageVariant !== "universal" && builderArch !== macPackageVariant) {
+        throw new Error(`macOS package variant ${macPackageVariant} does not match builder architecture ${builderArch || "(missing)"}`);
+      }
+      const productFilename = context.packager.appInfo.productFilename;
+      const appRoot = path.join(context.appOutDir, `${productFilename}.app`);
+      normalizeNodePtyMacPayload(appRoot, { variant: macPackageVariant });
+      prunePackagedAgentRuntime({
+        resourcesRoot: path.join(appRoot, "Contents", "Resources"),
+        platform: "darwin",
+        arch: macPackageVariant,
+      });
+      return;
+    }
+    if (context.electronPlatformName === "win32") {
+      prunePackagedAgentRuntime({
+        resourcesRoot: path.join(context.appOutDir, "resources"),
+        platform: "win32",
+        arch: builderArchName(context.arch),
+      });
+    }
+  };
 }
 
 function createBuilderConfig(env = process.env) {
@@ -41,9 +57,10 @@ function createBuilderConfig(env = process.env) {
   if (formalPlatform && formalPlatform !== "windows" && formalPlatform !== "macos") {
     throw new Error("WEBGPT_FORMAL_RELEASE must be windows or macos");
   }
+  const macPackageVariant = resolveMacPackageVariant(env);
 
   const config = {
-    afterPack: normalizeAndPruneAfterPack,
+    afterPack: createAfterPack(macPackageVariant),
     appId: "com.localagenthost.desktop",
     productName: "WebGPT Bridge",
     artifactName: "WebGPT-Bridge-${version}-${os}-${arch}.${ext}",
