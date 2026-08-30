@@ -63,13 +63,13 @@ function cleanup(fixture) {
   fs.rmSync(fixture.root, { recursive: true, force: true });
 }
 
-test("darwin pruning removes Windows/dev payload while preserving both Darwin PTY architectures", () => {
+test("darwin Universal pruning removes Windows/dev payload while preserving both Darwin PTY architectures", () => {
   const fixture = makeFixture();
   try {
     const result = prunePackagedAgentRuntime({
       resourcesRoot: fixture.resourcesRoot,
       platform: "darwin",
-      arch: "arm64",
+      arch: "universal",
     });
 
     assert.equal(exists(fixture.agentRoot, "node_modules/@modelcontextprotocol/client"), false);
