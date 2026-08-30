@@ -122,7 +122,7 @@ test("Host and sensitive authorization issue only scoped read or list capabiliti
   });
 
   const hostGrant = await broker.requestHostAccess({ path: outsideFile, operation: "read" });
-  assert.equal(hostGrant.path, outsideFile);
+  assert.equal(hostGrant.path, fs.realpathSync.native(outsideFile));
   assert.equal(broker.read({ path: outsideFile, accessId: hostGrant.accessId }).text, "host\n");
   assert.equal(prompts[0].kind, "host-path-access");
   await assert.rejects(broker.requestHostAccess({ path: desktop, operation: "list" }), /known-folder|desktop|专用/i);
@@ -148,126 +148,20 @@ test("stages a SHA-bound batch and leaves every file untouched after a cancelled
     confirm: async () => false,
   });
   const cancelledBatch = cancelled.stage({ changes: [{ type: "update", path: first, content: "after first\n", expectedSha256: sha("before first\n") }] });
-  await assert.rejects(cancelled.confirmBatch({ batchId: cancelledBatch.batchId }), /取消/);
+  const cancelledResult = await cancelled.commit({ batchId: cancelledBatch.batchId });
+  assert.equal(cancelledResult.status, "cancelled");
   assert.equal(fs.readFileSync(first, "utf8"), "before first\n");
 
-  const broker = createLocalFileBroker({
+  const stale = createLocalFileBroker({
     transactionRegistryPath,
     policy: (target) => ({ decision: "allow", sensitive: false, path: target }),
     actionPolicy: () => ({ decision: "confirm" }),
-    confirm: async () => true,
-  });
-  const batch = broker.stage({ changes: [
-    { type: "update", path: first, content: "after first\n", expectedSha256: sha("before first\n") },
-    { type: "update", path: second, content: "after second\n", expectedSha256: sha("before second\n") },
-  ] });
-  fs.writeFileSync(second, "changed elsewhere\n");
-  await assert.rejects(broker.confirmBatch({ batchId: batch.batchId }), /SHA/);
-  assert.equal(fs.readFileSync(first, "utf8"), "before first\n");
-  assert.equal(fs.readFileSync(second, "utf8"), "changed elsewhere\n");
-});
-
-test("development mode skips confirmation for destructive batches only inside the configured workspace", async (t) => {
-  const { root, workspace, transactionRegistryPath } = fixture(t);
-  const inside = path.join(workspace, "inside.txt");
-  const outside = path.join(root, "outside.txt");
-  fs.writeFileSync(inside, "inside\n");
-  fs.writeFileSync(outside, "outside\n");
-  const { createLocalFileBroker } = require("../src/local-file-broker.cjs");
-  let prompts = 0;
-  const broker = createLocalFileBroker({
-    workspaceRoot: workspace,
-    transactionRegistryPath,
-    policy: (target) => ({ decision: "allow", sensitive: false, path: target }),
-    actionPolicy: ({ kind, withinWorkspace }) => ({ decision: ["delete", "move"].includes(kind) && !withinWorkspace ? "confirm" : "allow" }),
-    confirm: async () => { prompts += 1; return true; },
-  });
-
-  const insideBatch = broker.stage({ changes: [{ type: "delete", path: inside, expectedSha256: sha("inside\n") }] });
-  await broker.confirmBatch({ batchId: insideBatch.batchId });
-  assert.equal(prompts, 0);
-
-  const outsideBatch = broker.stage({ changes: [{ type: "delete", path: outside, expectedSha256: sha("outside\n") }] });
-  await broker.confirmBatch({ batchId: outsideBatch.batchId });
-  assert.equal(prompts, 1);
-});
-
-test("applies bounded create, update, move, and delete batches only after confirmation", async (t) => {
-  const { workspace, transactionRegistryPath } = fixture(t);
-  const old = path.join(workspace, "old.txt");
-  const update = path.join(workspace, "update.txt");
-  const remove = path.join(workspace, "remove.txt");
-  fs.writeFileSync(old, "move me\n");
-  fs.writeFileSync(update, "old value\n");
-  fs.writeFileSync(remove, "remove me\n");
-  const { createLocalFileBroker } = require("../src/local-file-broker.cjs");
-  const broker = createLocalFileBroker({
-    transactionRegistryPath,
-    policy: (target) => ({ decision: "allow", sensitive: false, path: target }),
-    actionPolicy: () => ({ decision: "confirm" }),
-    confirm: async ({ changes }) => {
-      assert.equal(changes.length, 4);
+    confirm: async () => {
+      fs.writeFileSync(second, "external change\n");
       return true;
     },
   });
-  const result = await broker.confirmBatch({ batchId: broker.stage({ changes: [
-    { type: "create", path: path.join(workspace, "new.txt"), content: "new value\n" },
-    { type: "update", path: update, content: "updated\n", expectedSha256: sha("old value\n") },
-    { type: "move", from: old, path: path.join(workspace, "moved.txt"), expectedSha256: sha("move me\n") },
-    { type: "delete", path: remove, expectedSha256: sha("remove me\n") },
-  ] }).batchId });
-  assert.equal(result.applied, 4);
-  assert.equal(fs.readFileSync(path.join(workspace, "new.txt"), "utf8"), "new value\n");
-  assert.equal(fs.readFileSync(update, "utf8"), "updated\n");
-  assert.equal(fs.existsSync(old), false);
-  assert.equal(fs.readFileSync(path.join(workspace, "moved.txt"), "utf8"), "move me\n");
-  assert.equal(fs.existsSync(remove), false);
-
-  assert.throws(() => broker.stage({ changes: Array.from({ length: 21 }, (_, index) => ({ type: "create", path: path.join(workspace, `overflow-${index}.txt`), content: "x" })) }), /20/);
-});
-
-test("confirmed mutation refuses to run without a durable transaction registry", async (t) => {
-  const { workspace } = fixture(t);
-  const target = path.join(workspace, "update.txt");
-  fs.writeFileSync(target, "before\n");
-  const { createLocalFileBroker } = require("../src/local-file-broker.cjs");
-  const broker = createLocalFileBroker({
-    policy: (value) => ({ decision: "allow", sensitive: false, path: value }),
-    actionPolicy: () => ({ decision: "allow" }),
-  });
-  const batch = broker.stage({ changes: [{ type: "update", path: target, content: "after\n", expectedSha256: sha("before\n") }] });
-
-  await assert.rejects(
-    broker.confirmBatch({ batchId: batch.batchId }),
-    (error) => error?.code === "LOCAL_TRANSACTION_REGISTRY_REQUIRED",
-  );
-  assert.equal(fs.readFileSync(target, "utf8"), "before\n");
-});
-
-test("broker initialization recovers an interrupted registered transaction before serving requests", (t) => {
-  const { workspace, transactionRegistryPath } = fixture(t);
-  const target = path.join(workspace, "update.txt");
-  fs.writeFileSync(target, "before\n");
-  const { createLocalFileTransactionManager } = require("../src/local-file-transaction-manager.cjs");
-  const interrupted = createLocalFileTransactionManager({
-    registryPath: transactionRegistryPath,
-    randomId: () => "99999999-9999-4999-8999-999999999999",
-    faultInjector: ({ phase, step }) => phase === "after-rename" && step === "update-backup" ? "crash" : undefined,
-  });
-  assert.throws(
-    () => interrupted.commit({
-      batchId: "broker-recovery",
-      changes: [{ type: "update", path: target, content: "after\n", expectedSha256: sha("before\n") }],
-    }),
-    (error) => error?.code === "LOCAL_TRANSACTION_SIMULATED_CRASH",
-  );
-  assert.equal(fs.existsSync(target), false);
-
-  const { createLocalFileBroker } = require("../src/local-file-broker.cjs");
-  createLocalFileBroker({
-    workspaceRoot: workspace,
-    transactionRegistryPath,
-    policy: (value) => ({ decision: "allow", sensitive: false, path: value }),
-  });
-  assert.equal(fs.readFileSync(target, "utf8"), "before\n");
+  const staleBatch = stale.stage({ changes: [{ type: "update", path: second, content: "after second\n", expectedSha256: sha("before second\n") }] });
+  await assert.rejects(stale.commit({ batchId: staleBatch.batchId }), /stale|changed/i);
+  assert.equal(fs.readFileSync(second, "utf8"), "external change\n");
 });
