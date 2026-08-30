@@ -1,5 +1,6 @@
 const path = require("node:path");
 const { normalizeNodePtyMacPayload } = require("../scripts/node-pty-macos-payload.cjs");
+const { prunePackagedAgentRuntime } = require("../scripts/package-payload-pruner.cjs");
 
 function required(env, name) {
   const value = String(env[name] || "").trim();
@@ -7,11 +8,32 @@ function required(env, name) {
   return value;
 }
 
-async function normalizeMacNodePtyAfterPack(context) {
-  if (context.electronPlatformName !== "darwin") return;
-  const productFilename = context.packager.appInfo.productFilename;
-  const appRoot = path.join(context.appOutDir, `${productFilename}.app`);
-  normalizeNodePtyMacPayload(appRoot);
+function builderArchName(arch) {
+  if (arch === 1 || arch === "x64") return "x64";
+  if (arch === 3 || arch === "arm64") return "arm64";
+  if (arch === 4 || arch === "universal") return "universal";
+  return String(arch ?? "");
+}
+
+async function normalizeAndPruneAfterPack(context) {
+  if (context.electronPlatformName === "darwin") {
+    const productFilename = context.packager.appInfo.productFilename;
+    const appRoot = path.join(context.appOutDir, `${productFilename}.app`);
+    normalizeNodePtyMacPayload(appRoot);
+    prunePackagedAgentRuntime({
+      resourcesRoot: path.join(appRoot, "Contents", "Resources"),
+      platform: "darwin",
+      arch: builderArchName(context.arch),
+    });
+    return;
+  }
+  if (context.electronPlatformName === "win32") {
+    prunePackagedAgentRuntime({
+      resourcesRoot: path.join(context.appOutDir, "resources"),
+      platform: "win32",
+      arch: builderArchName(context.arch),
+    });
+  }
 }
 
 function createBuilderConfig(env = process.env) {
@@ -21,7 +43,7 @@ function createBuilderConfig(env = process.env) {
   }
 
   const config = {
-    afterPack: normalizeMacNodePtyAfterPack,
+    afterPack: normalizeAndPruneAfterPack,
     appId: "com.localagenthost.desktop",
     productName: "WebGPT Bridge",
     artifactName: "WebGPT-Bridge-${version}-${os}-${arch}.${ext}",

@@ -20,15 +20,23 @@ function makePackFixture({ includePayload = true } = {}) {
       "node-pty",
       "prebuilds",
     );
-    for (const arch of ["darwin-arm64", "darwin-x64"]) {
+    for (const arch of ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]) {
       const dir = path.join(base, arch);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, "spawn-helper"), `helper-${arch}`);
       fs.writeFileSync(path.join(dir, "pty.node"), `pty-${arch}`);
-      fs.chmodSync(path.join(dir, "spawn-helper"), 0o644);
+      if (arch.startsWith("darwin-")) fs.chmodSync(path.join(dir, "spawn-helper"), 0o644);
     }
     const packageRoot = path.dirname(base);
+    const agentRoot = path.resolve(packageRoot, "..", "..");
+    fs.mkdirSync(path.join(agentRoot, "node_modules", "@modelcontextprotocol", "client"), { recursive: true });
+    fs.writeFileSync(path.join(agentRoot, "node_modules", "@modelcontextprotocol", "client", "index.js"), "dev");
+    fs.mkdirSync(path.join(agentRoot, "native", "windows-host"), { recursive: true });
+    fs.writeFileSync(path.join(agentRoot, "native", "windows-host", "host.exe"), "host");
+    fs.mkdirSync(path.join(packageRoot, "deps"), { recursive: true });
+    fs.writeFileSync(path.join(packageRoot, "deps", "source.cc"), "source");
     fs.mkdirSync(path.join(packageRoot, "lib"), { recursive: true });
+    fs.writeFileSync(path.join(packageRoot, "lib", "unused.js.map"), "map");
     fs.writeFileSync(
       path.join(packageRoot, "lib", "unixTerminal.js"),
       [
@@ -46,10 +54,11 @@ function makePackFixture({ includePayload = true } = {}) {
   return { appOutDir, appRoot };
 }
 
-function context(appOutDir, electronPlatformName) {
+function context(appOutDir, electronPlatformName, arch = 1) {
   return {
     appOutDir,
     electronPlatformName,
+    arch,
     packager: { appInfo: { productFilename: "WebGPT Bridge" } },
   };
 }
@@ -65,6 +74,12 @@ test("macOS afterPack normalizes both staged Darwin spawn-helper files", async (
     await config.afterPack(context(fixture.appOutDir, "darwin"));
     const inspected = inspectNodePtyMacPayload(fixture.appRoot);
     assert.deepEqual(inspected.helpers.map((item) => item.mode), [0o755, 0o755]);
+    const agentRoot = path.join(fixture.appRoot, "Contents", "Resources", "app.asar.unpacked", "agent-runtime");
+    assert.equal(fs.existsSync(path.join(agentRoot, "node_modules", "@modelcontextprotocol", "client")), false);
+    assert.equal(fs.existsSync(path.join(agentRoot, "native", "windows-host")), false);
+    assert.equal(fs.existsSync(path.join(agentRoot, "node_modules", "node-pty", "prebuilds", "win32-x64")), false);
+    assert.equal(fs.existsSync(path.join(agentRoot, "node_modules", "node-pty", "prebuilds", "darwin-arm64", "pty.node")), true);
+    assert.equal(fs.existsSync(path.join(agentRoot, "node_modules", "node-pty", "prebuilds", "darwin-x64", "pty.node")), true);
   } finally {
     fs.rmSync(fixture.appOutDir, { recursive: true, force: true });
   }
@@ -77,12 +92,29 @@ test("macOS universal merge rule covers original node-pty payload and staged sho
   assert.match(rule, /node-pty-helper\/darwin-/);
 });
 
-test("afterPack ignores non-macOS contexts", async () => {
+test("Windows x64 afterPack prunes Darwin and ARM64 PTY payload while retaining Windows Host runtime", async () => {
   const fixture = makePackFixture({ includePayload: false });
   try {
+    const agentRoot = path.join(fixture.appOutDir, "resources", "app.asar.unpacked", "agent-runtime");
+    for (const arch of ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]) {
+      const dir = path.join(agentRoot, "node_modules", "node-pty", "prebuilds", arch);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "pty.node"), arch);
+    }
+    fs.mkdirSync(path.join(agentRoot, "native", "windows-host", "bin", "release"), { recursive: true });
+    fs.writeFileSync(path.join(agentRoot, "native", "windows-host", "bin", "release", "windows-host.exe"), "host");
+    fs.mkdirSync(path.join(agentRoot, "node_modules", "@modelcontextprotocol", "client"), { recursive: true });
+    fs.writeFileSync(path.join(agentRoot, "node_modules", "@modelcontextprotocol", "client", "index.js"), "dev");
+
     const config = createBuilderConfig({});
     assert.equal(typeof config.afterPack, "function");
-    await assert.doesNotReject(() => config.afterPack(context(fixture.appOutDir, "win32")));
+    await config.afterPack(context(fixture.appOutDir, "win32", 1));
+
+    assert.equal(fs.existsSync(path.join(agentRoot, "node_modules", "node-pty", "prebuilds", "win32-x64", "pty.node")), true);
+    assert.equal(fs.existsSync(path.join(agentRoot, "node_modules", "node-pty", "prebuilds", "win32-arm64")), false);
+    assert.equal(fs.existsSync(path.join(agentRoot, "node_modules", "node-pty", "prebuilds", "darwin-arm64")), false);
+    assert.equal(fs.existsSync(path.join(agentRoot, "native", "windows-host", "bin", "release", "windows-host.exe")), true);
+    assert.equal(fs.existsSync(path.join(agentRoot, "node_modules", "@modelcontextprotocol", "client")), false);
   } finally {
     fs.rmSync(fixture.appOutDir, { recursive: true, force: true });
   }
