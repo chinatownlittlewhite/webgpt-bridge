@@ -180,6 +180,7 @@ function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = clas
     const result = policy(inputPath, { operation });
     const scope = pathScope(result);
     const target = result.path || path.resolve(inputPath);
+    const requestedPath = path.resolve(inputPath);
     if (scope === "workspace") throw new Error("workspace access does not require a Host capability");
     if (scope === "system") throw codedPolicyError(result);
     if (scope === "sensitive") throw new Error("use local_request_sensitive_access for sensitive paths");
@@ -202,7 +203,7 @@ function createLocalFileBroker({ policy = classifyLocalPath, actionPolicy = clas
     }
     const grant = capabilityStore.issue({ root: target, operations: [operation], ttlMs: 5 * 60_000, maxUses: 100, className: `host-path-${operation}` });
     record({ action: "host-path-access", result: "approved", path: target, operation });
-    return { accessId: grant.accessId, path: target, operation };
+    return { accessId: grant.accessId, path: requestedPath, operation };
   }
 
   function normalizeChange(change, lockedPaths) {
