@@ -1,11 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createCommandRunner } from "./runner.js";
 import { resolveModelWorkspaceCwd } from "./workspace.js";
 
 const TASKS = new Set(["test", "lint", "build", "typecheck", "check"]);
 const MAX_FAILURE_DIAGNOSTIC_BYTES = 4_096;
 const FAILURE_MARKER = "[project-task failure excerpt]";
+
+export const PROJECT_TASK_RUNTIME_READ_PATHS = Object.freeze([
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "shared"),
+]);
 
 function boundedUtf8Prefix(value, maxBytes) {
   if (typeof value !== "string" || value.length === 0 || maxBytes <= 0) return "";
@@ -114,7 +119,14 @@ export function createProjectTaskRunner({
   return async function runProjectTask({ task, cwd = ".", env = {}, requestApproval, signal } = {}) {
     const discovered = discoverProjectTask({ workspace, cwd, task });
     const run = createCommandRunner({ workspace, timeoutMs, sandboxAdapter, platform, auditLogger });
-    const result = await run({ argv: discovered.argv, cwd, env, requestApproval, signal });
+    const result = await run({
+      argv: discovered.argv,
+      cwd,
+      env,
+      requestApproval,
+      signal,
+      sandboxExtraReadPaths: PROJECT_TASK_RUNTIME_READ_PATHS,
+    });
     const diagnosed = appendProjectTaskFailureDiagnostic(result);
     return { ...diagnosed, task, ecosystem: discovered.ecosystem };
   };
