@@ -6,14 +6,11 @@ const manifest = require("./tunnel-client-release.json");
 const { fetchBytesWithRetry } = require("./tunnel-client-download.cjs");
 
 const target = process.argv[2];
-const supportedTargets = new Set(["darwin-universal", "darwin-arm64", "windows-amd64"]);
+const supportedTargets = new Set(["darwin-universal", "darwin-arm64", "darwin-x64", "windows-amd64"]);
 if (!supportedTargets.has(target)) throw new Error(`Unsupported tunnel-client target: ${target || "(missing)"}`);
 
-if (target === "darwin-universal" && process.platform !== "darwin") {
+if (target.startsWith("darwin-") && process.platform !== "darwin") {
   throw new Error(`Target ${target} must be prepared on darwin, current host is ${process.platform}/${process.arch}`);
-}
-if (target === "darwin-arm64" && (process.platform !== "darwin" || process.arch !== "arm64")) {
-  throw new Error(`Target ${target} must be prepared on darwin/arm64, current host is ${process.platform}/${process.arch}`);
 }
 if (target === "windows-amd64" && (process.platform !== "win32" || process.arch !== "x64")) {
   throw new Error(`Target ${target} must be prepared on win32/x64, current host is ${process.platform}/${process.arch}`);
@@ -93,7 +90,7 @@ function copyBundleFrom(staged) {
   for (const candidate of ["LICENSE", "LICENSE.txt", "NOTICE", "NOTICE.txt"]) {
     const source = findFile(staged.extracted, candidate);
     if (source && !fs.existsSync(path.join(output, path.basename(source)))) {
-      fs.copyFileSync(source, path.join(output, path.basename(source)));
+      fs.copyFileSync(source, path.join(output, path.basename(source));
     }
   }
 }
@@ -146,10 +143,10 @@ async function prepareUniversalDarwin() {
   ]);
 }
 
-async function preparePinnedSingle(singleTarget) {
-  const asset = manifest.assets[singleTarget];
-  if (!asset?.sha256) throw new Error(`Target ${singleTarget} has no pinned SHA-256 and cannot be prepared directly`);
-  const staged = await stageArchive(asset, asset.sha256, singleTarget);
+async function preparePinnedSingle(sourceTarget, bundleTarget = sourceTarget) {
+  const asset = manifest.assets[sourceTarget];
+  if (!asset?.sha256) throw new Error(`Target ${sourceTarget} has no pinned SHA-256 and cannot be prepared directly`);
+  const staged = await stageArchive(asset, asset.sha256, sourceTarget);
   copyBundleFrom(staged);
   const bundled = path.join(output, asset.executable);
   if (!fs.existsSync(bundled)) throw new Error(`Normalized bundle is missing ${asset.executable}`);
@@ -158,7 +155,7 @@ async function preparePinnedSingle(singleTarget) {
     const cloudflared = findFile(output, "cloudflared");
     if (cloudflared) fs.chmodSync(cloudflared, 0o755);
   }
-  writeProvenance(singleTarget, [{ target: singleTarget, file: asset.file, sha256: asset.sha256 }]);
+  writeProvenance(bundleTarget, [{ target: sourceTarget, file: asset.file, sha256: asset.sha256 }]);
 }
 
 (async () => {
@@ -166,6 +163,7 @@ async function preparePinnedSingle(singleTarget) {
   fs.rmSync(output, { recursive: true, force: true });
   try {
     if (target === "darwin-universal") await prepareUniversalDarwin();
+    else if (target === "darwin-x64") await preparePinnedSingle("darwin-amd64", "darwin-x64");
     else await preparePinnedSingle(target);
     console.log(`Prepared OpenAI tunnel-client v${manifest.version} for ${target}`);
   } finally {
