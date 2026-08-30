@@ -2,7 +2,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { resolveSystemProxyEnvironment } = require("../src/system-proxy.cjs");
 
-const supportedTargets = new Set(["darwin-universal", "darwin-arm64", "windows-amd64"]);
+const supportedTargets = new Set(["darwin-universal", "darwin-arm64", "darwin-x64", "windows-amd64"]);
 const prepareScript = path.join(__dirname, "prepare-tunnel-client.cjs");
 
 function hasHttpsProxy(env) {
