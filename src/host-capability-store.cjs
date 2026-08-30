@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const DEFAULT_TTL_MS = 60_000;
@@ -22,7 +23,12 @@ function requireNonEmptyString(value, name) {
 
 function canonicalAbsolute(value, name) {
   if (typeof value !== "string" || !path.isAbsolute(value)) throw new TypeError(`${name} must be absolute`);
-  return path.resolve(value);
+  const resolved = path.resolve(value);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 function createHostCapabilityStore({ generation, policyVersion, now = Date.now, randomId = crypto.randomUUID } = {}) {
