@@ -4,7 +4,11 @@ const path = require("node:path");
 const ERROR_CODE = "PACKAGE_PAYLOAD_INVALID";
 const SUPPORTED_PLATFORMS = new Set(["darwin", "win32"]);
 const SUPPORTED_DARWIN_ARCHES = new Set(["arm64", "x64", "universal"]);
-const DARWIN_PTY_PREBUILDS = new Set(["darwin-arm64", "darwin-x64"]);
+const DARWIN_PTY_PREBUILDS = Object.freeze({
+  arm64: new Set(["darwin-arm64"]),
+  x64: new Set(["darwin-x64"]),
+  universal: new Set(["darwin-arm64", "darwin-x64"]),
+});
 const WINDOWS_X64_PTY_PREBUILDS = new Set(["win32-x64"]);
 
 function invalid(message) {
@@ -97,7 +101,7 @@ function prunePackagedAgentRuntime({ resourcesRoot, platform, arch }) {
   }
 
   const prebuildsRoot = path.join(agentRoot, "node_modules", "node-pty", "prebuilds");
-  const retainedPrebuilds = platform === "darwin" ? DARWIN_PTY_PREBUILDS : WINDOWS_X64_PTY_PREBUILDS;
+  const retainedPrebuilds = platform === "darwin" ? DARWIN_PTY_PREBUILDS[arch] : WINDOWS_X64_PTY_PREBUILDS;
   const prebuildsStat = fs.lstatSync(prebuildsRoot, { throwIfNoEntry: false });
   if (prebuildsStat?.isDirectory() && !prebuildsStat.isSymbolicLink()) {
     for (const name of fs.readdirSync(prebuildsRoot).sort()) {
