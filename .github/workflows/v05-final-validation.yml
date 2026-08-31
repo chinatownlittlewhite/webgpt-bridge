@@ -27,3 +27,5 @@ jobs:
           test/host-security.test.cjs
           test/capabilities-github-async.test.cjs
           test/capabilities-github-worker.test.cjs
+          test/logs-cursor.test.cjs
+          test/renderer-incremental-logs.test.cjs
