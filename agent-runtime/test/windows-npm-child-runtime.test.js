@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { stageWindowsNodeCliRuntime } from "../src/platform.js";
+import { resolvePlatformArgv, stageWindowsNodeCliRuntime } from "../src/platform.js";
 
 test("Windows npm staging includes a stable refreshed workspace-local Node for child scripts", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-win-npm-child-node-"));
@@ -54,5 +56,33 @@ test("Windows npm staging includes a stable refreshed workspace-local Node for c
     assert.equal(fs.readFileSync(stagedNode, "utf8"), "trusted-node-v2", "each invocation must refresh staged Node from the trusted host runtime");
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("Windows npm staging waits for a just-finished staged Node executable before refreshing", { skip: process.platform !== "win32" }, async () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-win-npm-refresh-lock-"));
+  let child = null;
+  try {
+    const workspace = path.join(fixture, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    const command = resolvePlatformArgv(["npm", "--version"], {
+      env: process.env,
+      platform: "win32",
+      nodePath: process.execPath,
+    });
+    const first = stageWindowsNodeCliRuntime(command, { workspace, platform: "win32" });
+    child = spawn(first.argv[0], ["-e", "setTimeout(() => process.exit(0), 400)"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    await once(child, "spawn");
+
+    const refreshed = stageWindowsNodeCliRuntime(command, { workspace, platform: "win32" });
+    assert.equal(refreshed.argv[0], first.argv[0], "refresh must preserve the stable staged Node path after the lock clears");
+    assert.equal(refreshed.argv[3], first.argv[3], "refresh must preserve the stable staged npm CLI path after the lock clears");
+    if (child.exitCode === null) await once(child, "exit");
+  } finally {
+    if (child?.exitCode === null) child.kill();
+    fs.rmSync(fixture, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
