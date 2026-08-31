@@ -11,6 +11,7 @@ const { createRuntimeHost } = require("./host/runtime-host.cjs");
 const { createWindowController } = require("./host/window-controller.cjs");
 const { createTrayController } = require("./host/tray-controller.cjs");
 const { registerHostIpc } = require("./host/ipc-controller.cjs");
+const { createLogStreamService } = require("./host/log-stream-service.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
 const { ensureTunnelProfile } = require("./tunnel-profile-manager.cjs");
@@ -48,7 +49,7 @@ const MAX_LOG_LINES = 600;
 let windowController;
 let trayController;
 let disposeIpc;
-let logLines = [];
+const logStream = createLogStreamService({ maxEntries: MAX_LOG_LINES });
 let updateService;
 let runtimeSupervisor;
 let appLifecycle;
@@ -111,13 +112,13 @@ function emit(type, value) {
   if (type === "status") updateTray();
 }
 
+function emitLogCursor(reset = false) {
+  emit("logs", { cursor: logStream.getCursor(), reset });
+}
+
 function appendLog(source, data) {
-  for (const line of String(data).split(/\r?\n/)) {
-    if (!line) continue;
-    logLines.push({ source, line, at: new Date().toISOString() });
-  }
-  if (logLines.length > MAX_LOG_LINES) logLines = logLines.slice(-MAX_LOG_LINES);
-  emit("logs", logLines);
+  const result = logStream.append(source, data);
+  if (result.added > 0) emitLogCursor(false);
 }
 
 function getStatus() {
@@ -162,8 +163,8 @@ const runtimeHost = createRuntimeHost({
   hostBroker,
   appendLog,
   resetLogs: () => {
-    logLines = [];
-    emit("logs", logLines);
+    logStream.reset();
+    emitLogCursor(true);
   },
   spawnSync,
   endpoints: { mcpHost: MCP_HOST, mcpPort: MCP_PORT },
@@ -240,7 +241,7 @@ if (singleInstanceOwnership.primary) {
       getWindow: () => windowController.getWindow(),
       runtimeSupervisor,
       getStatus,
-      getLogs: () => logLines,
+      getLogs: (payload) => logStream.read(payload),
       shell,
       updateService,
     });
