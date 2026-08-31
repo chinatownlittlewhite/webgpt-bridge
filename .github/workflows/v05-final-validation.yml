@@ -29,3 +29,4 @@ jobs:
           test/capabilities-github-worker.test.cjs
           test/logs-cursor.test.cjs
           test/renderer-incremental-logs.test.cjs
+          test/runtime-supervisor.test.cjs
