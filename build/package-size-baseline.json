@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "previousFormalRelease": "v0.4.11",
+  "policy": {
+    "maxGrowthRatio": 0.05,
+    "maxGrowthBytes": 5242880
+  },
+  "provenance": {
+    "mac-universal": "v0.4.11-era unpacked package tree measured before Step 11 pruning; component subtrees not separately measured use the legacy app.asar.unpacked size as a conservative upper envelope.",
+    "mac-arm64": "No formal single-architecture macOS artifact existed in v0.4.11; inherits the v0.4.11 Universal unpacked upper envelope, so a single-architecture package must not materially exceed the prior Universal package.",
+    "mac-x64": "No formal single-architecture macOS artifact existed in v0.4.11; inherits the v0.4.11 Universal unpacked upper envelope, so a single-architecture package must not materially exceed the prior Universal package.",
+    "win-x64": "Anchored to the v0.4.11 formal Windows x64 release (installer size 188426273 bytes). Unpacked component values are conservative release envelopes because v0.4.11 did not publish an unpacked size report; replace them with measured formal values after the first release that publishes this report."
+  },
+  "variants": {
+    "mac-arm64": {
+      "totalBytes": 379026284,
+      "frameworksBytes": 225122178,
+      "resourcesBytes": 153866273,
+      "appAsarBytes": 2194140,
+      "appAsarUnpackedBytes": 29474303,
+      "agentRuntimeBytes": 29474303,
+      "nodePtyBytes": 29474303,
+      "agentNativeBytes": 29474303,
+      "tunnelClientBytes": 122024244,
+      "windowsNodeRuntimeBytes": 0
+    },
+    "mac-x64": {
+      "totalBytes": 379026284,
+      "frameworksBytes": 225122178,
+      "resourcesBytes": 153866273,
+      "appAsarBytes": 2194140,
+      "appAsarUnpackedBytes": 29474303,
+      "agentRuntimeBytes": 29474303,
+      "nodePtyBytes": 29474303,
+      "agentNativeBytes": 29474303,
+      "tunnelClientBytes": 122024244,
+      "windowsNodeRuntimeBytes": 0
+    },
+    "mac-universal": {
+      "totalBytes": 379026284,
+      "frameworksBytes": 225122178,
+      "resourcesBytes": 153866273,
+      "appAsarBytes": 2194140,
+      "appAsarUnpackedBytes": 29474303,
+      "agentRuntimeBytes": 29474303,
+      "nodePtyBytes": 29474303,
+      "agentNativeBytes": 29474303,
+      "tunnelClientBytes": 122024244,
+      "windowsNodeRuntimeBytes": 0
+    },
+    "win-x64": {
+      "totalBytes": 565278819,
+      "frameworksBytes": 0,
+      "resourcesBytes": 335544320,
+      "appAsarBytes": 2194140,
+      "appAsarUnpackedBytes": 41943040,
+      "agentRuntimeBytes": 41943040,
+      "nodePtyBytes": 31457280,
+      "agentNativeBytes": 31457280,
+      "tunnelClientBytes": 134217728,
+      "windowsNodeRuntimeBytes": 134217728
+    }
+  }
+}
