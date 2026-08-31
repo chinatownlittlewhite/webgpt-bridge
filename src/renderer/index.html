@@ -84,10 +84,10 @@
           <section class="settings-section" aria-labelledby="permissionSettingsTitle">
             <div class="section-heading"><div><span class="kicker">PERMISSIONS</span><h2 id="permissionSettingsTitle">权限边界</h2><p>模式只影响允许范围内的自动化，不覆盖固定安全边界。</p></div></div>
             <div class="permission-block">
-              <label class="field full">权限模式<select id="approvalMode"><option value="cautious">谨慎</option><option value="development">工作区自动（推荐）</option><option value="auto">高自治</option><option value="full_control">完全控制（保留安全边界）</option></select></label>
-              <p class="setting-note">同类低风险权限可在本次连接内记住。完全控制不会绕过敏感路径、Shell、SSH 校验、提权或沙箱边界。</p>
+              <label class="field full">权限模式<select id="approvalMode"><option value="cautious">谨慎</option><option value="development">工作区自动（推荐）</option><option value="auto">高自治</option><option value="full_control">完全控制（无确认）</option></select></label>
+              <p class="setting-note">项目运行与项目脚本不再询问；需要确认的同类权限在首次批准后会在本次连接内自动记住。完全控制会自动放行无需管理员权限的项目内本机、网络与 GitHub 操作，但不会绕过敏感路径、shell、SSH 或提权安全边界。</p>
               <label class="field full"><span>设计问题记录 <input id="designIssueJournal" type="checkbox" /></span><small>开启后将程序自身遇到的设计缺陷/优化点以脱敏结构化条目写入项目 `.webgpt-handoff/DESIGN_ISSUES.jsonl`。</small></label>
-              <label class="field full"><span>启用受控 SSH <input id="sshEnabled" type="checkbox" /></span><small>SSH 默认关闭；只允许受控主机和非交互远程命令，不支持 scp、sftp、端口/代理转发或交互 shell。</small></label>
+              <label class="field full"><span>启用受控 SSH <input id="sshEnabled" type="checkbox" /></span><small>SSH 默认关闭。当前受控 SSH 仅支持 macOS/Linux；Windows 不支持。仅允许私有/本地主机或明确允许列表中的主机，并且必须提供非交互远程命令；scp、sftp、端口/代理转发与交互 shell 均不支持。</small></label>
               <label class="field full">SSH 允许列表<textarea id="sshAllowedHosts" rows="3" placeholder="buildbox.local&#10;10.0.0.8"></textarea><small>可用换行或逗号分隔；保存后会去空项并规范化为一行一个主机。</small></label>
             </div>
           </section>
@@ -98,7 +98,7 @@
               <label>Agent 运行时目录<input id="runtimePath" placeholder="默认使用应用内置运行时" /><button data-picker="runtimePath" class="pick">选择</button></label>
               <label>自定义 tunnel-client（可选）<input id="tunnelClientPath" placeholder="留空使用内置 v0.0.13" /><button data-file-picker="tunnelClientPath" class="pick">选择</button></label>
               <label>Node.js（可选）<input id="nodePath" placeholder="留空则自动查找 Node.js 20+" /></label>
-              <label>HTTPS 代理（可选）<input id="httpsProxy" placeholder="12001 或 http://127.0.0.1:7890" /><small>填写后 Tunnel 与受控外部联网命令会自动使用此代理；loopback 不走代理。</small></label>
+              <label>HTTPS 代理（可选）<input id="httpsProxy" placeholder="12001 或 http://127.0.0.1:7890" /><small>填写后，Tunnel 与受控外部联网命令会自动使用此代理；macOS 留空时可自动读取系统代理，Windows 当前需要手动填写。127.0.0.1 / localhost / ::1 等本地 loopback 不走代理。</small></label>
             </div>
           </section>
         </div>
