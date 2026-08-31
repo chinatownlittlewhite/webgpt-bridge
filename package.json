@@ -1,6 +1,6 @@
 {
   "name": "webgpt-bridge",
-  "version": "0.4.11",
+  "version": "0.5.0",
   "description": "A private desktop bridge from WebGPT to local MCP agents.",
   "private": true,
   "main": "src/main.cjs",
