@@ -1,6 +1,14 @@
 const api = window.localAgentHost;
 const ids = ["workspacePath", "runtimePath", "tunnelClientPath", "nodePath", "tunnelId", "profile", "httpsProxy", "sshAllowedHosts", "approvalMode", "runtimeKey"];
 const byId = (id) => document.getElementById(id);
+const DIAGNOSTIC_COPY = Object.freeze({
+  CLI_UNAVAILABLE: "GitHub CLI 未安装",
+  NOT_AUTHENTICATED: "GitHub CLI 未登录",
+  UPSTREAM_ERROR: "GitHub 暂时不可用",
+  HEALTH_DEGRADED: "本地 MCP 状态异常",
+  STOPPED: "本地 MCP 未连接",
+  READY: "就绪",
+});
 let updateState;
 
 function message(text, error = false) {
@@ -26,6 +34,14 @@ function renderStatus(status) {
   const connection = byId("connection");
   connection.className = `connection ${status.tunnel ? "online" : "offline"}`;
   connection.querySelector("b").textContent = status.tunnel ? "已连接" : "未连接";
+}
+
+function renderCapabilities(capabilities) {
+  const github = capabilities?.services?.github;
+  const mcp = capabilities?.services?.mcp;
+  const githubText = DIAGNOSTIC_COPY[github?.code] || "GitHub 状态未知";
+  const mcpText = DIAGNOSTIC_COPY[mcp?.code] || "MCP 状态未知";
+  byId("diagnosticTitle").textContent = `${mcpText} · ${githubText}`;
 }
 
 function renderLogs(logs) {
@@ -108,8 +124,8 @@ document.querySelectorAll("[data-file-picker]").forEach((button) => button.addEv
 }));
 byId("save").addEventListener("click", () => save().catch((error) => message(error.message, true)));
 byId("clearKey").addEventListener("click", () => api.clearKey().then(() => { byId("keyStatus").textContent = "运行时密钥已移除"; message("密钥已移除。"); }).catch((error) => message(error.message, true)));
-byId("start").addEventListener("click", async () => { try { await save(); renderStatus(await api.start()); message("已连接。关闭窗口后会继续在菜单栏运行。"); } catch (error) { message(error.message, true); renderStatus(await api.status()); } });
-byId("stop").addEventListener("click", async () => { await api.stop(); renderStatus(await api.status()); message("已停止本地服务与隧道。"); });
+byId("start").addEventListener("click", async () => { try { await save(); renderStatus(await api.start()); renderCapabilities(await api.capabilities()); message("已连接。关闭窗口后会继续在菜单栏运行。"); } catch (error) { message(error.message, true); renderStatus(await api.status()); } });
+byId("stop").addEventListener("click", async () => { await api.stop(); renderStatus(await api.status()); renderCapabilities(await api.capabilities()); message("已停止本地服务与隧道。"); });
 byId("openChatGPT").addEventListener("click", () => api.openChatGPT());
 byId("updateAction").addEventListener("click", async () => {
   try {
@@ -133,6 +149,7 @@ api.onUpdateState(renderUpdate);
   byId("sshAllowedHosts").value = Array.isArray(settings.sshAllowedHosts) ? settings.sshAllowedHosts.join("\n") : "";
   byId("keyStatus").textContent = settings.hasRuntimeKey ? "此电脑的密钥已安全保存" : "尚未保存运行时密钥";
   renderStatus(await api.status());
+  renderCapabilities(await api.capabilities());
   renderLogs(await api.logs());
   renderUpdate(await api.getUpdateState());
 })();
