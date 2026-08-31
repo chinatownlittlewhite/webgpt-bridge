@@ -55,6 +55,34 @@ test("macOS variant orchestrator prepares each tunnel immediately before its pac
   assert.equal(calls[5].options.env.WEBGPT_MAC_PACKAGE_VARIANT, "universal");
 });
 
+test("macOS distribution runs the size verifier only after every package variant is built", () => {
+  const { runMacDistribution } = loadOrchestrator();
+  const events = [];
+  const fakeSpawn = (_command, args) => {
+    events.push(args.includes("--arm64") ? "build-arm64"
+      : args.includes("--x64") ? "build-x64"
+        : args.includes("--universal") ? "build-universal"
+          : `prepare-${args.at(-1)}`);
+    return { status: 0, signal: null, error: null };
+  };
+  runMacDistribution({
+    spawn: fakeSpawn,
+    nodeExecutable: "/trusted/node",
+    root: "/project",
+    env: { PATH: "/bin" },
+    verifyPackages: () => events.push("verify-sizes"),
+  });
+  assert.deepEqual(events, [
+    "prepare-darwin-arm64",
+    "build-arm64",
+    "prepare-darwin-x64",
+    "build-x64",
+    "prepare-darwin-universal",
+    "build-universal",
+    "verify-sizes",
+  ]);
+});
+
 test("tunnel prepare launcher accepts the explicit macOS x64 vocabulary", () => {
   delete require.cache[require.resolve(launcherPath)];
   const { buildPrepareNodeArgs } = require(launcherPath);
@@ -62,19 +90,14 @@ test("tunnel prepare launcher accepts the explicit macOS x64 vocabulary", () => 
   assert.equal(args.at(-1), "darwin-x64");
 });
 
-test("root dist:mac runs common gates once, builds all variants, then enforces the package-size budget", () => {
+test("root dist:mac runs common gates once and delegates the complete macOS distribution to the orchestrator", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const script = pkg.scripts["dist:mac"];
   assert.match(script, /npm run build:icon/);
   assert.match(script, /npm run prepare:agent/);
   assert.match(script, /npm run verify:desktop/);
   assert.match(script, /npm --prefix agent-runtime run acceptance/);
-  assert.match(script, /node scripts\/build-macos-variants\.cjs/);
-  assert.match(script, /npm run verify:package-sizes:mac$/);
-  assert.ok(
-    script.indexOf("node scripts/build-macos-variants.cjs") < script.indexOf("npm run verify:package-sizes:mac"),
-    "package-size gate must run only after all macOS variants are built",
-  );
+  assert.match(script, /node scripts\/build-macos-variants\.cjs$/);
   assert.doesNotMatch(script, /prepare:tunnel-client:mac/);
   assert.doesNotMatch(script, /electron-builder/);
 });
