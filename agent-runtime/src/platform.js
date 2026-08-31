@@ -4,6 +4,12 @@ import path from "node:path";
 import { INTERNAL_STATE_DIR } from "./workspace.js";
 
 const WINDOWS_BATCH_EXTENSIONS = new Set([".cmd", ".bat"]);
+const WINDOWS_RUNTIME_REMOVE_OPTIONS = Object.freeze({
+  recursive: true,
+  force: true,
+  maxRetries: 8,
+  retryDelay: 100,
+});
 
 export function normalizedPlatform(platform = process.platform) {
   if (platform === "win32") return "windows";
@@ -273,18 +279,18 @@ export function stageWindowsNodeCliRuntime(platformCommand, {
   const stagedNode = path.join(stagedNodeDirectory, path.basename(sourceNode));
   const stagedPackageRoot = path.join(stageRoot, "package");
   fs.mkdirSync(runtimeParent, { recursive: true });
-  fs.rmSync(stageRoot, { recursive: true, force: true });
+  fs.rmSync(stageRoot, WINDOWS_RUNTIME_REMOVE_OPTIONS);
   fs.mkdirSync(stagedNodeDirectory, { recursive: true });
   try {
     fs.copyFileSync(sourceNode, stagedNode);
     copyTrustedRuntimePackage(sourcePackageRoot, stagedPackageRoot);
   } catch (error) {
-    fs.rmSync(stageRoot, { recursive: true, force: true });
+    fs.rmSync(stageRoot, WINDOWS_RUNTIME_REMOVE_OPTIONS);
     throw error;
   }
   const stagedCli = path.join(stagedPackageRoot, "bin", cliName);
   if (!fs.statSync(stagedNode).isFile() || !fs.statSync(stagedCli).isFile()) {
-    fs.rmSync(stageRoot, { recursive: true, force: true });
+    fs.rmSync(stageRoot, WINDOWS_RUNTIME_REMOVE_OPTIONS);
     throw new Error(`staged Windows npm runtime is incomplete for ${cliName}`);
   }
 
