@@ -32,7 +32,7 @@ function registerHostIpc({
   ipcMain.handle("host:start", () => runtimeSupervisor.start());
   ipcMain.handle("host:stop", () => runtimeSupervisor.stop("ipc"));
   ipcMain.handle("host:status", () => getStatus());
-  ipcMain.handle("host:logs", () => getLogs());
+  ipcMain.handle("host:logs", (_event, payload = {}) => getLogs(payload));
   ipcMain.handle("host:capabilities", () => activeCapabilitiesService.capabilities());
   ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
   ipcMain.handle("update:get-state", () => updateService.getState());
