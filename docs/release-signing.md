@@ -23,9 +23,13 @@ Formal macOS releases are fail-closed. The release job must set `WEBGPT_FORMAL_R
 
 Missing credentials must stop the macOS job before packaging. Electron Builder must use the Developer ID identity with `forceCodeSigning=true` and Apple notarization enabled. Pull-request CI remains unsigned and never receives these production credentials.
 
-The formal job builds arm64, x64, and Universal DMG/ZIP variants and verifies the Electron app plus bundled `tunnel-client` and `cloudflared` architectures. Before any macOS artifact can be uploaded, every staged `.app` must pass `codesign --verify --deep --strict --verbose=2` and notarization-ticket validation with `xcrun stapler validate`. Every DMG must also pass Gatekeeper assessment with `spctl --assess --type open --context context:primary-signature -v`. Failure of signing, notarization, stapling, architecture checks, native-module checks, or Gatekeeper assessment blocks publication.
+The formal job builds arm64, x64, and Universal DMG/ZIP variants and verifies the Electron app plus bundled `tunnel-client` and `cloudflared` architectures. Before any macOS artifact can be uploaded, every staged `.app` must pass `codesign --verify --deep --strict --verbose=2`, notarization-ticket validation with `xcrun stapler validate`, and Gatekeeper assessment with `spctl --assess --type execute --verbose=4`. Failure of signing, notarization, stapling, architecture checks, native-module checks, or Gatekeeper assessment blocks publication.
 
 A public macOS package that reports “应用已损坏” after its SHA-256 matches the published checksum is therefore treated as a release defect, not as an expected installation path. Do not instruct users to disable Gatekeeper globally.
+
+### Superseded policy record
+
+Before the v0.5.0 repair, the repository intentionally published GitHub artifacts **without requiring external code-signing or Apple notarization credentials**. That policy is superseded for macOS and is retained here only so historical regression checks and old design records remain interpretable. Under the earlier prerelease-only repair rule, a **published prerelease may be deleted and rebuilt under the same version**. The stable default remains: **Never overwrite a stable public release**. The v0.5.0 replacement is a repository-owner-authorized exception because its macOS installer was defective; future ordinary fixes must use a higher patch version.
 
 ### Application updates
 
