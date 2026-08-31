@@ -64,10 +64,14 @@ test("committed size baseline names the previous formal release and covers all p
 
 test("dist commands gate workflow uploads through the shared package-size verifier", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
-  assert.match(pkg.scripts["dist:mac"], /verify:package-sizes:mac/);
+  assert.match(pkg.scripts["dist:mac"], /node scripts\/build-macos-variants\.cjs$/);
   assert.match(pkg.scripts["dist:win"], /verify:package-sizes:win/);
   assert.match(pkg.scripts["verify:package-sizes:mac"], /verify-package-sizes\.cjs macos/);
   assert.match(pkg.scripts["verify:package-sizes:win"], /verify-package-sizes\.cjs windows/);
+
+  const macOrchestrator = fs.readFileSync(path.join(__dirname, "..", "scripts", "build-macos-variants.cjs"), "utf8");
+  assert.match(macOrchestrator, /verifyMacPackages/);
+  assert.match(macOrchestrator, /buildMacVariants\(buildOptions\);[\s\S]*verifyPackages\(\)/);
 
   const verifier = fs.readFileSync(path.join(__dirname, "..", "scripts", "verify-package-sizes.cjs"), "utf8");
   assert.match(verifier, /package-size-budget\.cjs/);
