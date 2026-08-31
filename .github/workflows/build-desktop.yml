@@ -30,7 +30,7 @@ jobs:
       - run: npm --prefix agent-runtime run acceptance:quick
 
   macos:
-    name: macOS variants
+    name: macOS universal + arm64 + x64 variants
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
