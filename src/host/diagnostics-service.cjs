@@ -1,4 +1,6 @@
 const { spawnSync: defaultSpawnSync } = require("node:child_process");
+const path = require("node:path");
+const { Worker } = require("node:worker_threads");
 const { resolveDesktopGitHubCli: defaultResolveDesktopGitHubCli } = require("../github-cli-path.cjs");
 
 const STATUS_RANK = Object.freeze({ ready: 0, degraded: 1, unavailable: 2 });
@@ -43,6 +45,15 @@ function classifyGithubDiagnostic({ available = false, authenticated, upstreamOk
     });
   }
   return boundedService({ status: "ready", code: "READY", message: "GitHub CLI is ready." });
+}
+
+function githubProbeFailure() {
+  return boundedService({
+    status: "degraded",
+    code: "UPSTREAM_ERROR",
+    message: "GitHub health check did not complete successfully.",
+    action: { id: "retry-github", label: "Retry GitHub check" },
+  });
 }
 
 function classifyMcpDiagnostic({ connected = false, agentHealth = "unknown" } = {}) {
@@ -102,26 +113,84 @@ function probeGithubSync({
   }
 }
 
+function isGithubProbeState(value) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof value.available === "boolean"
+    && typeof value.authenticated === "boolean"
+    && typeof value.upstreamOk === "boolean",
+  );
+}
+
+function probeGithubHealth({ workerTimeoutMs = 2000, workerFactory } = {}) {
+  const timeoutMs = Math.max(10, Math.min(10_000, Number(workerTimeoutMs) || 2000));
+  let worker;
+  try {
+    worker = workerFactory
+      ? workerFactory()
+      : new Worker(path.join(__dirname, "capabilities-github-worker.cjs"), {
+          workerData: { commandTimeoutMs: Math.min(1500, timeoutMs) },
+        });
+  } catch {
+    return Promise.resolve(githubProbeFailure());
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      worker.removeListener?.("message", onMessage);
+      worker.removeListener?.("error", onError);
+      worker.removeListener?.("exit", onExit);
+      try {
+        const termination = worker.terminate?.();
+        if (termination && typeof termination.catch === "function") termination.catch(() => {});
+      } catch {
+        // The diagnostic result remains bounded even when worker cleanup fails.
+      }
+      resolve(value);
+    };
+    const onMessage = (value) => finish(isGithubProbeState(value) ? classifyGithubDiagnostic(value) : githubProbeFailure());
+    const onError = () => finish(githubProbeFailure());
+    const onExit = (code) => {
+      if (!settled && code !== 0) finish(githubProbeFailure());
+      else if (!settled) finish(githubProbeFailure());
+    };
+    const timer = setTimeout(() => finish(githubProbeFailure()), timeoutMs);
+    worker.once("message", onMessage);
+    worker.once("error", onError);
+    worker.once("exit", onExit);
+  });
+}
+
 function createCapabilitiesService({
   getStatus = () => ({}),
   policy = Object.freeze({ sandbox: "default-deny", approval: "host-owned" }),
-  probeGithub = () => probeGithubSync(),
+  probeGithub = () => probeGithubHealth(),
 } = {}) {
   if (typeof getStatus !== "function") throw new TypeError("getStatus must be a function");
   if (typeof probeGithub !== "function") throw new TypeError("probeGithub must be a function");
 
   async function capabilities() {
-    let githubState;
+    let github;
     try {
-      githubState = await probeGithub();
+      const value = await probeGithub();
+      github = value && typeof value.code === "string"
+        ? boundedService(value)
+        : isGithubProbeState(value)
+          ? classifyGithubDiagnostic(value)
+          : githubProbeFailure();
     } catch {
-      githubState = { available: true, authenticated: true, upstreamOk: false };
+      github = githubProbeFailure();
     }
     const status = getStatus() || {};
     return aggregateCapabilities({
       policy,
       services: {
-        github: classifyGithubDiagnostic(githubState),
+        github,
         mcp: classifyMcpDiagnostic({ connected: status.connected === true, agentHealth: status.agentHealth }),
       },
     });
@@ -136,5 +205,6 @@ module.exports = {
   classifyGithubDiagnostic,
   classifyMcpDiagnostic,
   createCapabilitiesService,
+  probeGithubHealth,
   probeGithubSync,
 };
