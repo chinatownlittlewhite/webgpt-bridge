@@ -26,12 +26,26 @@ test("GitHub release supports explicit dispatch only when the selected ref is a 
   assert.match(release, /GITHUB_REF_TYPE[^\n]*tag|tag[^\n]*GITHUB_REF_TYPE/);
 });
 
-test("release workflow has no external signing or notarization dependency", () => {
+test("formal macOS release fails closed on signing and notarization credentials", () => {
   const release = readReleaseWorkflow();
-  assert.doesNotMatch(release, /environment:\s*desktop-release-(?:windows|macos)/);
-  assert.doesNotMatch(release, /id-token:\s*write/);
-  assert.doesNotMatch(release, /AZURE_|WEBGPT_WINDOWS_SIGN_|WEBGPT_MAC_IDENTITY|CSC_LINK|CSC_KEY_PASSWORD|APPLE_API_/);
-  assert.doesNotMatch(release, /Get-AuthenticodeSignature|codesign\s+--verify|stapler\s+validate|spctl\s+--assess/);
+  const mac = release.slice(release.indexOf("  macos:"), release.indexOf("  publish:"));
+  assert.match(mac, /WEBGPT_FORMAL_RELEASE:\s*macos/);
+  assert.match(mac, /CSC_LINK:\s*\$\{\{\s*secrets\.MACOS_CSC_LINK\s*\}\}/);
+  assert.match(mac, /CSC_KEY_PASSWORD:\s*\$\{\{\s*secrets\.MACOS_CSC_KEY_PASSWORD\s*\}\}/);
+  assert.match(mac, /WEBGPT_MAC_IDENTITY:\s*\$\{\{\s*secrets\.MACOS_SIGNING_IDENTITY\s*\}\}/);
+  assert.match(mac, /APPLE_ID:\s*\$\{\{\s*secrets\.APPLE_ID\s*\}\}/);
+  assert.match(mac, /APPLE_APP_SPECIFIC_PASSWORD:\s*\$\{\{\s*secrets\.APPLE_APP_SPECIFIC_PASSWORD\s*\}\}/);
+  assert.match(mac, /APPLE_TEAM_ID:\s*\$\{\{\s*secrets\.APPLE_TEAM_ID\s*\}\}/);
+  for (const name of [
+    "MACOS_CSC_LINK",
+    "MACOS_CSC_KEY_PASSWORD",
+    "MACOS_SIGNING_IDENTITY",
+    "APPLE_ID",
+    "APPLE_APP_SPECIFIC_PASSWORD",
+    "APPLE_TEAM_ID",
+  ]) {
+    assert.match(mac, new RegExp(`missing.*${name}|${name}.*missing`, "i"));
+  }
 });
 
 test("platform jobs cannot publish directly and publication waits for both validated artifacts", () => {
@@ -73,7 +87,7 @@ test("Windows GitHub release keeps native acceptance and installer lifecycle smo
   assert.doesNotMatch(windows, /WEBGPT_FORMAL_RELEASE|Get-AuthenticodeSignature|AZURE_|id-token:\s*write/);
 });
 
-test("macOS GitHub release stays Universal and publishes DMG plus ZIP without signing or notarization", () => {
+test("macOS release signs, notarizes, staples, and passes Gatekeeper before upload", () => {
   const release = readReleaseWorkflow();
   const mac = release.slice(release.indexOf("  macos:"), release.indexOf("  publish:"));
   assert.match(mac, /npm run dist:mac/);
@@ -81,10 +95,12 @@ test("macOS GitHub release stays Universal and publishes DMG plus ZIP without si
   assert.match(mac, /Contents\/MacOS\/WebGPT Bridge/);
   assert.match(mac, /Contents\/Resources\/tunnel-client\/tunnel-client/);
   assert.match(mac, /Contents\/Resources\/tunnel-client\/cloudflared/);
+  assert.match(mac, /codesign\s+--verify[^\n]*--deep[^\n]*--strict/);
+  assert.match(mac, /xcrun\s+stapler\s+validate/);
+  assert.match(mac, /spctl\s+--assess[^\n]*--type\s+open/);
   assert.match(mac, /WebGPT-Bridge-\*-mac-universal\.dmg/);
   assert.match(mac, /WebGPT-Bridge-\*-mac-universal\.zip/);
   assert.match(mac, /actions\/upload-artifact@v4/);
-  assert.doesNotMatch(mac, /WEBGPT_FORMAL_RELEASE|CSC_LINK|APPLE_API_|codesign|stapler|spctl/);
 });
 
 module.exports = { readReleaseWorkflow };
