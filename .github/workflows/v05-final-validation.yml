@@ -25,3 +25,5 @@ jobs:
           test/renderer-capability-boundary.test.cjs
           test/host-composition-root.test.cjs
           test/host-security.test.cjs
+          test/capabilities-github-async.test.cjs
+          test/capabilities-github-worker.test.cjs
