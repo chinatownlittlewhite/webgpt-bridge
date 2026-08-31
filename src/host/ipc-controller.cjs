@@ -1,6 +1,8 @@
+const { createCapabilitiesService } = require("./diagnostics-service.cjs");
+
 const HANDLERS = Object.freeze([
   "settings:load", "settings:save", "settings:clear-key", "dialog:directory", "dialog:file",
-  "host:start", "host:stop", "host:status", "host:logs", "chatgpt:open",
+  "host:start", "host:stop", "host:status", "host:logs", "host:capabilities", "chatgpt:open",
   "update:get-state", "update:check", "update:download", "update:install",
 ]);
 
@@ -12,10 +14,12 @@ function registerHostIpc({
   runtimeSupervisor,
   getStatus,
   getLogs,
+  capabilitiesService,
   shell,
   updateService,
 } = {}) {
   if (!ipcMain || typeof ipcMain.handle !== "function") throw new TypeError("ipcMain is required");
+  const activeCapabilitiesService = capabilitiesService || createCapabilitiesService({ getStatus });
   ipcMain.handle("settings:load", () => settingsStore.loadSettings());
   ipcMain.handle("settings:save", async (_event, payload) => {
     if (!payload || typeof payload !== "object") throw new Error("设置格式无效。");
@@ -29,6 +33,7 @@ function registerHostIpc({
   ipcMain.handle("host:stop", () => runtimeSupervisor.stop("ipc"));
   ipcMain.handle("host:status", () => getStatus());
   ipcMain.handle("host:logs", () => getLogs());
+  ipcMain.handle("host:capabilities", () => activeCapabilitiesService.capabilities());
   ipcMain.handle("chatgpt:open", () => shell.openExternal("https://chatgpt.com/"));
   ipcMain.handle("update:get-state", () => updateService.getState());
   ipcMain.handle("update:check", () => updateService.checkForUpdates());
