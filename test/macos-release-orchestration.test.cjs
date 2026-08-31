@@ -62,14 +62,19 @@ test("tunnel prepare launcher accepts the explicit macOS x64 vocabulary", () => 
   assert.equal(args.at(-1), "darwin-x64");
 });
 
-test("root dist:mac runs common gates once and delegates all macOS packaging to the variant orchestrator", () => {
+test("root dist:mac runs common gates once, builds all variants, then enforces the package-size budget", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const script = pkg.scripts["dist:mac"];
   assert.match(script, /npm run build:icon/);
   assert.match(script, /npm run prepare:agent/);
   assert.match(script, /npm run verify:desktop/);
   assert.match(script, /npm --prefix agent-runtime run acceptance/);
-  assert.match(script, /node scripts\/build-macos-variants\.cjs$/);
+  assert.match(script, /node scripts\/build-macos-variants\.cjs/);
+  assert.match(script, /npm run verify:package-sizes:mac$/);
+  assert.ok(
+    script.indexOf("node scripts/build-macos-variants.cjs") < script.indexOf("npm run verify:package-sizes:mac"),
+    "package-size gate must run only after all macOS variants are built",
+  );
   assert.doesNotMatch(script, /prepare:tunnel-client:mac/);
   assert.doesNotMatch(script, /electron-builder/);
 });
