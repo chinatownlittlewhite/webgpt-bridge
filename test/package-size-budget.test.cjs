@@ -56,9 +56,15 @@ test("committed size baseline names the previous formal release and covers all p
   const baseline = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "build", "package-size-baseline.json"), "utf8"));
   assert.equal(baseline.schemaVersion, 1);
   assert.equal(baseline.previousFormalRelease, "v0.4.11");
+  assert.equal(baseline.sourceArtifacts["mac-universal"], "WebGPT-Bridge-0.4.11-mac-universal.zip");
+  assert.equal(baseline.singleArchMacBaselinePolicy, "previous-universal-upper-bound");
   assert.deepEqual(Object.keys(baseline.variants).sort(), ["mac-arm64", "mac-universal", "mac-x64", "win-x64"]);
   for (const variant of Object.values(baseline.variants)) {
     for (const metric of REQUIRED_METRICS) assert.equal(Number.isSafeInteger(variant[metric]), true, metric);
+  }
+  for (const metric of REQUIRED_METRICS) {
+    assert.equal(baseline.variants["mac-arm64"][metric], baseline.variants["mac-universal"][metric], `mac-arm64 ${metric}`);
+    assert.equal(baseline.variants["mac-x64"][metric], baseline.variants["mac-universal"][metric], `mac-x64 ${metric}`);
   }
 });
 
