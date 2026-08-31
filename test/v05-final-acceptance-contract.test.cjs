@@ -27,25 +27,32 @@ test("ordinary Desktop verification automatically includes every v0.5 UI and dia
   }
 });
 
-test("distribution commands retain Desktop and Agent acceptance gates", () => {
+test("distribution commands retain Desktop Agent and package-size acceptance gates", () => {
   const pkg = JSON.parse(read("package.json"));
+  const macBuilder = read("scripts/build-macos-variants.cjs");
+
   assert.match(pkg.scripts["dist:mac"], /verify:desktop/);
   assert.match(pkg.scripts["dist:mac"], /agent-runtime run acceptance/);
+  assert.match(pkg.scripts["dist:mac"], /build-macos-variants\.cjs/);
+  assert.match(macBuilder, /verifyMacPackages/);
+  assert.match(macBuilder, /runMacDistribution/);
   assert.match(pkg.scripts["dist:win"], /verify:desktop/);
   assert.match(pkg.scripts["dist:win"], /agent-runtime run acceptance/);
   assert.match(pkg.scripts["dist:win"], /verify:package-sizes:win/);
 });
 
-test("permanent workflows retain three macOS variants, Windows, native and size/release validation", () => {
+test("permanent workflows retain three macOS variants Windows native and release validation", () => {
   const build = read(".github/workflows/build-desktop.yml");
   const release = read(".github/workflows/release-desktop.yml");
   const combined = `${build}\n${release}`;
 
   for (const variant of ["mac-arm64", "mac-x64", "mac-universal"]) assert.match(combined, new RegExp(variant));
-  assert.match(combined, /dist:win/);
+  assert.match(build, /npm run dist:mac/);
+  assert.match(build, /npm run dist:win/);
+  assert.match(release, /npm run dist:mac/);
+  assert.match(release, /npm run dist:win/);
   assert.match(combined, /verify:mac-native-artifact/);
   assert.match(combined, /verify:mac-packaged-pty/);
-  assert.match(combined, /package-size/);
   assert.match(release, /release:validate-assets/);
   assert.match(release, /latest-mac\.yml/);
 });
