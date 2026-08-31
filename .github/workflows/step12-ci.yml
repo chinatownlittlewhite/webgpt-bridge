@@ -82,3 +82,45 @@ jobs:
               fi
             done
           done
+
+  windows-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: npm ci
+      - run: npm --prefix agent-runtime ci
+      - run: npm --prefix agent-runtime run build:native
+      - name: Prepare Windows AppContainer host access
+        shell: pwsh
+        run: |
+          $prep = (Resolve-Path "agent-runtime\native\windows-host\bin\release\lpc-windows-host.exe").Path
+          & $prep host-prep --apply
+          if ($LASTEXITCODE -ne 0) { throw "host-prep apply failed with exit $LASTEXITCODE" }
+          $check = (& $prep host-prep --check --json) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $check.status -ne "ready") { throw "host-prep did not become ready" }
+      - run: npm run dist:win
+      - name: Validate Windows size report
+        shell: pwsh
+        run: |
+          $report = "release\package-size-win-x64.json"
+          if (-not (Test-Path $report -PathType Leaf)) { throw "Windows package size report missing: $report" }
+          $json = Get-Content $report -Raw | ConvertFrom-Json
+          foreach ($metric in @("totalBytes", "frameworksBytes", "resourcesBytes", "appAsarBytes", "appAsarUnpackedBytes", "agentRuntimeBytes", "nodePtyBytes", "agentNativeBytes", "tunnelClientBytes", "windowsNodeRuntimeBytes")) {
+            if ($null -eq $json.$metric -or [int64]$json.$metric -lt 0) { throw "invalid Windows size metric: $metric" }
+          }
+      - name: Cleanup Windows host preparation
+        if: always()
+        shell: pwsh
+        run: |
+          $prep = "agent-runtime\native\windows-host\bin\release\lpc-windows-host.exe"
+          if (Test-Path $prep) {
+            & $prep host-prep --remove
+            if ($LASTEXITCODE -ne 0) { Write-Warning "host-prep cleanup returned exit $LASTEXITCODE" }
+          }
