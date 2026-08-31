@@ -1,0 +1,16 @@
+name: v0.5.0 Windows npm staging hotfix
+
+on:
+  push:
+    branches:
+      - hotfix/v050-windows-npm-staging
+
+jobs:
+  windows-regression:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test agent-runtime/test/windows-npm-child-runtime.test.js
