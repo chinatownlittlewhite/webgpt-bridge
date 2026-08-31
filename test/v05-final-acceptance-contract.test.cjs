@@ -53,6 +53,6 @@ test("permanent workflows retain three macOS variants Windows native and release
   assert.match(release, /npm run dist:win/);
   assert.match(combined, /verify:mac-native-artifact/);
   assert.match(combined, /verify:mac-packaged-pty/);
-  assert.match(release, /release:validate-assets/);
+  assert.match(release, /scripts\/validate-release-assets\.cjs/);
   assert.match(release, /latest-mac\.yml/);
 });
