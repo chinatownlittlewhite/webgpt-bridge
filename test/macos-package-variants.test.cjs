@@ -8,6 +8,9 @@ const { createBuilderConfig } = require("../build/electron-builder-options.cjs")
 const { verifyMacNativeArtifact } = require("../scripts/inspect-macos-native-artifact.cjs");
 
 const UNIX_TERMINAL_ANCHOR = "helperPath = helperPath.replace('node_modules.asar', 'node_modules.asar.unpacked');";
+const POSIX_ONLY = process.platform === "win32"
+  ? "POSIX execute-bit semantics are not portable on Windows CI"
+  : false;
 
 function writeFile(target, content = "x", mode) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -45,7 +48,7 @@ function exists(root, relative) {
 }
 
 for (const variant of ["arm64", "x64"]) {
-  test(`macOS ${variant} afterPack retains only its Darwin PTY payload`, async (t) => {
+  test(`macOS ${variant} afterPack retains only its Darwin PTY payload`, { skip: POSIX_ONLY }, async (t) => {
     const fixture = makeFixture();
     t.after(() => fs.rmSync(fixture.appOutDir, { recursive: true, force: true }));
     const config = createBuilderConfig({ WEBGPT_MAC_PACKAGE_VARIANT: variant });
@@ -61,7 +64,7 @@ for (const variant of ["arm64", "x64"]) {
   });
 }
 
-test("macOS Universal afterPack retains both Darwin PTY payloads", async (t) => {
+test("macOS Universal afterPack retains both Darwin PTY payloads", { skip: POSIX_ONLY }, async (t) => {
   const fixture = makeFixture();
   t.after(() => fs.rmSync(fixture.appOutDir, { recursive: true, force: true }));
   const config = createBuilderConfig({ WEBGPT_MAC_PACKAGE_VARIANT: "universal" });
