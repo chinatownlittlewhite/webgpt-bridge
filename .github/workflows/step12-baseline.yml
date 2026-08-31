@@ -1,0 +1,36 @@
+name: Step 12 baseline measurement
+
+on:
+  pull_request:
+    branches:
+      - ci/v05-step12-base
+    types: [opened, synchronize, reopened]
+
+jobs:
+  macos-v0411-baseline:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download formal v0.4.11 Universal ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p baseline/download baseline/unpacked
+          gh release download v0.4.11 \
+            --repo "${{ github.repository }}" \
+            --pattern 'WebGPT-Bridge-0.4.11-mac-universal.zip' \
+            --dir baseline/download
+          ZIP="$(find baseline/download -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          test -n "$ZIP"
+          ditto -x -k "$ZIP" baseline/unpacked
+      - name: Measure formal v0.4.11 Universal app
+        run: |
+          set -euo pipefail
+          APP="$(find baseline/unpacked -type d -name 'WebGPT Bridge.app' -print -quit)"
+          test -n "$APP"
+          echo "FORMAL_V0411_UNIVERSAL_REPORT_BEGIN"
+          node scripts/report-package-size.cjs "$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$APP")" darwin
+          echo "FORMAL_V0411_UNIVERSAL_REPORT_END"
