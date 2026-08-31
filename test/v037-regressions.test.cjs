@@ -48,7 +48,7 @@ test("desktop GitHub CLI resolver finds Homebrew gh even when Finder PATH omits 
   assert.equal(resolved, homebrewGh);
 });
 
-test("available update action sends the user to the exact GitHub Release instead of unsigned in-app install", () => {
+test("available update action sends the user to the exact GitHub Release for manual installation", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "index.html"), "utf8");
   const renderer = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "renderer.js"), "utf8");
   assert.match(html, /data-release-base="https:\/\/github\.com\/chinatownlittlewhite\/webgpt-bridge\/releases\/tag\/v"/);
@@ -58,11 +58,14 @@ test("available update action sends the user to the exact GitHub Release instead
   assert.doesNotMatch(handler, /downloadUpdate|installUpdateAndRestart/);
 });
 
-test("tag release workflow publishes GitHub artifacts without external signing or notarization gates", () => {
+test("tag release workflow requires macOS signing notarization and Gatekeeper gates", () => {
   const release = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "release-desktop.yml"), "utf8");
   assert.match(release, /push:\s*\n\s*tags:\s*\n\s*-\s*["']v\*["']/);
   assert.match(release, /gh release edit[^\n]*--draft=false[^\n]*--prerelease=false[^\n]*--latest/);
-  assert.doesNotMatch(release, /environment:\s*desktop-release-(?:windows|macos)/);
-  assert.doesNotMatch(release, /AZURE_|WEBGPT_WINDOWS_SIGN_|WEBGPT_MAC_IDENTITY|CSC_LINK|CSC_KEY_PASSWORD|APPLE_API_/);
-  assert.doesNotMatch(release, /Get-AuthenticodeSignature|codesign\s+--verify|stapler\s+validate|spctl\s+--assess/);
+  assert.match(release, /WEBGPT_FORMAL_RELEASE:\s*macos/);
+  assert.match(release, /CSC_LINK:\s*\$\{\{\s*secrets\.MACOS_CSC_LINK\s*\}\}/);
+  assert.match(release, /APPLE_ID:\s*\$\{\{\s*secrets\.APPLE_ID\s*\}\}/);
+  assert.match(release, /codesign\s+--verify/);
+  assert.match(release, /stapler\s+validate/);
+  assert.match(release, /spctl\s+--assess/);
 });
