@@ -2,7 +2,8 @@
   "schemaVersion": 1,
   "previousFormalRelease": "v0.4.11",
   "sourceArtifacts": {
-    "mac-universal": "WebGPT-Bridge-0.4.11-mac-universal.zip"
+    "mac-universal": "WebGPT-Bridge-0.4.11-mac-universal.zip",
+    "win-x64": "WebGPT-Bridge-0.4.11-win-x64.exe"
   },
   "singleArchMacBaselinePolicy": "previous-universal-upper-bound",
   "policy": {
@@ -13,7 +14,7 @@
     "mac-universal": "Measured directly from the formal v0.4.11 GitHub Release asset WebGPT-Bridge-0.4.11-mac-universal.zip by unpacking the released app and running scripts/report-package-size.cjs against that app tree.",
     "mac-arm64": "No formal single-architecture macOS artifact existed in v0.4.11; inherits the measured v0.4.11 Universal release envelope, so a single-architecture package must not materially exceed the prior Universal package.",
     "mac-x64": "No formal single-architecture macOS artifact existed in v0.4.11; inherits the measured v0.4.11 Universal release envelope, so a single-architecture package must not materially exceed the prior Universal package.",
-    "win-x64": "Anchored to the v0.4.11 formal Windows x64 release (installer size 188426273 bytes). Unpacked component values are conservative release envelopes because v0.4.11 did not publish an unpacked size report; replace them with measured formal values after the first release that publishes this report."
+    "win-x64": "Measured directly from the formal v0.4.11 GitHub Release asset WebGPT-Bridge-0.4.11-win-x64.exe by extracting its Electron Builder app payload and running scripts/report-package-size.cjs against the unpacked application tree."
   },
   "variants": {
     "mac-arm64": {
@@ -53,16 +54,16 @@
       "windowsNodeRuntimeBytes": 0
     },
     "win-x64": {
-      "totalBytes": 565278819,
+      "totalBytes": 624643760,
       "frameworksBytes": 0,
-      "resourcesBytes": 335544320,
-      "appAsarBytes": 2194140,
-      "appAsarUnpackedBytes": 41943040,
-      "agentRuntimeBytes": 41943040,
-      "nodePtyBytes": 31457280,
-      "agentNativeBytes": 31457280,
-      "tunnelClientBytes": 134217728,
-      "windowsNodeRuntimeBytes": 134217728
+      "resourcesBytes": 323548681,
+      "appAsarBytes": 2256382,
+      "appAsarUnpackedBytes": 172271293,
+      "agentRuntimeBytes": 172271293,
+      "nodePtyBytes": 9751694,
+      "agentNativeBytes": 141510818,
+      "tunnelClientBytes": 61766028,
+      "windowsNodeRuntimeBytes": 87145901
     }
   }
 }
