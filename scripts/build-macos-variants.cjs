@@ -1,5 +1,6 @@
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { verifyMacPackages } = require("./verify-package-sizes.cjs");
 
 const MAC_VARIANTS = Object.freeze(["arm64", "x64", "universal"]);
 const ARCH_FLAGS = Object.freeze({ arm64: "--arm64", x64: "--x64", universal: "--universal" });
@@ -77,13 +78,24 @@ function buildMacVariants({
   }
 }
 
+function runMacDistribution({ verifyPackages = verifyMacPackages, ...buildOptions } = {}) {
+  buildMacVariants(buildOptions);
+  return verifyPackages();
+}
+
 if (require.main === module) {
   try {
-    buildMacVariants();
+    runMacDistribution();
   } catch (error) {
     console.error(error.stack || error.message);
     process.exit(1);
   }
 }
 
-module.exports = { MAC_VARIANTS, builderArgsForVariant, buildMacVariants, tunnelTargetForVariant };
+module.exports = {
+  MAC_VARIANTS,
+  builderArgsForVariant,
+  buildMacVariants,
+  runMacDistribution,
+  tunnelTargetForVariant,
+};
