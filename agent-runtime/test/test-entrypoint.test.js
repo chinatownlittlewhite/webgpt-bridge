@@ -87,16 +87,16 @@ test("nested Windows suite stays explicit and excludes host-fixture integration 
   assert.deepEqual(NESTED_WINDOWS_TEST_FILES, [
     "acceptance-script.test.js",
     "approval.test.js",
-    "goal-controller.test.js",
     "goal-mode.test.js",
     "goal-session.test.js",
     "platform.test.js",
-    "policy.test.js",
     "sandbox.test.js",
     "schema-validate.test.js",
     "test-entrypoint.test.js",
     "windows-appcontainer-temp.test.js",
   ]);
+  assert.equal(NESTED_WINDOWS_TEST_FILES.includes("goal-controller.test.js"), false);
+  assert.equal(NESTED_WINDOWS_TEST_FILES.includes("policy.test.js"), false);
   assert.equal(NESTED_WINDOWS_TEST_FILES.includes("workspace.test.js"), false);
   assert.equal(NESTED_WINDOWS_TEST_FILES.includes("local-broker-client.test.js"), false);
 });
