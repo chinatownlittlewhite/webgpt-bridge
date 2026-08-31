@@ -1,0 +1,119 @@
+name: One-time v0.5.0 release cleanup
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v050-release-cleanup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove invalid macOS assets and abandoned branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="v0.5.0"
+          RELEASE_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
+
+          mapfile -t BAD_ASSETS < <(
+            printf '%s' "$RELEASE_JSON" | node -e '
+              let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+                const r=JSON.parse(s);
+                for (const a of r.assets || []) {
+                  if (/-mac-(arm64|x64)\.(dmg|zip)(\.blockmap)?$/.test(a.name)) {
+                    console.log(`${a.id}\t${a.name}`);
+                  }
+                }
+              });'
+          )
+
+          if [ "${#BAD_ASSETS[@]}" -ne 8 ]; then
+            printf 'expected exactly 8 invalid arm64/x64 assets, found %s\n' "${#BAD_ASSETS[@]}" >&2
+            printf '%s\n' "${BAD_ASSETS[@]}" >&2
+            exit 1
+          fi
+
+          for item in "${BAD_ASSETS[@]}"; do
+            asset_id="${item%%$'\t'*}"
+            asset_name="${item#*$'\t'}"
+            echo "Deleting invalid release asset: ${asset_name}"
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+          done
+
+          rm -rf /tmp/v050-release
+          mkdir -p /tmp/v050-release
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir /tmp/v050-release \
+            --pattern 'WebGPT-Bridge-0.5.0-mac-universal.dmg' \
+            --pattern 'WebGPT-Bridge-0.5.0-mac-universal.zip' \
+            --pattern 'WebGPT-Bridge-0.5.0-win-x64.exe' \
+            --pattern 'latest-mac.yml'
+
+          for required in \
+            WebGPT-Bridge-0.5.0-mac-universal.dmg \
+            WebGPT-Bridge-0.5.0-mac-universal.zip \
+            WebGPT-Bridge-0.5.0-win-x64.exe \
+            latest-mac.yml; do
+            test -f "/tmp/v050-release/${required}" || { echo "missing retained asset: ${required}" >&2; exit 1; }
+          done
+
+          if grep -Eq 'mac-(arm64|x64)' /tmp/v050-release/latest-mac.yml; then
+            ZIP=/tmp/v050-release/WebGPT-Bridge-0.5.0-mac-universal.zip
+            SIZE="$(stat -c '%s' "$ZIP")"
+            SHA512="$(openssl dgst -sha512 -binary "$ZIP" | openssl base64 -A)"
+            RELEASE_DATE="$(printf '%s' "$RELEASE_JSON" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).published_at))')"
+            cat > /tmp/v050-release/latest-mac.yml <<EOF
+          version: 0.5.0
+          files:
+            - url: WebGPT-Bridge-0.5.0-mac-universal.zip
+              sha512: ${SHA512}
+              size: ${SIZE}
+          path: WebGPT-Bridge-0.5.0-mac-universal.zip
+          sha512: ${SHA512}
+          releaseDate: '${RELEASE_DATE}'
+          EOF
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" /tmp/v050-release/latest-mac.yml --clobber
+          fi
+
+          (
+            cd /tmp/v050-release
+            sha256sum \
+              WebGPT-Bridge-0.5.0-mac-universal.dmg \
+              WebGPT-Bridge-0.5.0-mac-universal.zip \
+              WebGPT-Bridge-0.5.0-win-x64.exe \
+              > SHA256SUMS
+          )
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" /tmp/v050-release/SHA256SUMS --clobber
+
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/fix/v050-macos-signing" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/fix/v050-macos-signing"
+          fi
+
+          FINAL_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
+          printf '%s' "$FINAL_JSON" | node -e '
+            let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+              const r=JSON.parse(s);
+              const names=(r.assets||[]).map(a=>a.name).sort();
+              const bad=names.filter(n=>/-mac-(arm64|x64)\./.test(n));
+              if (bad.length) { console.error(`invalid assets remain: ${bad.join(", ")}`); process.exit(1); }
+              for (const needed of [
+                "WebGPT-Bridge-0.5.0-mac-universal.dmg",
+                "WebGPT-Bridge-0.5.0-mac-universal.zip",
+                "WebGPT-Bridge-0.5.0-win-x64.exe",
+                "latest-mac.yml",
+                "latest.yml",
+                "SHA256SUMS"
+              ]) {
+                if (!names.includes(needed)) { console.error(`required retained asset missing: ${needed}`); process.exit(1); }
+              }
+              console.log(names.join("\n"));
+            });'
