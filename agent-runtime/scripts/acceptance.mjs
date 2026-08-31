@@ -55,6 +55,30 @@ function verifyBuildParity() {
   }
 }
 
+function createGoalVerificationFixture() {
+  const directory = fs.mkdtempSync(path.join(root, "acceptance-goal-project-"));
+  fs.mkdirSync(path.join(directory, "test"), { recursive: true });
+  fs.writeFileSync(
+    path.join(directory, "package.json"),
+    `${JSON.stringify({ private: true, scripts: { test: "node --test test/pass.test.cjs" } }, null, 2)}\n`,
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(directory, "test", "pass.test.cjs"),
+    'const test = require("node:test");\nconst assert = require("node:assert/strict");\ntest("sandbox-scoped project verification passes", () => assert.equal(1 + 1, 2));\n',
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(directory, "AGENTS.md"),
+    "# Acceptance Goal fixture\n\nThis self-contained project verifies sandbox-scoped Goal completion checks.\n",
+    "utf8",
+  );
+  return {
+    directory,
+    cwd: path.relative(root, directory),
+  };
+}
+
 function verifyAuditTail(file) {
   assert.equal(fs.existsSync(file), true, "audit log must exist");
   const lines = fs.readFileSync(file, "utf8").trim().split("\n").filter(Boolean).slice(-200);
@@ -383,11 +407,13 @@ const { startProductionServer } = await import("../dist/server.js");
 let server = null;
 let clientBundle = null;
 let sessionId = null;
+let goalVerificationFixture = null;
 const acceptanceInstructions = path.join(root, "AGENTS.md");
 const createdAcceptanceInstructions = !fs.existsSync(acceptanceInstructions);
 if (createdAcceptanceInstructions) {
   fs.writeFileSync(acceptanceInstructions, "# Acceptance fixture\n\nThis file verifies project instruction discovery.\n", "utf8");
 }
+goalVerificationFixture = createGoalVerificationFixture();
 try {
   stage("start built MCP server and negotiate 2026-07-28");
   server = await startProductionServer({
@@ -521,7 +547,7 @@ try {
     name: "goal_mode",
     arguments: {
       goal: "Final acceptance persistence and verification smoke test",
-      cwd: ".",
+      cwd: goalVerificationFixture.cwd,
       acceptanceCriteria: ["The paused Goal session is restored and resumed after MCP server restart"],
       maxSteps: 20,
       maxToolCalls: 40,
@@ -571,7 +597,7 @@ try {
 
   const pausedGoals = await clientBundle.client.callTool({
     name: "goal_list",
-    arguments: { cwd: ".", limit: 20 },
+    arguments: { cwd: goalVerificationFixture.cwd, limit: 20 },
   });
   assert.ok(pausedGoals.structuredContent.sessions.some((entry) => entry.sessionId === sessionId));
 
@@ -623,6 +649,7 @@ try {
   if (sessionId) {
     fs.rmSync(path.join(root, ".webgpt-bridge", "goals", `${sessionId}.json`), { force: true });
   }
+  if (goalVerificationFixture) fs.rmSync(goalVerificationFixture.directory, { recursive: true, force: true });
   if (createdAcceptanceInstructions) fs.rmSync(acceptanceInstructions, { force: true });
 }
 
