@@ -97,7 +97,7 @@ test("macOS release signs, notarizes, staples, and passes Gatekeeper before uplo
   assert.match(mac, /Contents\/Resources\/tunnel-client\/cloudflared/);
   assert.match(mac, /codesign\s+--verify[^\n]*--deep[^\n]*--strict/);
   assert.match(mac, /xcrun\s+stapler\s+validate/);
-  assert.match(mac, /spctl\s+--assess[^\n]*--type\s+open/);
+  assert.match(mac, /spctl\s+--assess[^\n]*--type\s+(?:exec|execute)/);
   assert.match(mac, /WebGPT-Bridge-\*-mac-universal\.dmg/);
   assert.match(mac, /WebGPT-Bridge-\*-mac-universal\.zip/);
   assert.match(mac, /actions\/upload-artifact@v4/);
