@@ -9,11 +9,9 @@ const INTERNAL_STATE_DIR = ".webgpt-bridge";
 export const NESTED_WINDOWS_TEST_FILES = Object.freeze([
   "acceptance-script.test.js",
   "approval.test.js",
-  "goal-controller.test.js",
   "goal-mode.test.js",
   "goal-session.test.js",
   "platform.test.js",
-  "policy.test.js",
   "sandbox.test.js",
   "schema-validate.test.js",
   "test-entrypoint.test.js",
