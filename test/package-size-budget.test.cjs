@@ -62,16 +62,24 @@ test("committed size baseline names the previous formal release and covers all p
   }
 });
 
-test("desktop workflows gate package upload on size reports and budget checks", () => {
+test("dist commands gate workflow uploads through the shared package-size verifier", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+  assert.match(pkg.scripts["dist:mac"], /verify:package-sizes:mac/);
+  assert.match(pkg.scripts["dist:win"], /verify:package-sizes:win/);
+  assert.match(pkg.scripts["verify:package-sizes:mac"], /verify-package-sizes\.cjs macos/);
+  assert.match(pkg.scripts["verify:package-sizes:win"], /verify-package-sizes\.cjs windows/);
+
+  const verifier = fs.readFileSync(path.join(__dirname, "..", "scripts", "verify-package-sizes.cjs"), "utf8");
+  assert.match(verifier, /package-size-budget\.cjs/);
+  assert.match(verifier, /package-size-\$\{variant\}\.json/);
+
   for (const name of ["build-desktop.yml", "release-desktop.yml"]) {
     const source = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", name), "utf8");
-    const size = source.indexOf("package-size-budget.cjs");
-    const upload = source.indexOf("actions/upload-artifact@v4", Math.max(0, size));
-    assert.ok(size >= 0, `${name} must run the package-size budget gate`);
-    assert.ok(upload > size, `${name} must gate artifact upload on package-size budget`);
-    assert.match(source, /package-size-mac-arm64\.json/);
-    assert.match(source, /package-size-mac-x64\.json/);
-    assert.match(source, /package-size-mac-universal\.json/);
-    assert.match(source, /package-size-win-x64\.json/);
+    const macDist = source.indexOf("npm run dist:mac");
+    const winDist = source.indexOf("npm run dist:win");
+    const macUpload = source.indexOf("actions/upload-artifact@v4", macDist);
+    const winUpload = source.indexOf("actions/upload-artifact@v4", winDist);
+    assert.ok(macDist >= 0 && macUpload > macDist, `${name} must upload macOS only after dist:mac size gate`);
+    assert.ok(winDist >= 0 && winUpload > winDist, `${name} must upload Windows only after dist:win size gate`);
   }
 });
