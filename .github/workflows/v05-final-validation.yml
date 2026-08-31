@@ -6,7 +6,7 @@ on:
       - task/v05-ui-diagnostics-final-acceptance
 
 jobs:
-  tdd-contract:
+  full-regression:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,19 +15,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Run current TDD contract
-        run: >-
-          node --test
-          test/renderer-ui.test.cjs
-          test/renderer-layout.test.cjs
-          test/capabilities-aggregate-health.test.cjs
-          test/capabilities-error-taxonomy.test.cjs
-          test/renderer-capability-boundary.test.cjs
-          test/host-composition-root.test.cjs
-          test/host-security.test.cjs
-          test/capabilities-github-async.test.cjs
-          test/capabilities-github-worker.test.cjs
-          test/logs-cursor.test.cjs
-          test/renderer-incremental-logs.test.cjs
-          test/runtime-supervisor.test.cjs
-          test/v05-final-acceptance-contract.test.cjs
+      - name: Install Bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          bwrap --version
+      - run: npm --prefix agent-runtime ci
+      - name: Run all Desktop tests
+        run: npm run verify:desktop
+      - name: Run Agent quick acceptance
+        run: npm --prefix agent-runtime run acceptance:quick
