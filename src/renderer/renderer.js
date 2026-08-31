@@ -10,6 +10,8 @@ const DIAGNOSTIC_COPY = Object.freeze({
   READY: "就绪",
 });
 let updateState;
+let logCursor = 0;
+let visibleLogs = [];
 
 function message(text, error = false) {
   const target = byId("message");
@@ -47,6 +49,24 @@ function renderCapabilities(capabilities) {
 function renderLogs(logs) {
   byId("logOutput").textContent = logs.length ? logs.map(({ at, source, line }) => `${at.slice(11, 19)}  ${source.padEnd(12)} ${line}`).join("\n") : "尚未启动。";
   byId("logOutput").scrollTop = byId("logOutput").scrollHeight;
+}
+
+function mergeLogBatch(batch) {
+  if (!batch || !Number.isInteger(batch.cursor) || batch.cursor < 0 || !Array.isArray(batch.entries)) return;
+  if (batch.cursor < logCursor) return;
+  if (batch.reset) {
+    visibleLogs = batch.entries.filter((entry) => Number.isInteger(entry?.cursor) && entry.cursor <= batch.cursor);
+  } else {
+    const newer = batch.entries.filter((entry) => Number.isInteger(entry?.cursor) && entry.cursor > logCursor && entry.cursor <= batch.cursor);
+    if (newer.length) visibleLogs = [...visibleLogs, ...newer];
+  }
+  logCursor = batch.cursor;
+  renderLogs(visibleLogs);
+}
+
+async function refreshLogs() {
+  const batch = await api.logs({ sinceCursor: logCursor });
+  mergeLogBatch(batch);
 }
 
 function formatBytes(value) {
@@ -138,7 +158,10 @@ byId("updateAction").addEventListener("click", async () => {
     message("更新操作失败，请重试。", true);
   }
 });
-api.onEvent((event) => { if (event.type === "logs") renderLogs(event.value); if (event.type === "status") renderStatus(event.value); });
+api.onEvent((event) => {
+  if (event.type === "logs") void refreshLogs().catch(() => {});
+  if (event.type === "status") renderStatus(event.value);
+});
 api.onUpdateState(renderUpdate);
 
 (async () => {
@@ -150,6 +173,6 @@ api.onUpdateState(renderUpdate);
   byId("keyStatus").textContent = settings.hasRuntimeKey ? "此电脑的密钥已安全保存" : "尚未保存运行时密钥";
   renderStatus(await api.status());
   renderCapabilities(await api.capabilities());
-  renderLogs(await api.logs());
+  await refreshLogs();
   renderUpdate(await api.getUpdateState());
 })();
