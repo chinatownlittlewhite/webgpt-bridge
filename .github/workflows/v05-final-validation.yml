@@ -16,4 +16,10 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run current TDD contract
-        run: node --test test/renderer-ui.test.cjs test/renderer-layout.test.cjs
+        run: >-
+          node --test
+          test/renderer-ui.test.cjs
+          test/renderer-layout.test.cjs
+          test/capabilities-aggregate-health.test.cjs
+          test/capabilities-error-taxonomy.test.cjs
+          test/renderer-capability-boundary.test.cjs
