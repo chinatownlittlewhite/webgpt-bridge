@@ -1,0 +1,19 @@
+name: v0.5 final validation
+
+on:
+  push:
+    branches:
+      - task/v05-ui-diagnostics-final-acceptance
+
+jobs:
+  tdd-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run current TDD contract
+        run: node --test test/renderer-ui.test.cjs test/renderer-layout.test.cjs
