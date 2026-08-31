@@ -23,3 +23,5 @@ jobs:
           test/capabilities-aggregate-health.test.cjs
           test/capabilities-error-taxonomy.test.cjs
           test/renderer-capability-boundary.test.cjs
+          test/host-composition-root.test.cjs
+          test/host-security.test.cjs
