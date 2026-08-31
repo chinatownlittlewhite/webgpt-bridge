@@ -30,3 +30,4 @@ jobs:
           test/logs-cursor.test.cjs
           test/renderer-incremental-logs.test.cjs
           test/runtime-supervisor.test.cjs
+          test/v05-final-acceptance-contract.test.cjs
