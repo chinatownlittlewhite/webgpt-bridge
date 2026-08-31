@@ -55,8 +55,14 @@ function validateReleaseAssets({ version, windowsDir, macDir }) {
   const macReferences = validateManifest({ manifest: readUpdateManifest(latestMac), version, assetDir: macDir });
   if (!winReferences.includes(winInstaller)) throw new Error(`latest.yml does not reference exact installer: ${winInstaller}`);
   if (!macReferences.includes(macZip)) throw new Error(`latest-mac.yml does not reference exact updater ZIP: ${macZip}`);
+  const allowedMacUpdaterReferences = new Set([
+    macDmg,
+    `${macDmg}.blockmap`,
+    macZip,
+    `${macZip}.blockmap`,
+  ]);
   for (const reference of macReferences) {
-    if (reference !== macZip && reference !== `${macZip}.blockmap`) {
+    if (!allowedMacUpdaterReferences.has(reference)) {
       throw new Error(`latest-mac.yml must remain Universal-only: ${reference}`);
     }
   }
