@@ -46,6 +46,7 @@ test("Windows SSH resolves only the fixed system OpenSSH executable", () => {
   const existing = new Set([
     "C:\\Windows\\System32\\OpenSSH\\ssh.exe",
     "C:\\Users\\user\\bin\\ssh.exe",
+    "C:\\Users\\user\\fake-windows\\System32\\OpenSSH\\ssh.exe",
   ]);
   const exists = (candidate) => existing.has(candidate);
 
@@ -62,6 +63,13 @@ test("Windows SSH resolves only the fixed system OpenSSH executable", () => {
     env: { SystemRoot: "D:\\Windows", PATH: "C:\\Users\\user\\bin" },
     exists,
   }), "");
+
+  assert.equal(resolveSshExecutable({
+    enabled: true,
+    platform: "win32",
+    env: { SystemRoot: "C:\\Users\\user\\fake-windows", PATH: "C:\\Users\\user\\bin" },
+    exists,
+  }), "", "a spoofed SystemRoot must not become a trusted SSH root");
 
   assert.equal(resolveSshExecutable({
     enabled: false,
