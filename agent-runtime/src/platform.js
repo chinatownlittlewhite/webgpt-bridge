@@ -10,6 +10,7 @@ const WINDOWS_RUNTIME_REMOVE_OPTIONS = Object.freeze({
   maxRetries: 8,
   retryDelay: 100,
 });
+const WINDOWS_NODE_CHILD_OPTIONS = "--preserve-symlinks --preserve-symlinks-main";
 
 export function normalizedPlatform(platform = process.platform) {
   if (platform === "win32") return "windows";
@@ -255,6 +256,7 @@ export function stageWindowsNodeCliRuntime(platformCommand, {
     return Object.freeze({
       ...platformCommand,
       trustedPathEntries: Object.freeze(trustedPathEntries),
+      trustedEnvironment: Object.freeze({ NODE_OPTIONS: WINDOWS_NODE_CHILD_OPTIONS }),
     });
   }
 
@@ -318,6 +320,7 @@ export function stageWindowsNodeCliRuntime(platformCommand, {
     ]),
     trustedReadPaths: Object.freeze([...new Set(trustedReadPaths.map((entry) => path.resolve(entry)))]),
     trustedPathEntries: Object.freeze(trustedPathEntries),
+    trustedEnvironment: Object.freeze({ NODE_OPTIONS: WINDOWS_NODE_CHILD_OPTIONS }),
     stagedRuntimeRoots: Object.freeze([stageRoot]),
   });
 }
