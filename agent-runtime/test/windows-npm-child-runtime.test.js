@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { resolvePlatformArgv, stageWindowsNodeCliRuntime } from "../src/platform.js";
 
+const PRESERVE_NODE_PATH_OPTIONS = "--preserve-symlinks --preserve-symlinks-main";
+
 test("Windows npm staging includes a stable refreshed workspace-local Node for child scripts", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-win-npm-child-node-"));
   try {
@@ -46,6 +48,11 @@ test("Windows npm staging includes a stable refreshed workspace-local Node for c
     assert.equal(fs.readFileSync(stagedNode, "utf8"), "trusted-node-v1");
     assert.ok(Array.isArray(first.trustedPathEntries), "stager must provide host-derived PATH entries for npm child scripts");
     assert.ok(first.trustedPathEntries.includes(path.dirname(stagedNode)), "npm child PATH must include the staged Node directory");
+    assert.deepEqual(
+      first.trustedEnvironment,
+      { NODE_OPTIONS: PRESERVE_NODE_PATH_OPTIONS },
+      "npm child Node processes must preserve lexical workspace paths instead of traversing the inaccessible host drive root",
+    );
     assert.equal(first.trustedReadPaths.includes(path.dirname(nodePath)), false, "host-private Node directory must not remain an AppContainer read grant");
 
     fs.writeFileSync(stagedNode, "poisoned-node", "utf8");
@@ -54,6 +61,7 @@ test("Windows npm staging includes a stable refreshed workspace-local Node for c
     assert.equal(refreshed.argv[0], stagedNode, "approval-bound resolved argv must use a stable staged Node path");
     assert.equal(refreshed.argv[3], stagedCli, "approval-bound resolved argv must keep the stable staged npm CLI path");
     assert.equal(fs.readFileSync(stagedNode, "utf8"), "trusted-node-v2", "each invocation must refresh staged Node from the trusted host runtime");
+    assert.deepEqual(refreshed.trustedEnvironment, { NODE_OPTIONS: PRESERVE_NODE_PATH_OPTIONS });
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }
