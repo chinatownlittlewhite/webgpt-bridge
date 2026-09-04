@@ -40,6 +40,7 @@ test("Windows SSH accepts the explicitly pinned system OpenSSH executable", asyn
   const calls = [];
   const pinned = "C:\\Windows\\System32\\OpenSSH\\ssh.exe";
   const broker = createLocalTerminalBroker({
+    platform: "win32",
     approvalMode: "full_control",
     classifyCommand: classifier,
     sshPolicy: (argv) => validateSshCommand(argv, { allowedHosts: [] }),
