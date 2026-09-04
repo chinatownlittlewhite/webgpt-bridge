@@ -57,18 +57,15 @@ function verifyBuildParity() {
 
 function createGoalVerificationFixture() {
   const directory = fs.mkdtempSync(path.join(root, "acceptance-goal-project-"));
-  const goalTestScript = process.platform === "win32"
-    ? "node --test --test-isolation=none test/pass.test.cjs"
-    : "node --test test/pass.test.cjs";
   fs.mkdirSync(path.join(directory, "test"), { recursive: true });
   fs.writeFileSync(
     path.join(directory, "package.json"),
-    `${JSON.stringify({ private: true, scripts: { test: goalTestScript } }, null, 2)}\n`,
+    `${JSON.stringify({ private: true, scripts: { test: "node test/pass.cjs" } }, null, 2)}\n`,
     "utf8",
   );
   fs.writeFileSync(
-    path.join(directory, "test", "pass.test.cjs"),
-    'const test = require("node:test");\nconst assert = require("node:assert/strict");\ntest("sandbox-scoped project verification passes", () => assert.equal(1 + 1, 2));\n',
+    path.join(directory, "test", "pass.cjs"),
+    'const assert = require("node:assert/strict");\nassert.equal(1 + 1, 2);\nconsole.log("sandbox-scoped project verification passes");\n',
     "utf8",
   );
   fs.writeFileSync(
