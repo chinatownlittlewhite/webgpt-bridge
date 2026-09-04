@@ -25,7 +25,9 @@ function resolveSshExecutable({
   if (platform !== "win32") return "/usr/bin/ssh";
   const systemRoot = String(env?.SystemRoot || env?.WINDIR || "").trim();
   if (!systemRoot || !path.win32.isAbsolute(systemRoot)) return "";
-  const candidate = path.win32.join(systemRoot, "System32", "OpenSSH", "ssh.exe");
+  const normalizedRoot = path.win32.normalize(systemRoot).replace(/[\\]+$/, "");
+  if (!/^[A-Za-z]:\\Windows$/i.test(normalizedRoot)) return "";
+  const candidate = path.win32.join(normalizedRoot, "System32", "OpenSSH", "ssh.exe");
   return exists(candidate) ? candidate : "";
 }
 
