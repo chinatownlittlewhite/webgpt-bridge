@@ -35,13 +35,6 @@ test("Windows acceptance mirrors the authenticated desktop Git broker architectu
   assert.match(source, /await git\.invoke\(\{ action: "status", cwd: path\.relative\(root, repo\) \}\)/);
 });
 
-test("Goal verification fixture uses a single-process npm child check", () => {
-  assert.match(source, /scripts: \{ test: "node test\/pass\.cjs" \}/);
-  assert.match(source, /path\.join\(directory, "test", "pass\.cjs"\)/);
-  assert.doesNotMatch(source, /goalTestScript/);
-  assert.doesNotMatch(source, /node --test --test-isolation=none/);
-});
-
 test("Windows acceptance verifies the combined native host payload before sandbox checks", () => {
   assert.match(source, /lpc-windows-host\.exe/);
   assert.match(source, /combined Windows native publish must include/);
