@@ -34,6 +34,25 @@ test("enabled SSH validates before approval and spawns only the pinned executabl
   assert.equal(calls[0].options.env, undefined, "HTTP proxy variables must not be injected into SSH");
 });
 
+test("Windows SSH accepts the explicitly pinned system OpenSSH executable", async () => {
+  const { createLocalTerminalBroker } = require("../src/local-terminal-broker.cjs");
+  const { validateSshCommand } = require("../src/ssh-policy.cjs");
+  const calls = [];
+  const pinned = "C:\\Windows\\System32\\OpenSSH\\ssh.exe";
+  const broker = createLocalTerminalBroker({
+    platform: "win32",
+    approvalMode: "full_control",
+    classifyCommand: classifier,
+    sshPolicy: (argv) => validateSshCommand(argv, { allowedHosts: [] }),
+    trustedExecutables: { ssh: pinned },
+    spawnCommand: async (argv) => { calls.push(argv); return { code: 0, stdout: "", stderr: "" }; },
+  });
+  await broker.run({ argv: ["ssh", "10.0.0.8", "uptime"], cwd: "C:\\workspace" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], pinned);
+  assert.equal(calls[0].includes("BatchMode=yes"), true);
+});
+
 test("full_control may skip confirmation but never skips SSH host or argv validation", async () => {
   const { createLocalTerminalBroker } = require("../src/local-terminal-broker.cjs");
   const { validateSshCommand } = require("../src/ssh-policy.cjs");

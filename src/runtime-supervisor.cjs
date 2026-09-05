@@ -199,6 +199,80 @@ function createRuntimeSupervisor(deps, options = {}) {
     }
   }
 
+  async function runAgentRecovery(token) {
+    let lastError = null;
+    for (const delayMs of recoveryDelays) {
+      await sleep(delayMs);
+      if (token !== generation || stopping || shuttingDown) return;
+      transition("agent_starting", {
+        agentHealth: "starting",
+        tunnelReadiness: "failed",
+      });
+      let agentEntry = null;
+      let tunnelEntry = null;
+      try {
+        const agentResource = await deps.startAgent(preflight);
+        agentEntry = acquire("agent", agentResource);
+        if (token !== generation || stopping || shuttingDown) {
+          await releaseEntry(agentEntry, "recovery-cancelled");
+          return;
+        }
+        const agentReady = await deps.waitAgentReady(agentResource, preflight);
+        if (!agentReady) throw Object.assign(new Error("Agent readiness check failed"), { code: "AGENT_HEALTH_TIMEOUT" });
+        if (token !== generation || stopping || shuttingDown) {
+          await releaseEntry(agentEntry, "recovery-cancelled");
+          return;
+        }
+        transition("agent_ready", {
+          agentHealth: "ready",
+          tunnelReadiness: "failed",
+        });
+
+        transition("tunnel_starting", { tunnelReadiness: "starting" });
+        const tunnelResource = await deps.startTunnel(preflight);
+        tunnelEntry = acquire("tunnel", tunnelResource);
+        if (token !== generation || stopping || shuttingDown) {
+          await releaseEntry(tunnelEntry, "recovery-cancelled");
+          await releaseEntry(agentEntry, "recovery-cancelled");
+          return;
+        }
+        const tunnelReady = await deps.waitTunnelReady(tunnelResource, preflight);
+        if (!tunnelReady) throw Object.assign(new Error("Tunnel readiness check failed"), { code: "TUNNEL_READY_TIMEOUT" });
+        if (token !== generation || stopping || shuttingDown) {
+          await releaseEntry(tunnelEntry, "recovery-cancelled");
+          await releaseEntry(agentEntry, "recovery-cancelled");
+          return;
+        }
+        transition("connected", {
+          agentHealth: "ready",
+          tunnelReadiness: "ready",
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        if (tunnelEntry) await releaseEntry(tunnelEntry, "recovery-failed");
+        if (agentEntry) await releaseEntry(agentEntry, "recovery-failed");
+        if (token !== generation || stopping || shuttingDown) return;
+        transition("degraded", {
+          agentHealth: "failed",
+          tunnelReadiness: "failed",
+          lastExitReason: reasonFrom(error, "AGENT_RECOVERY_FAILED"),
+        });
+      }
+    }
+    if (token === generation && !stopping && !shuttingDown) {
+      lastExitReason = Object.freeze({
+        code: "AGENT_RECOVERY_EXHAUSTED",
+        message: lastError?.message || "Agent recovery budget exhausted",
+      });
+      transition("failed", {
+        agentHealth: "failed",
+        tunnelReadiness: "failed",
+        lastExitReason,
+      });
+    }
+  }
+
   async function handleUnexpectedExit(entry, code, signal) {
     if (!ledger.includes(entry) || stopping || shuttingDown) return;
     removeEntry(entry);
@@ -220,6 +294,7 @@ function createRuntimeSupervisor(deps, options = {}) {
       if (tunnelEntry) await releaseEntry(tunnelEntry, "agent-exited");
       tunnelReadiness = "failed";
       publish();
+      await runAgentRecovery(generation);
       return;
     }
 

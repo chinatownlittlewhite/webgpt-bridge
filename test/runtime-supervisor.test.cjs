@@ -189,26 +189,34 @@ test("restart plus quit cancels reacquisition and ends in terminal shutdown", as
   await assert.rejects(() => supervisor.start(), (error) => error?.code === "APP_SHUTTING_DOWN");
 });
 
-test("unexpected agent exit immediately leaves connected and tears down dependent tunnel", async () => {
+test("unexpected agent exit uses bounded recovery and reconnects the dependent tunnel", async () => {
   const stopped = [];
-  const agent = resource("agent", 1);
-  const tunnel = resource("tunnel", 2);
+  const sleeps = [];
+  const agents = [resource("agent", 1), resource("agent", 3)];
+  const tunnels = [resource("tunnel", 2), resource("tunnel", 4)];
+  let agentStarts = 0;
+  let tunnelStarts = 0;
   const supervisor = createRuntimeSupervisor(baseDeps({
-    startAgent: async () => agent,
-    startTunnel: async () => tunnel,
+    startAgent: async () => agents[agentStarts++],
+    startTunnel: async () => tunnels[tunnelStarts++],
     stopResource: async (_resource, meta) => stopped.push(meta.kind),
-  }));
+    sleep: async (ms) => sleeps.push(ms),
+  }), { recoveryDelays: [1000] });
   await supervisor.start();
 
-  agent.emit("exit", 17, null);
+  agents[0].emit("exit", 17, null);
   await settle();
   const status = supervisor.getStatus();
-  assert.notEqual(status.state, "connected");
-  assert.equal(status.connected, false);
-  assert.equal(status.agentHealth, "failed");
+  assert.deepEqual(sleeps, [1000]);
+  assert.equal(agentStarts, 2);
+  assert.equal(tunnelStarts, 2);
   assert.deepEqual(stopped, ["tunnel"]);
-  assert.equal(status.server, false);
-  assert.equal(status.tunnel, false);
+  assert.equal(status.state, "connected");
+  assert.equal(status.connected, true);
+  assert.equal(status.agentHealth, "ready");
+  assert.equal(status.tunnelReadiness, "ready");
+  assert.equal(status.server, true);
+  assert.equal(status.tunnel, true);
   assert.equal(status.localBroker, true);
 });
 

@@ -38,3 +38,45 @@ test("Host broker socket path stays process-scoped and platform-native", () => {
   const windows = createHostBrokerServer({ ...common, platform: "win32", pid: 5678 });
   assert.equal(windows.getSocketPath(), "\\\\.\\pipe\\webgpt-bridge-5678");
 });
+
+test("Windows SSH resolves only the fixed system OpenSSH executable", () => {
+  const { resolveSshExecutable } = require(modulePath);
+  assert.equal(typeof resolveSshExecutable, "function");
+
+  const existing = new Set([
+    "C:\\Windows\\System32\\OpenSSH\\ssh.exe",
+    "C:\\Users\\user\\bin\\ssh.exe",
+    "C:\\Users\\user\\fake-windows\\System32\\OpenSSH\\ssh.exe",
+  ]);
+  const exists = (candidate) => existing.has(candidate);
+
+  assert.equal(resolveSshExecutable({
+    enabled: true,
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows", PATH: "C:\\Users\\user\\bin" },
+    exists,
+  }), "C:\\Windows\\System32\\OpenSSH\\ssh.exe");
+
+  assert.equal(resolveSshExecutable({
+    enabled: true,
+    platform: "win32",
+    env: { SystemRoot: "D:\\Windows", PATH: "C:\\Users\\user\\bin" },
+    exists,
+  }), "");
+
+  assert.equal(resolveSshExecutable({
+    enabled: true,
+    platform: "win32",
+    env: { SystemRoot: "C:\\Users\\user\\fake-windows", PATH: "C:\\Users\\user\\bin" },
+    exists,
+  }), "", "a spoofed SystemRoot must not become a trusted SSH root");
+
+  assert.equal(resolveSshExecutable({
+    enabled: false,
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows" },
+    exists,
+  }), "");
+
+  assert.equal(resolveSshExecutable({ enabled: true, platform: "darwin", exists }), "/usr/bin/ssh");
+});
