@@ -43,7 +43,7 @@ test("project task discovery honors a selected cwd", () => {
   });
 });
 
-test("Windows Node 22 project checks disable process isolation for simple node --test scripts", () => {
+test("Windows Node 22 project checks preserve lexical module paths and disable process isolation", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-task-win-node-test-"));
   try {
     writeNodePackage(workspace, { test: "node --test test/pass.test.cjs" });
@@ -53,7 +53,14 @@ test("Windows Node 22 project checks disable process isolation for simple node -
       platform: "win32",
       nodeVersion: "22.23.2",
     }), {
-      argv: ["node", "--test", "--experimental-test-isolation=none", "test/pass.test.cjs"],
+      argv: [
+        "node",
+        "--test",
+        "--preserve-symlinks",
+        "--preserve-symlinks-main",
+        "--experimental-test-isolation=none",
+        "test/pass.test.cjs",
+      ],
       ecosystem: "node",
     });
   } finally {
