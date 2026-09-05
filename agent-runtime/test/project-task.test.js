@@ -23,6 +23,14 @@ function makeWorkspace() {
   return workspace;
 }
 
+function writeNodePackage(workspace, scripts) {
+  fs.writeFileSync(
+    path.join(workspace, "package.json"),
+    JSON.stringify({ scripts }),
+    "utf8",
+  );
+}
+
 test("project task discovery honors a selected cwd", () => {
   const workspace = makeWorkspace();
   assert.deepEqual(discoverProjectTask({ workspace, cwd: "node-project", task: "test" }), {
@@ -33,6 +41,58 @@ test("project task discovery honors a selected cwd", () => {
     argv: ["npm", "run", "lint"],
     ecosystem: "node",
   });
+});
+
+test("Windows Node 22 project checks disable process isolation for simple node --test scripts", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-task-win-node-test-"));
+  try {
+    writeNodePackage(workspace, { test: "node --test test/pass.test.cjs" });
+    assert.deepEqual(discoverProjectTask({
+      workspace,
+      task: "test",
+      platform: "win32",
+      nodeVersion: "22.23.2",
+    }), {
+      argv: ["node", "--test", "--experimental-test-isolation=none", "test/pass.test.cjs"],
+      ecosystem: "node",
+    });
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("Windows Node test compatibility path preserves npm lifecycle and ambiguous scripts", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "lpc-task-win-node-fallback-"));
+  try {
+    writeNodePackage(workspace, {
+      pretest: "node pretest.cjs",
+      test: "node --test test/pass.test.cjs",
+    });
+    assert.deepEqual(discoverProjectTask({
+      workspace,
+      task: "test",
+      platform: "win32",
+      nodeVersion: "22.23.2",
+    }).argv, ["npm", "test"]);
+
+    writeNodePackage(workspace, { test: "node --test test/*.test.cjs && node verify.cjs" });
+    assert.deepEqual(discoverProjectTask({
+      workspace,
+      task: "test",
+      platform: "win32",
+      nodeVersion: "22.23.2",
+    }).argv, ["npm", "test"]);
+
+    writeNodePackage(workspace, { test: "node --test test/pass.test.cjs" });
+    assert.deepEqual(discoverProjectTask({
+      workspace,
+      task: "test",
+      platform: "win32",
+      nodeVersion: "22.7.0",
+    }).argv, ["npm", "test"]);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test("project task discovery supports Python checks", () => {
