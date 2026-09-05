@@ -1,9 +1,28 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const http = require("node:http");
 const path = require("node:path");
 
 function fakeChild(pid) {
   return { pid, exitCode: null, stdout: { on() {} }, stderr: { on() {} }, on() {}, once() {}, removeListener() {}, kill() {} };
+}
+
+function baseRuntimeHostOptions(overrides = {}) {
+  return {
+    settingsStore: { loadSettings: async () => ({ httpsProxy: "", designIssueJournal: false }) },
+    startupPreflight: { prepare: async () => ({}) },
+    hostBroker: { async start() {}, async stop() {}, getSocketPath: () => "/tmp/broker.sock" },
+    appendLog() {},
+    resetLogs() {},
+    spawn: () => fakeChild(1),
+    spawnSync: () => ({ status: 0 }),
+    buildTrustedCommandPath: () => "/trusted/bin",
+    resolveSystemProxyEnvironment: () => ({}),
+    platform: "linux",
+    env: {},
+    createBrokerBootstrap: () => ({ protocolVersion: 1, sessionId: "session", secret: "secret" }),
+    ...overrides,
+  };
 }
 
 test("runtime host projects only trusted broker bootstrap and starts processes without a shell", async () => {
@@ -89,4 +108,33 @@ test("runtime host prepare owns settings, preflight, proxy projection, and fresh
   assert.deepEqual(calls[0], ["preflight", { settings, env: { TEST: "1" }, platform: "linux", nvmCandidates: ["/nvm/node"] }]);
   assert.equal(calls[1][0], "proxy");
   assert.deepEqual(calls[2], ["reset"]);
+});
+
+test("agent readiness ignores a stale Agent on the fixed port until the spawned process answers", async () => {
+  const { createRuntimeHost } = require("../src/host/runtime-host.cjs");
+  let requests = 0;
+  const server = http.createServer((_req, res) => {
+    requests += 1;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      ok: true,
+      name: "webgpt-bridge-core",
+      pid: requests === 1 ? 111 : 222,
+      workspace: "/workspace",
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = server.address().port;
+    const host = createRuntimeHost(baseRuntimeHostOptions({
+      endpoints: { mcpHost: "127.0.0.1", mcpPort: port },
+    }));
+    const ready = await host.waitAgentReady(fakeChild(222), {
+      runtime: { workspacePath: "/workspace" },
+    });
+    assert.equal(ready, true);
+    assert.equal(requests, 2, "the stale PID response must not satisfy readiness");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
