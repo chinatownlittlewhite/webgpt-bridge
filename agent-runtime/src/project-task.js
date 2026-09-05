@@ -82,7 +82,14 @@ function simpleWindowsNodeTestArgv(scripts, nodeVersion) {
     || arg.startsWith("--test-isolation="))) {
     return null;
   }
-  return ["node", "--test", isolationOption, ...testArgs];
+  return [
+    "node",
+    "--test",
+    "--preserve-symlinks",
+    "--preserve-symlinks-main",
+    isolationOption,
+    ...testArgs,
+  ];
 }
 
 export function appendProjectTaskFailureDiagnostic(result) {
