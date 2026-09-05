@@ -33,11 +33,11 @@ function writeNodePackage(workspace, scripts) {
 
 test("project task discovery honors a selected cwd", () => {
   const workspace = makeWorkspace();
-  assert.deepEqual(discoverProjectTask({ workspace, cwd: "node-project", task: "test" }), {
+  assert.deepEqual(discoverProjectTask({ workspace, cwd: "node-project", task: "test", platform: "linux" }), {
     argv: ["npm", "test"],
     ecosystem: "node",
   });
-  assert.deepEqual(discoverProjectTask({ workspace, cwd: "node-project", task: "lint" }), {
+  assert.deepEqual(discoverProjectTask({ workspace, cwd: "node-project", task: "lint", platform: "linux" }), {
     argv: ["npm", "run", "lint"],
     ecosystem: "node",
   });
