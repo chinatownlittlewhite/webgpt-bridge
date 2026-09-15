@@ -47,7 +47,7 @@ test("Windows SSH spawns only the pinned System32 OpenSSH client", async () => {
     trustedExecutables: { ssh: pinned },
     spawnCommand: async (argv) => { calls.push(argv); return { code: 0 }; },
   });
-  await broker.run({ argv: ["ssh", "10.0.0.8", "uptime"], cwd: "C:\\project" });
+  await broker.run({ argv: ["ssh", "10.0.0.8", "uptime"], cwd: "/project" });
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], pinned);
   assert.equal(calls[0].includes("BatchMode=yes"), true);
