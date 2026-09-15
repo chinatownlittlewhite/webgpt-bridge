@@ -98,12 +98,13 @@ function needsNativeConfirmation(argv, classification, approvalMode) {
   return classifyLocalTerminalApproval({ argv, classification, approvalMode }).decision !== "allow";
 }
 
-function normalizeTrustedExecutables(bindings = {}) {
+function normalizeTrustedExecutables(bindings = {}, platform = process.platform) {
   if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) throw new TypeError("trustedExecutables 必须是对象。");
+  const impl = platform === "win32" ? path.win32 : path.posix;
   const normalized = {};
   for (const [name, executable] of Object.entries(bindings)) {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(name)) throw new TypeError("受信任可执行名称格式无效。");
-    if (typeof executable !== "string" || !executable || executable.includes("\0") || !path.isAbsolute(executable)) {
+    if (typeof executable !== "string" || !executable || executable.includes("\0") || !impl.isAbsolute(executable)) {
       throw new TypeError(`受信任可执行文件 ${name} 必须是绝对路径。`);
     }
     normalized[name.toLowerCase().replace(/\.(exe|cmd|bat|com)$/i, "")] = executable;
@@ -122,9 +123,10 @@ function normalizeNetworkEnv(networkEnv) {
   return Object.freeze(normalized);
 }
 
-function createLocalTerminalBroker({ approvalMode = "cautious", classifyCommand, confirm = async () => false, spawnCommand = defaultSpawnCommand, pathPolicy, trustedExecutables = {}, networkEnv, sshPolicy } = {}) {
+function createLocalTerminalBroker({ platform = process.platform, approvalMode = "cautious", classifyCommand, confirm = async () => false, spawnCommand = defaultSpawnCommand, pathPolicy, trustedExecutables = {}, networkEnv, sshPolicy } = {}) {
   if (typeof classifyCommand !== "function") throw new TypeError("本机终端代理需要现有 Agent 的命令分类器。");
-  const trusted = normalizeTrustedExecutables(trustedExecutables);
+  const impl = platform === "win32" ? path.win32 : path.posix;
+  const trusted = normalizeTrustedExecutables(trustedExecutables, platform);
   const proxyEnv = normalizeNetworkEnv(networkEnv);
 
   async function run({ argv, cwd } = {}, executionContext = {}) {
@@ -133,13 +135,13 @@ function createLocalTerminalBroker({ approvalMode = "cautious", classifyCommand,
     const logicalCommand = logicalExecutable(argv[0]);
     let validatedSsh;
     if (logicalCommand === "ssh") {
-      if (typeof sshPolicy !== "function" || trusted.ssh !== "/usr/bin/ssh") {
-        throw new Error("SSH 默认关闭；只有启用受控 SSH 并固定使用 /usr/bin/ssh 后才能执行。");
+      if (typeof sshPolicy !== "function" || !trusted.ssh) {
+        throw new Error("SSH 默认关闭；只有启用受控 SSH 并固定可信系统 SSH 可执行文件后才能执行。");
       }
       validatedSsh = sshPolicy([...argv]);
       if (!validatedSsh || !Array.isArray(validatedSsh.argv) || validatedSsh.argv[0] !== "ssh") throw new Error("SSH 安全策略返回了无效命令。");
     }
-    if (typeof cwd !== "string" || !path.isAbsolute(cwd)) throw new TypeError("cwd 必须是绝对目录路径。");
+    if (typeof cwd !== "string" || !impl.isAbsolute(cwd)) throw new TypeError("cwd 必须是绝对目录路径。");
     if (pathPolicy) {
       const result = pathPolicy(cwd, { operation: "terminal" });
       if (result.decision !== "allow") throw new Error(result.reason || "终端工作目录不允许访问。");

@@ -30,12 +30,13 @@ function collect() {
 }
 
 function renderStatus(status) {
+  const connected = status.connected === true;
   byId("serverState").textContent = status.server ? "运行中" : "未运行";
-  byId("tunnelState").textContent = status.tunnel ? "已连接" : "未连接";
-  byId("nextStep").textContent = status.tunnel ? "关闭窗口后继续运行" : status.server ? "正在连接 Tunnel" : "点击“启动连接”";
+  byId("tunnelState").textContent = connected ? "已连接" : "未连接";
+  byId("nextStep").textContent = connected ? "关闭窗口后继续运行" : status.server ? "正在连接 Tunnel" : "点击“启动连接”";
   const connection = byId("connection");
-  connection.className = `connection ${status.tunnel ? "online" : "offline"}`;
-  connection.querySelector("b").textContent = status.tunnel ? "已连接" : "未连接";
+  connection.className = `connection ${connected ? "online" : "offline"}`;
+  connection.querySelector("b").textContent = connected ? "已连接" : "未连接";
 }
 
 function renderCapabilities(capabilities) {

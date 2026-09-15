@@ -1,5 +1,6 @@
 const { spawnSync: defaultSpawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const net = require("node:net");
 const path = require("node:path");
@@ -14,6 +15,22 @@ const { createLoopbackHealthProbe, defaultTcpProbe } = require("../loopback-heal
 const { createLocalTerminalBroker } = require("../local-terminal-broker.cjs");
 const { validateSshCommand } = require("../ssh-policy.cjs");
 
+function resolveSshExecutable({
+  enabled,
+  platform = process.platform,
+  env = process.env,
+  exists = fs.existsSync,
+} = {}) {
+  if (enabled !== true) return "";
+  if (platform !== "win32") return "/usr/bin/ssh";
+  const systemRoot = String(env?.SystemRoot || env?.WINDIR || "").trim();
+  if (!systemRoot || !path.win32.isAbsolute(systemRoot)) return "";
+  const normalizedRoot = path.win32.normalize(systemRoot).replace(/[\\]+$/, "");
+  if (!/^[A-Za-z]:\\Windows$/i.test(normalizedRoot)) return "";
+  const candidate = path.win32.join(normalizedRoot, "System32", "OpenSSH", "ssh.exe");
+  return exists(candidate) ? candidate : "";
+}
+
 function createHostBrokerServer({
   app,
   hostSecurity,
@@ -22,6 +39,8 @@ function createHostBrokerServer({
   platform = process.platform,
   pid = process.pid,
   spawnSync = defaultSpawnSync,
+  env = process.env,
+  exists = fs.existsSync,
 } = {}) {
   if (!app || typeof app.getPath !== "function") throw new TypeError("app.getPath is required");
   if (!hostSecurity || typeof hostSecurity.confirmLocalOperation !== "function" || typeof hostSecurity.confirmHostCommandApproval !== "function") {
@@ -258,12 +277,13 @@ function createHostBrokerServer({
         };
       },
     });
-    const sshExecutable = settings.sshEnabled && platform !== "win32" ? "/usr/bin/ssh" : "";
+    const sshExecutable = resolveSshExecutable({ enabled: settings.sshEnabled, platform, env, exists });
     const trustedExecutables = {
       ...(githubCliPath ? { gh: githubCliPath } : {}),
       ...(sshExecutable ? { ssh: sshExecutable } : {}),
     };
     terminalBroker = createLocalTerminalBroker({
+      platform,
       approvalMode: settings.approvalMode,
       classifyCommand: policyModule.classifyCommand,
       confirm: hostSecurity.confirmLocalOperation,
@@ -291,4 +311,4 @@ function createHostBrokerServer({
   return Object.freeze({ start, stop, getSocketPath });
 }
 
-module.exports = { createHostBrokerServer };
+module.exports = { createHostBrokerServer, resolveSshExecutable };

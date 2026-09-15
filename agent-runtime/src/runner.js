@@ -15,6 +15,7 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const SAFE_ENV_KEYS = new Set(["CI", "NODE_ENV", "NO_COLOR", "FORCE_COLOR"]);
+const TRUSTED_NODE_OPTIONS = "--preserve-symlinks --preserve-symlinks-main";
 
 function audit(auditLogger, event) {
   try { auditLogger?.record?.(event); } catch {}
@@ -33,6 +34,24 @@ export function validateCommandEnvironment(additions = {}) {
       throw new TypeError(`environment variable ${key} must be a string without NUL bytes`);
     }
     validated[key] = value;
+  }
+  return validated;
+}
+
+function normalizeTrustedRuntimeEnvironment(additions = {}) {
+  if (!additions || typeof additions !== "object" || Array.isArray(additions)) {
+    throw new TypeError("trustedEnvironment must be an object");
+  }
+  const entries = Object.entries(additions);
+  if (entries.length > 1) {
+    throw new TypeError("trustedEnvironment may contain only the fixed Node path-preservation option");
+  }
+  const validated = {};
+  for (const [key, value] of entries) {
+    if (key !== "NODE_OPTIONS" || value !== TRUSTED_NODE_OPTIONS) {
+      throw new Error("trustedEnvironment may contain only the fixed Node path-preservation option");
+    }
+    validated.NODE_OPTIONS = value;
   }
   return validated;
 }
@@ -308,18 +327,23 @@ export function createCommandRunner({
     }
 
     let trustedRuntimePathEntries;
+    let trustedRuntimeEnvironment;
     try {
       trustedRuntimePathEntries = normalizeTrustedRuntimePathEntries(
         platformCommand.trustedPathEntries ?? [],
         resolvedCwd,
         platform,
       );
+      trustedRuntimeEnvironment = normalizeTrustedRuntimeEnvironment(platformCommand.trustedEnvironment ?? {});
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       audit(auditLogger, { type: "command_platform_error", argv, cwd: normalizedCwd, platform, error: message });
       return { status: "platform_error", policy, sandbox: sandboxInfo, error: message };
     }
-    const childEnv = buildCommandEnvironment(resolvedCwd, validatedEnv, platform);
+    const childEnv = buildCommandEnvironment(resolvedCwd, {
+      ...validatedEnv,
+      ...trustedRuntimeEnvironment,
+    }, platform);
     if (trustedRuntimePathEntries.length > 0) {
       const delimiter = platform === "win32" ? ";" : path.delimiter;
       childEnv.PATH = [...trustedRuntimePathEntries, childEnv.PATH].filter(Boolean).join(delimiter);

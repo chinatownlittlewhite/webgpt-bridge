@@ -453,6 +453,7 @@ export async function startProductionServer(options = {}) {
         ok: true,
         name: "webgpt-bridge",
         version: VERSION,
+        pid: process.pid,
         platform: process.platform,
         workspace: runtime.workspace,
         toolCount: runtime.tools.length,

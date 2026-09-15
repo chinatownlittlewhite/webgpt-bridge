@@ -22,14 +22,17 @@ test("desktop UI exposes default-off SSH settings with explicit safety copy", ()
   assert.match(renderer, /join\("\\n"\)/);
 });
 
-test("desktop host trusts only /usr/bin/ssh when SSH is enabled and passes allowlist into validation", () => {
+test("desktop host binds SSH only through fixed platform system executables and passes allowlist into validation", () => {
   const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.cjs"), "utf8");
   const settingsStore = fs.readFileSync(path.join(__dirname, "..", "src", "host", "settings-store.cjs"), "utf8");
   const broker = fs.readFileSync(path.join(__dirname, "..", "src", "host", "broker-server.cjs"), "utf8");
   assert.match(settingsStore, /sshEnabled:\s*false/);
   assert.match(settingsStore, /sshAllowedHosts:\s*\[\]/);
   assert.match(main, /createHostBrokerServer/);
-  assert.match(broker, /settings\.sshEnabled[\s\S]{0,220}\/usr\/bin\/ssh/);
+  assert.match(broker, /function\s+resolveSshExecutable/);
+  assert.match(broker, /\/usr\/bin\/ssh/);
+  assert.match(broker, /System32[\s\S]{0,120}OpenSSH[\s\S]{0,120}ssh\.exe/);
+  assert.match(broker, /resolveSshExecutable\(\{\s*enabled:\s*settings\.sshEnabled/);
   assert.match(broker, /validateSshCommand/);
   assert.match(broker, /allowedHosts:\s*settings\.sshAllowedHosts/);
 });

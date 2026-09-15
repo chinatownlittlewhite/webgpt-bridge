@@ -37,3 +37,34 @@ test("runner prepends host-derived staged runtime directories to child PATH", as
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("runner injects trusted staged runtime environment without exposing it to model env", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wgb-runner-trusted-env-"));
+  try {
+    const nodeOptions = "--preserve-symlinks --preserve-symlinks-main";
+    const run = createCommandRunner({
+      workspace: root,
+      platformRuntimeStager(command) {
+        return Object.freeze({
+          ...command,
+          trustedEnvironment: Object.freeze({ NODE_OPTIONS: nodeOptions }),
+        });
+      },
+    });
+
+    const result = await run({
+      argv: ["node", "-e", "process.stdout.write(process.env.NODE_OPTIONS || '')"],
+      requestApproval: async () => true,
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout, nodeOptions);
+    await assert.rejects(
+      () => run({ argv: ["node", "--version"], env: { NODE_OPTIONS: "--inspect" }, requestApproval: async () => true }),
+      /environment variable NODE_OPTIONS is not allowed/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
