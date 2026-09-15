@@ -92,20 +92,26 @@ function createRuntimeHost({
     return platform === "win32" ? resolved.toLowerCase() : resolved;
   }
 
-  async function waitAgentReady(agent, preflight) {
+  async function checkAgentHealth(agent, preflight) {
+    if (!processIsLive(agent)) return false;
     const expectedWorkspace = normalizedWorkspace(preflight?.runtime?.workspacePath);
     const expectedPid = agent?.pid;
+    if (!expectedWorkspace || !Number.isInteger(expectedPid)) return false;
+    const health = parseHealth(await requestHealth());
+    if (!processIsLive(agent)) return false;
+    return Boolean(
+      health?.ok === true
+      && Number.isInteger(health.pid)
+      && health.pid === expectedPid
+      && normalizedWorkspace(health.workspace) === expectedWorkspace
+    );
+  }
+
+  async function waitAgentReady(agent, preflight) {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
+      if (await checkAgentHealth(agent, preflight)) return true;
       if (!processIsLive(agent)) return false;
-      const health = parseHealth(await requestHealth());
-      if (!processIsLive(agent)) return false;
-      if (
-        health?.ok === true
-        && Number.isInteger(health.pid)
-        && health.pid === expectedPid
-        && normalizedWorkspace(health.workspace) === expectedWorkspace
-      ) return true;
       await new Promise((resolve) => setTimeout(resolve, 400));
     }
     throw new Error("本地 Agent 服务未在 15 秒内通过健康检查。请查看日志。");
@@ -264,7 +270,7 @@ function createRuntimeHost({
     if (kind === "broker") await hostBroker.stop();
   }
 
-  return Object.freeze({ prepare, startBroker, startAgent, waitAgentReady, startTunnel, waitTunnelReady, stopResource });
+  return Object.freeze({ prepare, startBroker, startAgent, waitAgentReady, checkAgentHealth, startTunnel, waitTunnelReady, stopResource });
 }
 
 module.exports = { createRuntimeHost };
