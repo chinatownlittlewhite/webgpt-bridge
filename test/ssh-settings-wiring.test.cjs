@@ -12,6 +12,8 @@ test("desktop UI exposes default-off SSH settings with explicit safety copy", ()
   assert.match(html, /SSH[^<]{0,100}(默认|关闭)|默认[^<]{0,100}SSH[^<]{0,100}关闭/i);
   assert.match(html, /private|local|私有|本地/i);
   assert.match(html, /allowlist|白名单|允许列表/i);
+  assert.match(html, /user@host|用户名|user@/i);
+  assert.match(html, /Windows[\s\S]{0,120}(OpenSSH|ssh\.exe)/i);
   assert.match(html, /非交互|noninteractive/i);
   assert.match(html, /scp/);
   assert.match(html, /sftp/);

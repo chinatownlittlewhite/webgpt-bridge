@@ -16,12 +16,14 @@ function normalizeSshAllowedHosts(value = []) {
   const normalized = [];
   const seen = new Set();
   for (const entry of entries) {
-    const host = String(entry || "").trim().toLowerCase().replace(/\.$/, "");
-    if (!host) continue;
-    if (host.length > 253 || /[\s\/@]/.test(host)) throw new TypeError("SSH 允许列表只能包含主机名或 IP 地址。");
-    if (!seen.has(host)) {
-      seen.add(host);
-      normalized.push(host);
+    const raw = String(entry || "").trim();
+    if (!raw) continue;
+    const { host, user } = parseTarget(raw);
+    if (host.length > 253) throw new TypeError("SSH 允许列表中的主机名过长。");
+    const item = user ? `${user}@${host}` : host;
+    if (!seen.has(item)) {
+      seen.add(item);
+      normalized.push(item);
     }
   }
   if (normalized.length > 128) throw new TypeError("SSH 允许列表最多包含 128 个主机。");
@@ -69,7 +71,17 @@ function parseTarget(target) {
 
 function isAllowedSshHost(host, allowedHosts = []) {
   const normalized = String(host || "").trim().toLowerCase().replace(/\.$/, "");
-  return isLocalOrPrivateHost(normalized) || normalizeSshAllowedHosts(allowedHosts).includes(normalized);
+  return isLocalOrPrivateHost(normalized) || normalizeSshAllowedHosts(allowedHosts).some((entry) => parseTarget(entry).host === normalized);
+}
+
+function configuredSshUser(host, allowedHosts = []) {
+  const normalized = String(host || "").trim().toLowerCase().replace(/\.$/, "");
+  const users = new Set();
+  for (const entry of normalizeSshAllowedHosts(allowedHosts)) {
+    const parsed = parseTarget(entry);
+    if (parsed.host === normalized && parsed.user) users.add(parsed.user);
+  }
+  return users.size === 1 ? [...users][0] : "";
 }
 
 function validateRemoteCommand(args) {
@@ -96,7 +108,7 @@ function validateSshCommand(argv, { allowedHosts = [] } = {}) {
 
   const target = argv[index];
   if (!target) throw new TypeError("SSH 缺少目标主机。");
-  const { host } = parseTarget(target);
+  const { host, user } = parseTarget(target);
   const targetAllowed = isAllowedSshHost(host, allowedHosts);
   const remoteCommand = argv.slice(index + 1);
   const authorization = authorizeSecurityOperation({
@@ -113,9 +125,13 @@ function validateSshCommand(argv, { allowedHosts = [] } = {}) {
   validateRemoteCommand(remoteCommand);
 
   const forced = SSH_FORCED_OPTIONS.flatMap((option) => ["-o", option]);
+  const defaultUser = user ? "" : configuredSshUser(host, allowedHosts);
+  const resolvedTarget = defaultUser
+    ? `${defaultUser}@${net.isIP(host) === 6 ? `[${host}]` : host}`
+    : target;
   return Object.freeze({
     host,
-    argv: Object.freeze(["ssh", "-T", ...forced, ...retainedOptions, target, ...remoteCommand]),
+    argv: Object.freeze(["ssh", "-T", ...forced, ...retainedOptions, resolvedTarget, ...remoteCommand]),
   });
 }
 
