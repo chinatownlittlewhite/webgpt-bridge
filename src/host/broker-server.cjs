@@ -12,6 +12,7 @@ const { createHostCapabilityStore } = require("../host-capability-store.cjs");
 const { createKnownFolderAccess } = require("../known-folder-access.cjs");
 const { createLoopbackHealthProbe, defaultTcpProbe } = require("../loopback-health-probe.cjs");
 const { createLocalTerminalBroker } = require("../local-terminal-broker.cjs");
+const { resolveSshExecutable } = require("../ssh-executable-path.cjs");
 const { validateSshCommand } = require("../ssh-policy.cjs");
 
 function createHostBrokerServer({
@@ -258,7 +259,7 @@ function createHostBrokerServer({
         };
       },
     });
-    const sshExecutable = settings.sshEnabled && platform !== "win32" ? "/usr/bin/ssh" : "";
+    const sshExecutable = settings.sshEnabled ? resolveSshExecutable({ platform }) : "";
     const trustedExecutables = {
       ...(githubCliPath ? { gh: githubCliPath } : {}),
       ...(sshExecutable ? { ssh: sshExecutable } : {}),
@@ -271,6 +272,7 @@ function createHostBrokerServer({
       trustedExecutables,
       networkEnv: proxyEnv,
       sshPolicy: sshExecutable ? (argv) => validateSshCommand(argv, { allowedHosts: settings.sshAllowedHosts }) : undefined,
+      platform,
     });
     socketPath = localBrokerSocketPath();
     if (platform !== "win32") await fsp.rm(socketPath, { force: true }).catch(() => {});
