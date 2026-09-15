@@ -25,6 +25,26 @@ test("SSH allows only private/local or explicitly allowlisted hosts and requires
   assert.throws(() => validateSshCommand(["ssh", "10.0.0.8"], { allowedHosts: [] }), /command|命令|noninteractive/i);
 });
 
+test("SSH allowlist may bind a default username to a host", () => {
+  const { isAllowedSshHost, normalizeSshAllowedHosts, validateSshCommand } = api();
+  assert.deepEqual(normalizeSshAllowedHosts(["ubuntu@10.101.1.170", "Deploy@Example.COM"]), [
+    "ubuntu@10.101.1.170",
+    "Deploy@example.com",
+  ]);
+  assert.equal(isAllowedSshHost("example.com", ["Deploy@example.com"]), true);
+
+  const inferred = validateSshCommand(["ssh", "10.101.1.170", "uptime"], {
+    allowedHosts: ["ubuntu@10.101.1.170"],
+  });
+  assert.deepEqual(inferred.argv.slice(-2), ["ubuntu@10.101.1.170", "uptime"]);
+
+  const explicit = validateSshCommand(["ssh", "admin@10.101.1.170", "uptime"], {
+    allowedHosts: ["ubuntu@10.101.1.170"],
+  });
+  assert.deepEqual(explicit.argv.slice(-2), ["admin@10.101.1.170", "uptime"]);
+  assert.throws(() => normalizeSshAllowedHosts(["bad/user@example.com"]), /用户名|允许列表|host/i);
+});
+
 test("SSH rejects forwarding, jump/config/identity overrides, TTY/background, and proxy/local command options", () => {
   const { validateSshCommand } = api();
   const forbidden = [
