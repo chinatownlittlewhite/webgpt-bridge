@@ -140,9 +140,13 @@ test("agent readiness ignores a stale Agent on the fixed port until the spawned 
 });
 
 
-test("tunnel health requires readyz and a fresh successful control-plane poll", async () => {
+test("tunnel health uses poll progress instead of absolute last-success age", async () => {
   const { createRuntimeHost } = require("../src/host/runtime-host.cjs");
-  let pollAgeSeconds = 10;
+  let pollCycles = 40;
+  let lastSuccess = Date.now() / 1000 - 600;
+  let pollErrors = 2;
+  let commandsPolled = 12;
+  let responsesDelivered = 11;
   const server = http.createServer((req, res) => {
     if (req.url === "/readyz") {
       res.writeHead(200);
@@ -150,9 +154,16 @@ test("tunnel health requires readyz and a fresh successful control-plane poll", 
       return;
     }
     if (req.url === "/metrics") {
-      const lastSuccess = Date.now() / 1000 - pollAgeSeconds;
       res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
-      res.end(`commands_poll_last_successful_timestamp_seconds ${lastSuccess}\nreadiness 1\n`);
+      res.end([
+        `commands_poll_cycles_total ${pollCycles}`,
+        `commands_poll_last_successful_timestamp_seconds ${lastSuccess}`,
+        `commands_poll_errors_total ${pollErrors}`,
+        `commands_polled_total ${commandsPolled}`,
+        `http_client_request_body_size_bytes_count{http_request_method="POST",http_response_status_code="200",http_route="/v1/tunnels/tunnel_test/response"} ${responsesDelivered}`,
+        "readiness 1",
+        "",
+      ].join("\n"));
       return;
     }
     res.writeHead(404);
@@ -165,9 +176,46 @@ test("tunnel health requires readyz and a fresh successful control-plane poll", 
     const tunnel = fakeChild(333);
     const preflight = { tunnelProfile: { healthBaseUrl: `http://127.0.0.1:${port}` } };
 
-    assert.equal(await host.checkTunnelHealth(tunnel, preflight), true);
-    pollAgeSeconds = 120;
-    assert.equal(await host.checkTunnelHealth(tunnel, preflight), false, "readyz alone must not hide a stale control-plane poller");
+    assert.equal(await host.checkTunnelHealth(tunnel, preflight), true, "the first sample establishes a baseline even when the timestamp is old");
+    assert.deepEqual(host.getTunnelHealthDiagnostics(tunnel), {
+      code: "TUNNEL_PROGRESS_BASELINE",
+      progressed: true,
+      pollCycles: 40,
+      pollCyclesDelta: 0,
+      pollErrors: 2,
+      pollErrorsDelta: 0,
+      commandsPolled: 12,
+      commandsPolledDelta: 0,
+      responsesDelivered: 11,
+      responsesDeliveredDelta: 0,
+    });
+
+    pollCycles += 1;
+    commandsPolled += 1;
+    responsesDelivered += 1;
+    assert.equal(await host.checkTunnelHealth(tunnel, preflight), true, "an advancing poll cycle proves control-plane progress");
+    assert.deepEqual(host.getTunnelHealthDiagnostics(tunnel), {
+      code: "TUNNEL_PROGRESS_OK",
+      progressed: true,
+      pollCycles: 41,
+      pollCyclesDelta: 1,
+      pollErrors: 2,
+      pollErrorsDelta: 0,
+      commandsPolled: 13,
+      commandsPolledDelta: 1,
+      responsesDelivered: 12,
+      responsesDeliveredDelta: 1,
+    });
+
+    assert.equal(await host.checkTunnelHealth(tunnel, preflight), false, "a later sample with no poll progress is a health miss");
+    assert.equal(host.getTunnelHealthDiagnostics(tunnel).code, "TUNNEL_PROGRESS_STALLED");
+    assert.equal(host.getTunnelHealthDiagnostics(tunnel).progressed, false);
+
+    lastSuccess += 30;
+    pollErrors += 1;
+    assert.equal(await host.checkTunnelHealth(tunnel, preflight), true, "a newer successful-poll timestamp also proves progress");
+    assert.equal(host.getTunnelHealthDiagnostics(tunnel).code, "TUNNEL_PROGRESS_OK");
+    assert.equal(host.getTunnelHealthDiagnostics(tunnel).pollErrorsDelta, 1);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

@@ -243,6 +243,45 @@ test("unexpected tunnel exit uses bounded recovery budget and then fails", async
   assert.equal(supervisor.getStatus().lastExitReason.code, "TUNNEL_RECOVERY_EXHAUSTED");
 });
 
+test("tunnel health checks publish bounded progress diagnostics without changing transition state", async () => {
+  const scheduled = [];
+  const seen = [];
+  const diagnostic = Object.freeze({
+    code: "TUNNEL_PROGRESS_OK",
+    progressed: true,
+    pollCycles: 41,
+    pollCyclesDelta: 1,
+    pollErrors: 2,
+    pollErrorsDelta: 0,
+    commandsPolled: 13,
+    commandsPolledDelta: 1,
+    responsesDelivered: 12,
+    responsesDeliveredDelta: 1,
+  });
+  const supervisor = createRuntimeSupervisor(baseDeps({
+    checkAgentHealth: async () => true,
+    checkTunnelHealth: async () => true,
+    getTunnelHealthDiagnostics: () => diagnostic,
+    setTimeout: (fn) => {
+      scheduled.push(fn);
+      return fn;
+    },
+    clearTimeout: () => {},
+  }), { healthCheckIntervalMs: 1 });
+  supervisor.subscribe((status) => seen.push(status));
+
+  await supervisor.start();
+  const connectedTransitionId = supervisor.getStatus().transitionId;
+  scheduled.shift()();
+  await settle();
+
+  const status = supervisor.getStatus();
+  assert.equal(status.state, "connected");
+  assert.equal(status.transitionId, connectedTransitionId, "health telemetry must not create a lifecycle transition");
+  assert.deepEqual(status.tunnelDiagnostics, diagnostic);
+  assert.ok(seen.some((entry) => entry.transitionId === connectedTransitionId && entry.tunnelDiagnostics?.code === "TUNNEL_PROGRESS_OK"));
+});
+
 test("tunnel health failure recovers only the tunnel while preserving a healthy agent", async () => {
   const scheduled = [];
   const stopped = [];

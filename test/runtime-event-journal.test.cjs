@@ -28,6 +28,46 @@ test("runtime event journal persists a bounded redacted status history", () => {
   assert.equal(stored.includes("pass@host"), false);
 });
 
+test("runtime event journal persists only allowlisted tunnel progress diagnostics", () => {
+  let stored = "";
+  const journal = createRuntimeEventJournal({
+    filePath: "/virtual/runtime-events.json",
+    readFile: () => stored,
+    writeFile: (_path, data) => { stored = data; },
+  });
+  journal.append({
+    state: "connected", agentHealth: "ready", tunnelReadiness: "ready", transitionId: 7,
+    tunnelDiagnostics: {
+      code: "TUNNEL_PROGRESS_OK",
+      progressed: true,
+      pollCycles: 41,
+      pollCyclesDelta: 1,
+      pollErrors: 2,
+      pollErrorsDelta: 0,
+      commandsPolled: 13,
+      commandsPolledDelta: 1,
+      responsesDelivered: 12,
+      responsesDeliveredDelta: 1,
+      rawMetrics: "secret tunnel URL must not persist",
+    },
+  });
+  const [entry] = JSON.parse(stored);
+  assert.deepEqual(entry.tunnelDiagnostics, {
+    code: "TUNNEL_PROGRESS_OK",
+    progressed: true,
+    pollCycles: 41,
+    pollCyclesDelta: 1,
+    pollErrors: 2,
+    pollErrorsDelta: 0,
+    commandsPolled: 13,
+    commandsPolledDelta: 1,
+    responsesDelivered: 12,
+    responsesDeliveredDelta: 1,
+  });
+  assert.equal(stored.includes("rawMetrics"), false);
+  assert.equal(stored.includes("secret tunnel URL"), false);
+});
+
 test("runtime event journal persists only allowlisted reason fields", () => {
   let stored = "";
   const journal = createRuntimeEventJournal({

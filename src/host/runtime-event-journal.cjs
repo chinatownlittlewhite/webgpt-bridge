@@ -5,6 +5,28 @@ function boundedText(value, max = 64) {
   return typeof value === "string" ? value.slice(0, max) : "";
 }
 
+function sanitizeTunnelDiagnostics(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== "object") return null;
+  const safe = {};
+  const code = boundedText(diagnostics.code, 96);
+  if (code) safe.code = code;
+  if (typeof diagnostics.progressed === "boolean") safe.progressed = diagnostics.progressed;
+  for (const name of [
+    "pollCycles",
+    "pollCyclesDelta",
+    "pollErrors",
+    "pollErrorsDelta",
+    "commandsPolled",
+    "commandsPolledDelta",
+    "responsesDelivered",
+    "responsesDeliveredDelta",
+  ]) {
+    const value = diagnostics[name];
+    if (Number.isSafeInteger(value) && value >= 0) safe[name] = value;
+  }
+  return Object.keys(safe).length ? safe : null;
+}
+
 function sanitizeReason(reason) {
   if (!reason || typeof reason !== "object") return null;
   const safe = {};
@@ -51,6 +73,8 @@ function createRuntimeEventJournal({
       transitionId: Number.isSafeInteger(status.transitionId) ? status.transitionId : 0,
       reason: sanitizeReason(status.lastExitReason),
     };
+    const tunnelDiagnostics = sanitizeTunnelDiagnostics(status.tunnelDiagnostics);
+    if (tunnelDiagnostics) entry.tunnelDiagnostics = tunnelDiagnostics;
     entries.push(entry);
     if (entries.length > maxEntries) entries = entries.slice(-maxEntries);
     writeFile(filePath, `${JSON.stringify(entries, null, 2)}\n`);

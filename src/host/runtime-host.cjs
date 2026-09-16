@@ -33,6 +33,8 @@ function createRuntimeHost({
   const mcpPort = endpoints.mcpPort;
   let serverProcess;
   let tunnelProcess;
+  const tunnelHealthSamples = new WeakMap();
+  const tunnelHealthDiagnostics = new WeakMap();
 
   function processIsLive(child) {
     return Boolean(child && child.exitCode === null);
@@ -271,18 +273,97 @@ function createRuntimeHost({
     return Number.isFinite(value) ? value : null;
   }
 
+  function prometheusGaugeWhere(body, name, predicate) {
+    if (typeof body !== "string" || !name || typeof predicate !== "function") return null;
+    const prefix = `${name}{`;
+    for (const line of body.split(/\r?\n/)) {
+      if (!line.startsWith(prefix) || !predicate(line)) continue;
+      const value = Number(line.trim().split(/\s+/).at(-1));
+      if (Number.isFinite(value)) return value;
+    }
+    return null;
+  }
+
+  function counterDelta(current, previous) {
+    if (!Number.isFinite(current) || !Number.isFinite(previous)) return 0;
+    return Math.max(0, current - previous);
+  }
+
+  function setTunnelDiagnostics(tunnel, code, progressed, sample = {}, previous = null) {
+    if (!tunnel || (typeof tunnel !== "object" && typeof tunnel !== "function")) return;
+    tunnelHealthDiagnostics.set(tunnel, Object.freeze({
+      code,
+      progressed: Boolean(progressed),
+      pollCycles: Number.isFinite(sample.pollCycles) ? sample.pollCycles : 0,
+      pollCyclesDelta: previous ? counterDelta(sample.pollCycles, previous.pollCycles) : 0,
+      pollErrors: Number.isFinite(sample.pollErrors) ? sample.pollErrors : 0,
+      pollErrorsDelta: previous ? counterDelta(sample.pollErrors, previous.pollErrors) : 0,
+      commandsPolled: Number.isFinite(sample.commandsPolled) ? sample.commandsPolled : 0,
+      commandsPolledDelta: previous ? counterDelta(sample.commandsPolled, previous.commandsPolled) : 0,
+      responsesDelivered: Number.isFinite(sample.responsesDelivered) ? sample.responsesDelivered : 0,
+      responsesDeliveredDelta: previous ? counterDelta(sample.responsesDelivered, previous.responsesDelivered) : 0,
+    }));
+  }
+
+  function getTunnelHealthDiagnostics(tunnel) {
+    return tunnelHealthDiagnostics.get(tunnel) || null;
+  }
+
   async function checkTunnelHealth(tunnel, preflight) {
-    if (!processIsLive(tunnel)) return false;
+    if (!processIsLive(tunnel)) {
+      setTunnelDiagnostics(tunnel, "TUNNEL_PROCESS_NOT_LIVE", false);
+      return false;
+    }
     const [ready, metrics] = await Promise.all([
       requestTunnelEndpoint(preflight, "/readyz"),
       requestTunnelEndpoint(preflight, "/metrics"),
     ]);
-    if (!processIsLive(tunnel) || ready.statusCode !== 200) return false;
-    if (metrics.statusCode !== 200) return true;
-    const lastPoll = prometheusGauge(metrics.body, "commands_poll_last_successful_timestamp_seconds");
-    if (lastPoll === null) return true;
-    const ageMs = Date.now() - (lastPoll * 1000);
-    return ageMs >= 0 && ageMs <= 90_000;
+    if (!processIsLive(tunnel) || ready.statusCode !== 200) {
+      setTunnelDiagnostics(tunnel, "TUNNEL_NOT_READY", false);
+      return false;
+    }
+    if (metrics.statusCode !== 200) {
+      setTunnelDiagnostics(tunnel, "TUNNEL_METRICS_UNAVAILABLE", true);
+      return true;
+    }
+
+    const sample = Object.freeze({
+      pollCycles: prometheusGauge(metrics.body, "commands_poll_cycles_total"),
+      lastSuccessfulPollSeconds: prometheusGauge(metrics.body, "commands_poll_last_successful_timestamp_seconds"),
+      pollErrors: prometheusGauge(metrics.body, "commands_poll_errors_total"),
+      commandsPolled: prometheusGauge(metrics.body, "commands_polled_total"),
+      responsesDelivered: prometheusGaugeWhere(
+        metrics.body,
+        "http_client_request_body_size_bytes_count",
+        (line) => (
+          line.includes('http_request_method="POST"')
+          && line.includes('http_response_status_code="200"')
+          && /http_route="\/v1\/tunnels\/[^\"]+\/response"/.test(line)
+        ),
+      ),
+    });
+    if (sample.pollCycles === null && sample.lastSuccessfulPollSeconds === null) {
+      setTunnelDiagnostics(tunnel, "TUNNEL_PROGRESS_UNKNOWN", true, sample);
+      return true;
+    }
+
+    const previous = tunnelHealthSamples.get(tunnel);
+    tunnelHealthSamples.set(tunnel, sample);
+    if (!previous) {
+      setTunnelDiagnostics(tunnel, "TUNNEL_PROGRESS_BASELINE", true, sample);
+      return true;
+    }
+
+    const progressed = (
+      (sample.pollCycles !== null && previous.pollCycles !== null && sample.pollCycles > previous.pollCycles)
+      || (
+        sample.lastSuccessfulPollSeconds !== null
+        && previous.lastSuccessfulPollSeconds !== null
+        && sample.lastSuccessfulPollSeconds > previous.lastSuccessfulPollSeconds
+      )
+    );
+    setTunnelDiagnostics(tunnel, progressed ? "TUNNEL_PROGRESS_OK" : "TUNNEL_PROGRESS_STALLED", progressed, sample, previous);
+    return progressed;
   }
 
   async function waitTunnelReady(tunnel, preflight) {
@@ -323,7 +404,7 @@ function createRuntimeHost({
     if (kind === "broker") await hostBroker.stop();
   }
 
-  return Object.freeze({ prepare, startBroker, startAgent, waitAgentReady, checkAgentHealth, startTunnel, waitTunnelReady, checkTunnelHealth, stopResource });
+  return Object.freeze({ prepare, startBroker, startAgent, waitAgentReady, checkAgentHealth, startTunnel, waitTunnelReady, checkTunnelHealth, getTunnelHealthDiagnostics, stopResource });
 }
 
 module.exports = { createRuntimeHost };

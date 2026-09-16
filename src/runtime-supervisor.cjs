@@ -21,6 +21,7 @@ function createRuntimeSupervisor(deps, options = {}) {
   const cancelTimeout = typeof deps.clearTimeout === "function" ? deps.clearTimeout : clearTimeout;
   const checkAgentHealth = typeof deps.checkAgentHealth === "function" ? deps.checkAgentHealth : null;
   const checkTunnelHealth = typeof deps.checkTunnelHealth === "function" ? deps.checkTunnelHealth : null;
+  const getTunnelHealthDiagnostics = typeof deps.getTunnelHealthDiagnostics === "function" ? deps.getTunnelHealthDiagnostics : null;
   const recoveryDelays = Object.freeze([...(options.recoveryDelays || [1000, 3000, 10000])]);
   const healthCheckIntervalMs = options.healthCheckIntervalMs ?? 30_000;
   const healthFailureThreshold = options.healthFailureThreshold ?? 2;
@@ -44,6 +45,7 @@ function createRuntimeSupervisor(deps, options = {}) {
   let preflight = null;
   let agentHealth = "unknown";
   let tunnelReadiness = "unknown";
+  let tunnelDiagnostics = null;
   let lastExitReason = null;
   let healthTimer = null;
   let consecutiveAgentHealthFailures = 0;
@@ -89,6 +91,7 @@ function createRuntimeSupervisor(deps, options = {}) {
       localBroker: broker,
       agentHealth,
       tunnelReadiness,
+      tunnelDiagnostics,
       transitionId,
       lastExitReason,
       phaseTimings: Object.freeze({ ...phaseTimings }),
@@ -194,6 +197,7 @@ function createRuntimeSupervisor(deps, options = {}) {
       failure = error;
     } finally {
       removeEntry(entry);
+      if (entry.kind === "tunnel") tunnelDiagnostics = null;
     }
     return failure;
   }
@@ -384,6 +388,15 @@ function createRuntimeSupervisor(deps, options = {}) {
         || state !== "connected"
         || getEntry("tunnel") !== tunnelEntry
       ) return;
+
+      if (getTunnelHealthDiagnostics) {
+        try {
+          tunnelDiagnostics = getTunnelHealthDiagnostics(tunnelEntry.value);
+        } catch {
+          tunnelDiagnostics = null;
+        }
+      }
+      publish();
 
       if (healthy) {
         consecutiveTunnelHealthFailures = 0;
