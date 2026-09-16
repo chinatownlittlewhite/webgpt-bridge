@@ -12,6 +12,7 @@ const { createWindowController } = require("./host/window-controller.cjs");
 const { createTrayController } = require("./host/tray-controller.cjs");
 const { registerHostIpc } = require("./host/ipc-controller.cjs");
 const { createLogStreamService } = require("./host/log-stream-service.cjs");
+const { createRuntimeEventJournal } = require("./host/runtime-event-journal.cjs");
 const { resolveDesktopGitHubCli } = require("./github-cli-path.cjs");
 const { bundledTunnelClientPath } = require("./tunnel-client-path.cjs");
 const { ensureTunnelProfile } = require("./tunnel-profile-manager.cjs");
@@ -50,6 +51,10 @@ let windowController;
 let trayController;
 let disposeIpc;
 const logStream = createLogStreamService({ maxEntries: MAX_LOG_LINES });
+const runtimeEventJournal = createRuntimeEventJournal({
+  filePath: path.join(app.getPath("userData"), "runtime-events.json"),
+  maxEntries: 120,
+});
 let updateService;
 let runtimeSupervisor;
 let appLifecycle;
@@ -183,7 +188,10 @@ function updateTray() {
 if (singleInstanceOwnership.primary) {
   app.whenReady().then(() => {
     runtimeSupervisor = createRuntimeSupervisor(runtimeHost);
-    runtimeSupervisor.subscribe(() => emit("status", getStatus()));
+    runtimeSupervisor.subscribe((status) => {
+      try { runtimeEventJournal.append(status); } catch { /* Diagnostics must not break runtime ownership. */ }
+      emit("status", getStatus());
+    });
     appLifecycle = createAppLifecycleCoordinator({
       app,
       supervisor: runtimeSupervisor,

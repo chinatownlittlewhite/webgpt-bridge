@@ -7,28 +7,28 @@ const manifest = require("../scripts/tunnel-client-release.json");
 
 const expected = Object.freeze({
   "darwin-arm64": Object.freeze({
-    file: "tunnel-client-v0.0.13-darwin-arm64.zip",
-    sha256: "15abf165f06050af642c948ba6bd6c905191dc5420a9422dadde2b49d892e2c6",
+    file: "tunnel-client-v0.0.14-darwin-arm64.zip",
+    sha256: "b540493c5bdbcdbb755700c8e2e16597e28b1569e425007e0f73111047bd6a64",
   }),
   "darwin-amd64": Object.freeze({
-    file: "tunnel-client-v0.0.13-darwin-amd64.zip",
-    sha256: "c683e15d84fb997f5af1cc7c4cb55008e19a555a9ed2ec0f89a5ff426d85f85c",
+    file: "tunnel-client-v0.0.14-darwin-amd64.zip",
+    sha256: "75e10be774184fb42189e347b16eb6bc9fb0780135d8af714d34e30ce068dc53",
   }),
   "windows-amd64": Object.freeze({
-    file: "tunnel-client-v0.0.13-windows-amd64.zip",
-    sha256: "17113162b353906bbb884c3ed7620facba5cc72b5fdc94fd54fd7208c7166edb",
+    file: "tunnel-client-v0.0.14-windows-amd64.zip",
+    sha256: "784ab8da7b5a88f0109f1fd8aaf0a1c86067430b896dddf307ef7e3cc49fa1a5",
   }),
 });
 
 test("desktop bundles the tunnel-client release that owns profile-dir and readyz semantics", () => {
-  assert.equal(manifest.version, "0.0.13");
-  assert.equal(manifest.baseUrl, "https://github.com/openai/tunnel-client/releases/download/v0.0.13");
+  assert.equal(manifest.version, "0.0.14");
+  assert.equal(manifest.baseUrl, "https://github.com/openai/tunnel-client/releases/download/v0.0.14");
   for (const [platform, asset] of Object.entries(expected)) {
     assert.equal(manifest.assets[platform].file, asset.file);
     assert.equal(manifest.assets[platform].sha256, asset.sha256);
   }
 
   const html = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "index.html"), "utf8");
-  assert.match(html, /留空使用内置 v0\.0\.13/);
+  assert.match(html, /留空使用内置 v0\.0\.14/);
   assert.doesNotMatch(html, /留空使用内置 v0\.0\.11/);
 });

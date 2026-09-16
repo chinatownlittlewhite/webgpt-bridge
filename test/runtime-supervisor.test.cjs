@@ -243,6 +243,59 @@ test("unexpected tunnel exit uses bounded recovery budget and then fails", async
   assert.equal(supervisor.getStatus().lastExitReason.code, "TUNNEL_RECOVERY_EXHAUSTED");
 });
 
+test("tunnel health failure recovers only the tunnel while preserving a healthy agent", async () => {
+  const scheduled = [];
+  const stopped = [];
+  let agentStarts = 0;
+  let tunnelStarts = 0;
+  let tunnelChecks = 0;
+  const firstTunnel = resource("tunnel", 2);
+  const secondTunnel = resource("tunnel", 3);
+  const supervisor = createRuntimeSupervisor(baseDeps({
+    startAgent: async () => {
+      agentStarts += 1;
+      return resource("agent", agentStarts);
+    },
+    startTunnel: async () => {
+      tunnelStarts += 1;
+      return tunnelStarts === 1 ? firstTunnel : secondTunnel;
+    },
+    checkAgentHealth: async () => true,
+    checkTunnelHealth: async () => {
+      tunnelChecks += 1;
+      return false;
+    },
+    stopResource: async (_resource, meta) => stopped.push(meta.kind),
+    setTimeout: (fn) => {
+      scheduled.push(fn);
+      return fn;
+    },
+    clearTimeout: () => {},
+  }), {
+    healthCheckIntervalMs: 1,
+    healthFailureThreshold: 2,
+    recoveryDelays: [0],
+  });
+
+  await supervisor.start();
+  assert.equal(agentStarts, 1);
+  assert.equal(tunnelStarts, 1);
+
+  scheduled.shift()();
+  await settle();
+  assert.equal(supervisor.getStatus().state, "connected", "one tunnel-health miss stays within the failure budget");
+
+  scheduled.shift()();
+  await settle();
+  assert.equal(tunnelChecks, 2);
+  assert.equal(agentStarts, 1, "healthy agent must be preserved");
+  assert.equal(tunnelStarts, 2, "tunnel-only recovery starts a replacement tunnel");
+  assert.deepEqual(stopped, ["tunnel"]);
+  assert.equal(supervisor.getStatus().state, "connected");
+  assert.equal(supervisor.getStatus().agentHealth, "ready");
+  assert.equal(supervisor.getStatus().tunnelReadiness, "ready");
+});
+
 test("expected child exits during stop do not trigger recovery", async () => {
   const tunnel = resource("tunnel", 2);
   let tunnelStarts = 0;

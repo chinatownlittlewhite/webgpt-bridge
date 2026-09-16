@@ -232,6 +232,59 @@ function createRuntimeHost({
     return tunnelProcess;
   }
 
+
+  function requestTunnelEndpoint(preflight, pathname) {
+    let healthUrl;
+    try {
+      healthUrl = new URL(preflight?.tunnelProfile?.healthBaseUrl);
+    } catch {
+      return Promise.resolve({ statusCode: 0, body: "" });
+    }
+    return new Promise((resolve) => {
+      const req = http.get({
+        host: healthUrl.hostname,
+        port: healthUrl.port,
+        path: pathname,
+        timeout: 1500,
+      }, (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => resolve({
+          statusCode: res.statusCode || 0,
+          body: Buffer.concat(chunks).toString("utf8"),
+        }));
+      });
+      req.on("error", () => resolve({ statusCode: 0, body: "" }));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve({ statusCode: 0, body: "" });
+      });
+    });
+  }
+
+  function prometheusGauge(body, name) {
+    if (typeof body !== "string" || !name) return null;
+    const pattern = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\{[^}]*\\})?\\s+([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)$`, "m");
+    const match = body.match(pattern);
+    if (!match) return null;
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  async function checkTunnelHealth(tunnel, preflight) {
+    if (!processIsLive(tunnel)) return false;
+    const [ready, metrics] = await Promise.all([
+      requestTunnelEndpoint(preflight, "/readyz"),
+      requestTunnelEndpoint(preflight, "/metrics"),
+    ]);
+    if (!processIsLive(tunnel) || ready.statusCode !== 200) return false;
+    if (metrics.statusCode !== 200) return true;
+    const lastPoll = prometheusGauge(metrics.body, "commands_poll_last_successful_timestamp_seconds");
+    if (lastPoll === null) return true;
+    const ageMs = Date.now() - (lastPoll * 1000);
+    return ageMs >= 0 && ageMs <= 90_000;
+  }
+
   async function waitTunnelReady(tunnel, preflight) {
     const healthUrl = new URL(preflight.tunnelProfile.healthBaseUrl);
     const deadline = Date.now() + 15_000;
@@ -270,7 +323,7 @@ function createRuntimeHost({
     if (kind === "broker") await hostBroker.stop();
   }
 
-  return Object.freeze({ prepare, startBroker, startAgent, waitAgentReady, checkAgentHealth, startTunnel, waitTunnelReady, stopResource });
+  return Object.freeze({ prepare, startBroker, startAgent, waitAgentReady, checkAgentHealth, startTunnel, waitTunnelReady, checkTunnelHealth, stopResource });
 }
 
 module.exports = { createRuntimeHost };
