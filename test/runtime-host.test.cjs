@@ -138,3 +138,37 @@ test("agent readiness ignores a stale Agent on the fixed port until the spawned 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+
+test("tunnel health requires readyz and a fresh successful control-plane poll", async () => {
+  const { createRuntimeHost } = require("../src/host/runtime-host.cjs");
+  let pollAgeSeconds = 10;
+  const server = http.createServer((req, res) => {
+    if (req.url === "/readyz") {
+      res.writeHead(200);
+      res.end("ok");
+      return;
+    }
+    if (req.url === "/metrics") {
+      const lastSuccess = Date.now() / 1000 - pollAgeSeconds;
+      res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
+      res.end(`commands_poll_last_successful_timestamp_seconds ${lastSuccess}\nreadiness 1\n`);
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = server.address().port;
+    const host = createRuntimeHost(baseRuntimeHostOptions());
+    const tunnel = fakeChild(333);
+    const preflight = { tunnelProfile: { healthBaseUrl: `http://127.0.0.1:${port}` } };
+
+    assert.equal(await host.checkTunnelHealth(tunnel, preflight), true);
+    pollAgeSeconds = 120;
+    assert.equal(await host.checkTunnelHealth(tunnel, preflight), false, "readyz alone must not hide a stale control-plane poller");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

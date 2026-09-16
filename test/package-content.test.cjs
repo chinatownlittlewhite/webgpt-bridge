@@ -120,7 +120,7 @@ test("bundled tunnel-client is the default and custom path is advanced-only", ()
   const required = html.match(/<div class="grid required-grid">([\s\S]*?)<\/div>/)?.[1] || "";
   assert.doesNotMatch(required, /tunnelClientPath|tunnel-client/);
   assert.match(html, /自定义 tunnel-client（可选）/);
-  assert.match(html, /留空使用内置 v0\.0\.13/);
+  assert.match(html, /留空使用内置 v0\.0\.14/);
 
   const extras = builderConfig.extraResources || [];
   assert.ok(extras.some((item) => item.from === "build/tunnel-client" && item.to === "tunnel-client"));
@@ -128,14 +128,14 @@ test("bundled tunnel-client is the default and custom path is advanced-only", ()
   assert.match(packageJson.scripts["dist:win"], /prepare:tunnel-client:win/);
 
   const manifest = require("../scripts/tunnel-client-release.json");
-  assert.equal(manifest.version, "0.0.13");
+  assert.equal(manifest.version, "0.0.14");
   assert.equal(packageJson.scripts["prepare:tunnel-client:mac"], "node scripts/launch-tunnel-client-prepare.cjs darwin-universal");
   for (const key of ["darwin-arm64", "windows-amd64"]) {
     assert.match(manifest.assets[key].sha256, /^[a-f0-9]{64}$/);
-    assert.equal(manifest.assets[key].file, `tunnel-client-v0.0.13-${key}.zip`);
+    assert.equal(manifest.assets[key].file, `tunnel-client-v0.0.14-${key}.zip`);
   }
-  assert.equal(manifest.assets["darwin-amd64"].file, "tunnel-client-v0.0.13-darwin-amd64.zip");
-  assert.equal(manifest.assets["darwin-amd64"].sha256, "c683e15d84fb997f5af1cc7c4cb55008e19a555a9ed2ec0f89a5ff426d85f85c");
+  assert.equal(manifest.assets["darwin-amd64"].file, "tunnel-client-v0.0.14-darwin-amd64.zip");
+  assert.equal(manifest.assets["darwin-amd64"].sha256, "75e10be774184fb42189e347b16eb6bc9fb0780135d8af714d34e30ce068dc53");
   const prepare = fs.readFileSync(path.join(__dirname, "..", "scripts", "prepare-tunnel-client.cjs"), "utf8");
   const macVariants = fs.readFileSync(path.join(__dirname, "..", "scripts", "build-macos-variants.cjs"), "utf8");
   assert.match(prepare, /darwin-universal/);

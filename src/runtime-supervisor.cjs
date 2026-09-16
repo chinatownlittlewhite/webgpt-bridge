@@ -20,6 +20,7 @@ function createRuntimeSupervisor(deps, options = {}) {
   const scheduleTimeout = typeof deps.setTimeout === "function" ? deps.setTimeout : setTimeout;
   const cancelTimeout = typeof deps.clearTimeout === "function" ? deps.clearTimeout : clearTimeout;
   const checkAgentHealth = typeof deps.checkAgentHealth === "function" ? deps.checkAgentHealth : null;
+  const checkTunnelHealth = typeof deps.checkTunnelHealth === "function" ? deps.checkTunnelHealth : null;
   const recoveryDelays = Object.freeze([...(options.recoveryDelays || [1000, 3000, 10000])]);
   const healthCheckIntervalMs = options.healthCheckIntervalMs ?? 30_000;
   const healthFailureThreshold = options.healthFailureThreshold ?? 2;
@@ -45,7 +46,8 @@ function createRuntimeSupervisor(deps, options = {}) {
   let tunnelReadiness = "unknown";
   let lastExitReason = null;
   let healthTimer = null;
-  let consecutiveHealthFailures = 0;
+  let consecutiveAgentHealthFailures = 0;
+  let consecutiveTunnelHealthFailures = 0;
   const phaseTimings = {};
   const ledger = [];
   const listeners = new Set();
@@ -105,23 +107,26 @@ function createRuntimeSupervisor(deps, options = {}) {
     return snapshot;
   }
 
-  function clearAgentHealthWatch() {
+  function clearRuntimeHealthWatch() {
     if (healthTimer !== null) {
       cancelTimeout(healthTimer);
       healthTimer = null;
     }
   }
 
-  function armAgentHealthWatch(token, resetFailures = false) {
-    clearAgentHealthWatch();
-    if (resetFailures) consecutiveHealthFailures = 0;
-    if (!checkAgentHealth || token !== generation || stopping || shuttingDown || state !== "connected") return;
+  function armRuntimeHealthWatch(token, resetFailures = false) {
+    clearRuntimeHealthWatch();
+    if (resetFailures) {
+      consecutiveAgentHealthFailures = 0;
+      consecutiveTunnelHealthFailures = 0;
+    }
+    if ((!checkAgentHealth && !checkTunnelHealth) || token !== generation || stopping || shuttingDown || state !== "connected") return;
     healthTimer = scheduleTimeout(() => {
       healthTimer = null;
       backgroundActivity = backgroundActivity
-        .then(() => runAgentHealthCheck(token))
+        .then(() => runRuntimeHealthCheck(token))
         .catch((error) => {
-          lastExitReason = reasonFrom(error, "AGENT_HEALTH_WATCH_FAILED");
+          lastExitReason = reasonFrom(error, "RUNTIME_HEALTH_WATCH_FAILED");
           if (!stopping && !shuttingDown && token === generation) {
             transition("failed", {
               agentHealth: "failed",
@@ -143,8 +148,8 @@ function createRuntimeSupervisor(deps, options = {}) {
     if (Object.hasOwn(updates, "lastExitReason")) lastExitReason = updates.lastExitReason;
     transitionId += 1;
     const snapshot = publish();
-    if (nextState === "connected") armAgentHealthWatch(generation, true);
-    else clearAgentHealthWatch();
+    if (nextState === "connected") armRuntimeHealthWatch(generation, true);
+    else clearRuntimeHealthWatch();
     return snapshot;
   }
 
@@ -317,55 +322,93 @@ function createRuntimeSupervisor(deps, options = {}) {
     }
   }
 
-  async function runAgentHealthCheck(token) {
-    if (!checkAgentHealth || token !== generation || stopping || shuttingDown || state !== "connected") return;
+  async function runRuntimeHealthCheck(token) {
+    if (token !== generation || stopping || shuttingDown || state !== "connected") return;
     const agentEntry = getEntry("agent");
-    if (!agentEntry) return;
-
-    let healthy = false;
-    try {
-      healthy = await checkAgentHealth(agentEntry.value, preflight);
-    } catch {
-      healthy = false;
-    }
-    if (
-      token !== generation
-      || stopping
-      || shuttingDown
-      || state !== "connected"
-      || getEntry("agent") !== agentEntry
-    ) return;
-
-    if (healthy) {
-      consecutiveHealthFailures = 0;
-      armAgentHealthWatch(token);
-      return;
-    }
-
-    consecutiveHealthFailures += 1;
-    if (consecutiveHealthFailures < healthFailureThreshold) {
-      armAgentHealthWatch(token);
-      return;
-    }
-
-    const healthReason = Object.freeze({
-      code: "AGENT_HEALTH_FAILED",
-      kind: "agent",
-      failures: consecutiveHealthFailures,
-    });
-    lastExitReason = healthReason;
-    transition("degraded", {
-      agentHealth: "failed",
-      tunnelReadiness: getEntry("tunnel") ? "stopping" : tunnelReadiness,
-      lastExitReason: healthReason,
-    });
     const tunnelEntry = getEntry("tunnel");
-    if (tunnelEntry) await releaseEntry(tunnelEntry, "agent-unhealthy");
-    if (getEntry("agent") === agentEntry) await releaseEntry(agentEntry, "agent-unhealthy");
-    tunnelReadiness = "failed";
-    publish();
-    if (token !== generation || stopping || shuttingDown) return;
-    await runAgentRecovery(token);
+
+    if (checkAgentHealth && agentEntry) {
+      let healthy = false;
+      try {
+        healthy = await checkAgentHealth(agentEntry.value, preflight);
+      } catch {
+        healthy = false;
+      }
+      if (
+        token !== generation
+        || stopping
+        || shuttingDown
+        || state !== "connected"
+        || getEntry("agent") !== agentEntry
+      ) return;
+
+      if (healthy) {
+        consecutiveAgentHealthFailures = 0;
+      } else {
+        consecutiveAgentHealthFailures += 1;
+        if (consecutiveAgentHealthFailures >= healthFailureThreshold) {
+          const healthReason = Object.freeze({
+            code: "AGENT_HEALTH_FAILED",
+            kind: "agent",
+            failures: consecutiveAgentHealthFailures,
+          });
+          lastExitReason = healthReason;
+          transition("degraded", {
+            agentHealth: "failed",
+            tunnelReadiness: getEntry("tunnel") ? "stopping" : tunnelReadiness,
+            lastExitReason: healthReason,
+          });
+          const dependentTunnel = getEntry("tunnel");
+          if (dependentTunnel) await releaseEntry(dependentTunnel, "agent-unhealthy");
+          if (getEntry("agent") === agentEntry) await releaseEntry(agentEntry, "agent-unhealthy");
+          tunnelReadiness = "failed";
+          publish();
+          if (token !== generation || stopping || shuttingDown) return;
+          await runAgentRecovery(token);
+          return;
+        }
+      }
+    }
+
+    if (checkTunnelHealth && tunnelEntry && getEntry("tunnel") === tunnelEntry) {
+      let healthy = false;
+      try {
+        healthy = await checkTunnelHealth(tunnelEntry.value, preflight);
+      } catch {
+        healthy = false;
+      }
+      if (
+        token !== generation
+        || stopping
+        || shuttingDown
+        || state !== "connected"
+        || getEntry("tunnel") !== tunnelEntry
+      ) return;
+
+      if (healthy) {
+        consecutiveTunnelHealthFailures = 0;
+      } else {
+        consecutiveTunnelHealthFailures += 1;
+        if (consecutiveTunnelHealthFailures >= healthFailureThreshold) {
+          const healthReason = Object.freeze({
+            code: "TUNNEL_HEALTH_FAILED",
+            kind: "tunnel",
+            failures: consecutiveTunnelHealthFailures,
+          });
+          lastExitReason = healthReason;
+          transition("degraded", {
+            tunnelReadiness: "failed",
+            lastExitReason: healthReason,
+          });
+          if (getEntry("tunnel") === tunnelEntry) await releaseEntry(tunnelEntry, "tunnel-unhealthy");
+          if (token !== generation || stopping || shuttingDown) return;
+          await runTunnelRecovery(token);
+          return;
+        }
+      }
+    }
+
+    armRuntimeHealthWatch(token);
   }
 
   async function handleUnexpectedExit(entry, code, signal) {
