@@ -29,8 +29,7 @@ function createHostSecurity({
   }
 
   async function confirmLocalOperation(request) {
-    const explicitConsent = request?.kind === "sensitive-access" || request?.kind === "known-folder-access" || request?.kind === "host-path-access";
-    if (!explicitConsent && approvalMode === "full_control") {
+    if (approvalMode === "full_control") {
       appendLog("local-broker", "完全控制模式：自动批准本机权限请求");
       return true;
     }

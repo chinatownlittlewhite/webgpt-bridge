@@ -20,26 +20,20 @@ function createFixture({ responses = [] } = {}) {
   return { security, prompts, logs };
 }
 
-test("full_control auto-approves ordinary requests but never bypasses explicit Host consent", async () => {
+test("full_control auto-approves every Bridge confirmation class without opening a dialog", async () => {
   const fixture = createFixture();
   fixture.security.setApprovalMode("full_control");
 
-  assert.equal(await fixture.security.confirmLocalOperation({
-    kind: "terminal-command",
-    argv: ["git", "status"],
-    cwd: "/workspace",
-    policy: { rule: "default-ask" },
-  }), true);
-  assert.equal(fixture.prompts.length, 0);
-
   for (const request of [
+    { kind: "terminal-command", argv: ["git", "status"], cwd: "/workspace", policy: { rule: "default-ask" } },
     { kind: "sensitive-access", operation: "read", path: "/home/user/.ssh/id_ed25519" },
     { kind: "known-folder-access", folder: "desktop", operation: "read", path: "/home/user/Desktop/a.txt" },
     { kind: "host-path-access", operation: "read", path: "/home/user/other/a.txt", permissionClass: "host-read:/home/user/other" },
   ]) {
     assert.equal(await fixture.security.confirmLocalOperation(request), true);
   }
-  assert.equal(fixture.prompts.length, 3);
+  assert.equal(fixture.prompts.length, 0);
+  assert.match(fixture.logs.at(-1).line, /完全控制.*自动批准/);
 });
 
 test("connection-scoped approval is remembered while sensitive approval remains single-use", async () => {

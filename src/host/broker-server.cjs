@@ -31,6 +31,33 @@ function resolveSshExecutable({
   return exists(candidate) ? candidate : "";
 }
 
+function prewarmFullControlHostPermissions({
+  approvalMode,
+  workspaceRoot = "",
+  knownFolderRoots = {},
+  fsImpl = fs,
+  appendLog = () => {},
+} = {}) {
+  if (approvalMode !== "full_control") return;
+  const candidates = [workspaceRoot, ...Object.values(knownFolderRoots || {})];
+  const seen = new Set();
+  for (const rawRoot of candidates) {
+    const root = typeof rawRoot === "string" ? rawRoot.trim() : "";
+    if (!root || seen.has(root)) continue;
+    seen.add(root);
+    let directory;
+    try {
+      directory = fsImpl.opendirSync(root);
+      directory.readSync?.();
+      appendLog("local-broker", `完全控制模式：已预热系统目录权限 ${root}`);
+    } catch (error) {
+      appendLog("local-broker", `完全控制模式：系统目录权限预热未通过 ${root}（${error?.code || error?.message || "unknown"}）`);
+    } finally {
+      try { directory?.closeSync?.(); } catch {}
+    }
+  }
+}
+
 function createHostBrokerServer({
   app,
   hostSecurity,
@@ -213,6 +240,12 @@ function createHostBrokerServer({
       downloads: app.getPath("downloads"),
       documents: app.getPath("documents"),
     };
+    prewarmFullControlHostPermissions({
+      approvalMode: settings.approvalMode,
+      workspaceRoot: settings.workspacePath,
+      knownFolderRoots,
+      appendLog,
+    });
     const policyOptions = {
       appDataRoots: [app.getPath("userData")],
       workspaceRoot: settings.workspacePath,
@@ -311,4 +344,4 @@ function createHostBrokerServer({
   return Object.freeze({ start, stop, getSocketPath });
 }
 
-module.exports = { createHostBrokerServer, resolveSshExecutable };
+module.exports = { createHostBrokerServer, prewarmFullControlHostPermissions, resolveSshExecutable };

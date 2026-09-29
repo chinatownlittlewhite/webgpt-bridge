@@ -111,7 +111,11 @@ test("desktop UI exposes four permission levels without a development Agent mode
   assert.match(html, />高自治</);
   assert.match(html, /value="full_control">完全控制（无确认）</);
   assert.match(html, /同类权限.*本次连接.*自动记住/);
-  assert.match(html, /完全控制.*无需管理员权限.*不会绕过敏感路径、shell、SSH 或提权安全边界/);
+  assert.match(html, /完全控制.*WebGPT Bridge.*不再弹出自身权限确认/);
+  assert.match(html, /系统路径、敏感写入\/执行、shell 与提权.*直接拒绝/);
+  assert.match(html, /Desktop\/Documents\/Downloads.*启动连接.*集中预热/);
+  assert.match(html, /单跳 ProxyJump（-J）/);
+  assert.match(html, /多级跳板、ProxyCommand.*均不支持/);
   assert.doesNotMatch(html, /桌面开发版|developmentPath|Agent 模式/);
 });
 
