@@ -39,6 +39,42 @@ test("Host broker socket path stays process-scoped and platform-native", () => {
   assert.equal(windows.getSocketPath(), "\\\\.\\pipe\\webgpt-bridge-5678");
 });
 
+test("full_control prewarms workspace and known-folder OS access without failing startup", () => {
+  const { prewarmFullControlHostPermissions } = require(modulePath);
+  assert.equal(typeof prewarmFullControlHostPermissions, "function");
+  const opened = [];
+  const closed = [];
+  const logs = [];
+  const fsImpl = {
+    opendirSync(target) {
+      opened.push(target);
+      if (target === "/Downloads") throw Object.assign(new Error("native permission denied"), { code: "EACCES" });
+      return {
+        readSync() { return null; },
+        closeSync() { closed.push(target); },
+      };
+    },
+  };
+  const roots = { desktop: "/Desktop", downloads: "/Downloads", documents: "/Documents", duplicate: "/Desktop" };
+
+  prewarmFullControlHostPermissions({ approvalMode: "development", workspaceRoot: "/workspace", knownFolderRoots: roots, fsImpl });
+  assert.deepEqual(opened, []);
+
+  prewarmFullControlHostPermissions({
+    approvalMode: "full_control",
+    workspaceRoot: "/workspace",
+    knownFolderRoots: roots,
+    fsImpl,
+    appendLog: (source, line) => logs.push({ source, line }),
+  });
+  assert.deepEqual(opened, ["/workspace", "/Desktop", "/Downloads", "/Documents"]);
+  assert.deepEqual(closed, ["/workspace", "/Desktop", "/Documents"]);
+  assert.equal(logs.some(({ line }) => /Downloads|EACCES|permission/i.test(line)), true);
+
+  const source = fs.readFileSync(modulePath, "utf8");
+  assert.match(source, /prewarmFullControlHostPermissions\(\{[\s\S]*approvalMode:\s*settings\.approvalMode/);
+});
+
 test("Windows SSH resolves only the fixed system OpenSSH executable", () => {
   const { resolveSshExecutable } = require(modulePath);
   assert.equal(typeof resolveSshExecutable, "function");

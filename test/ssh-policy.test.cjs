@@ -45,17 +45,52 @@ test("SSH allowlist may bind a default username to a host", () => {
   assert.throws(() => normalizeSshAllowedHosts(["bad/user@example.com"]), /用户名|允许列表|host/i);
 });
 
-test("SSH rejects forwarding, jump/config/identity overrides, TTY/background, and proxy/local command options", () => {
+test("SSH rejects forwarding, config/identity overrides, TTY/background, and proxy/local command options", () => {
   const { validateSshCommand } = api();
   const forbidden = [
     ["-L", "8080:localhost:80"], ["-R", "8080:localhost:80"], ["-D", "1080"],
-    ["-J", "jump.example"], ["-i", "/tmp/key"], ["-F", "/tmp/config"],
+    ["-i", "/tmp/key"], ["-F", "/tmp/config"],
     ["-t"], ["-tt"], ["-f"], ["-A"], ["-X"], ["-Y"],
-    ["-o", "ProxyCommand=nc %h %p"], ["-o", "LocalCommand=echo bad"],
+    ["-o", "ProxyCommand=nc %h %p"], ["-o", "ProxyJump=jump.example"], ["-o", "LocalCommand=echo bad"],
   ];
   for (const option of forbidden) {
     assert.throws(() => validateSshCommand(["ssh", ...option, "10.0.0.8", "uptime"], { allowedHosts: [] }), /SSH|option|选项|不允许/i, option.join(" "));
   }
+});
+
+test("SSH permits one validated ProxyJump hop and rejects unsafe jump specifications", () => {
+  const { SSH_FORCED_OPTIONS, validateSshCommand } = api();
+  const result = validateSshCommand([
+    "ssh", "-J", "ops@jump.example:2200", "deploy@example.com", "uptime",
+  ], { allowedHosts: ["ops@jump.example", "deploy@example.com"] });
+  assert.equal(result.host, "example.com");
+  const jumpIndex = result.argv.indexOf("-J");
+  assert.ok(jumpIndex > 0);
+  assert.equal(result.argv[jumpIndex + 1], "ops@jump.example:2200");
+  for (const option of SSH_FORCED_OPTIONS) assert.equal(result.argv.includes(option), true);
+
+  const inferred = validateSshCommand([
+    "ssh", "-J", "jump.example", "10.0.0.8", "uptime",
+  ], { allowedHosts: ["bastion@jump.example"] });
+  const inferredJumpIndex = inferred.argv.indexOf("-J");
+  assert.equal(inferred.argv[inferredJumpIndex + 1], "bastion@jump.example");
+
+  assert.throws(
+    () => validateSshCommand(["ssh", "-J", "public-jump.example", "10.0.0.8", "uptime"], { allowedHosts: [] }),
+    /jump|跳板|allow|允许/i,
+  );
+  assert.throws(
+    () => validateSshCommand(["ssh", "-J", "10.0.0.2,10.0.0.3", "10.0.0.8", "uptime"], { allowedHosts: [] }),
+    /jump|跳板|single|单跳|不允许/i,
+  );
+  assert.throws(
+    () => validateSshCommand(["ssh", "-J", "user@", "10.0.0.8", "uptime"], { allowedHosts: [] }),
+    /jump|跳板|格式|host/i,
+  );
+  assert.throws(
+    () => validateSshCommand(["ssh", "-J", "10.0.0.2:70000", "10.0.0.8", "uptime"], { allowedHosts: [] }),
+    /jump|跳板|port|端口/i,
+  );
 });
 
 test("SSH pins safe noninteractive options and permits only a numeric port override", () => {

@@ -131,10 +131,11 @@ test("model-facing shell deny boundary remains independent of full_control", asy
   }
 });
 
-test("README matches phase-one Host permission compatibility semantics", () => {
+test("README documents zero Bridge prompts in full_control while OS and hard-deny boundaries remain", () => {
   const readme = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
-  assert.doesNotMatch(readme, /同一敏感根目录读取/);
-  assert.match(readme, /敏感路径.*(?:单次|一次).*授权/);
-  assert.match(readme, /Desktop\/Downloads\/Documents.*首次访问仍需显式授权/);
-  assert.match(readme, /工作区外.*(?:本机|Host).*路径.*授权/);
+  assert.match(readme, /完全控制.*(?:Bridge|WebGPT Bridge).*(?:不弹|无确认|不再).*权限/i);
+  assert.match(readme, /Desktop\/Downloads\/Documents.*(?:启动|连接).*(?:集中|预热|提前)/i);
+  assert.match(readme, /敏感路径.*read\/list.*(?:自动|直接).*批准/i);
+  assert.match(readme, /系统路径.*(?:始终|继续).*(?:拒绝|不可授权)/i);
+  assert.match(readme, /操作系统.*(?:权限|隐私).*(?:仍|继续).*生效/i);
 });

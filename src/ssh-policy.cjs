@@ -74,6 +74,54 @@ function isAllowedSshHost(host, allowedHosts = []) {
   return isLocalOrPrivateHost(normalized) || normalizeSshAllowedHosts(allowedHosts).some((entry) => parseTarget(entry).host === normalized);
 }
 
+function parseProxyJump(value, allowedHosts = []) {
+  if (typeof value !== "string" || !value || value.includes("\0") || /[\r\n]/.test(value)) {
+    throw new TypeError("SSH 跳板主机格式无效。");
+  }
+  if (value.includes(",")) throw new Error("SSH 只允许单跳 ProxyJump，不允许多级跳板。");
+
+  const at = value.lastIndexOf("@");
+  const user = at >= 0 ? value.slice(0, at) : "";
+  const hostPort = at >= 0 ? value.slice(at + 1) : value;
+  let hostToken = hostPort;
+  let portText = "";
+
+  if (hostPort.startsWith("[")) {
+    const close = hostPort.indexOf("]");
+    if (close < 0) throw new TypeError("SSH 跳板主机格式无效。");
+    hostToken = hostPort.slice(0, close + 1);
+    const suffix = hostPort.slice(close + 1);
+    if (suffix) {
+      if (!suffix.startsWith(":") || suffix.length === 1) throw new TypeError("SSH 跳板主机格式无效。");
+      portText = suffix.slice(1);
+    }
+  } else {
+    const firstColon = hostPort.indexOf(":");
+    const lastColon = hostPort.lastIndexOf(":");
+    if (firstColon >= 0) {
+      if (firstColon !== lastColon) throw new TypeError("SSH 跳板 IPv6 主机必须使用方括号。");
+      hostToken = hostPort.slice(0, firstColon);
+      portText = hostPort.slice(firstColon + 1);
+    }
+  }
+
+  const parsed = parseTarget(user ? `${user}@${hostToken}` : hostToken);
+  if (!isAllowedSshHost(parsed.host, allowedHosts)) {
+    throw new Error("SSH 跳板主机必须是私有/本地主机或出现在明确允许列表中。");
+  }
+  if (portText) {
+    if (!/^\d+$/.test(portText)) throw new TypeError("SSH 跳板端口必须是 1–65535 的整数。");
+    const port = Number(portText);
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new TypeError("SSH 跳板端口必须是 1–65535 的整数。");
+    portText = String(port);
+  }
+
+  const defaultUser = parsed.user ? "" : configuredSshUser(parsed.host, allowedHosts);
+  const resolvedUser = parsed.user || defaultUser;
+  const resolvedHost = net.isIP(parsed.host) === 6 ? `[${parsed.host}]` : parsed.host;
+  return `${resolvedUser ? `${resolvedUser}@` : ""}${resolvedHost}${portText ? `:${portText}` : ""}`;
+}
+
 function configuredSshUser(host, allowedHosts = []) {
   const normalized = String(host || "").trim().toLowerCase().replace(/\.$/, "");
   const users = new Set();
@@ -94,16 +142,27 @@ function validateRemoteCommand(args) {
 function validateSshCommand(argv, { allowedHosts = [] } = {}) {
   if (!Array.isArray(argv) || argv.length < 2 || argv[0] !== "ssh") throw new TypeError("SSH 命令必须使用逻辑可执行名 ssh。");
   let index = 1;
+  let hasJump = false;
   const retainedOptions = [];
   while (index < argv.length && argv[index].startsWith("-")) {
     const option = argv[index];
-    if (option !== "-p") throw new Error(`SSH 选项 ${option} 不允许；端口转发、跳板、配置/身份文件、TTY、后台与代理命令均被禁用。`);
-    const portText = argv[index + 1];
-    if (!/^\d+$/.test(String(portText || ""))) throw new TypeError("SSH 端口必须是 1–65535 的整数。");
-    const port = Number(portText);
-    if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new TypeError("SSH 端口必须是 1–65535 的整数。");
-    retainedOptions.push("-p", String(port));
-    index += 2;
+    if (option === "-p") {
+      const portText = argv[index + 1];
+      if (!/^\d+$/.test(String(portText || ""))) throw new TypeError("SSH 端口必须是 1–65535 的整数。");
+      const port = Number(portText);
+      if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new TypeError("SSH 端口必须是 1–65535 的整数。");
+      retainedOptions.push("-p", String(port));
+      index += 2;
+      continue;
+    }
+    if (option === "-J") {
+      if (hasJump) throw new Error("SSH 只允许一个 ProxyJump 跳板。");
+      retainedOptions.push("-J", parseProxyJump(argv[index + 1], allowedHosts));
+      hasJump = true;
+      index += 2;
+      continue;
+    }
+    throw new Error(`SSH 选项 ${option} 不允许；端口转发、配置/身份文件、TTY、后台与代理命令均被禁用。`);
   }
 
   const target = argv[index];
